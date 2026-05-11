@@ -9,11 +9,11 @@
     "adapters/*"
   ],
   "scripts": {
-    "spool": "tsx packages/cli/src/index.ts",
-    "test": "tsx scripts/run-tests.ts"
+    "spool": "node --import tsx/esm packages/cli/src/index.ts",
+    "test": "node --import tsx/esm scripts/run-tests.ts"
   },
   "engines": {
-    "node": ">=18.4"
+    "node": ">=20.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

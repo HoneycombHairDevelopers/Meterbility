@@ -37,12 +37,21 @@ export function registerDoctorCommand(program: Command): void {
         console.log(`${icon} [${tag}] ${pc.bold(label)} ${pc.dim(detail)}`);
       };
 
-      // Node version
+      // Node version — Spool uses `node --import tsx/esm` which requires
+      // Node 20.6+. Older runtimes are accepted but flagged as warn since
+      // the test runner and launcher will not work cleanly.
       const node = process.versions.node;
-      if (Number(node.split(".")[0]) >= 18) {
+      const [major, minor] = node.split(".").map(Number) as [number, number];
+      if (major > 20 || (major === 20 && minor >= 6) || major >= 22) {
         line("ok", "Node", `v${node}`);
+      } else if (major >= 20) {
+        line(
+          "warn",
+          "Node",
+          `v${node} — upgrade to 20.6+ for full --import support`,
+        );
       } else {
-        line("fail", "Node version >= 18", `found v${node}`);
+        line("fail", "Node version >= 20.6", `found v${node}`);
       }
 
       // Spool home

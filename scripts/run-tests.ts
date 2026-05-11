@@ -2,6 +2,12 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+/**
+ * Discover *.test.ts files under packages/ and adapters/, then hand them
+ * to Node's built-in test runner in one call (Node 20+, spec reporter).
+ * One process means one cold-start; the runner gives us a unified summary
+ * and per-test pass/fail lines.
+ */
 const roots = ["packages", "adapters"];
 const files: string[] = [];
 
@@ -21,23 +27,14 @@ function walk(dir: string): void {
 for (const root of roots) walk(root);
 files.sort();
 
-let failed = 0;
-for (const f of files) {
-  const res = spawnSync("npx", ["tsx", f], {
-    stdio: "inherit",
-    env: process.env,
-    shell: process.platform === "win32",
-  });
-  if (res.status !== 0) {
-    failed += 1;
-    console.error(`\n✖ FAILED: ${f}\n`);
-  } else {
-    console.log(`✔ ${f}`);
-  }
+if (files.length === 0) {
+  console.log("no test files found");
+  process.exit(0);
 }
 
-if (failed > 0) {
-  console.error(`\n${failed} test file(s) failed`);
-  process.exit(1);
-}
-console.log(`\nAll ${files.length} test file(s) passed`);
+const res = spawnSync(
+  process.execPath,
+  ["--import", "tsx/esm", "--test", "--test-reporter=spec", ...files],
+  { stdio: "inherit", env: process.env },
+);
+process.exit(res.status ?? 1);

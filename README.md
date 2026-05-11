@@ -12,9 +12,12 @@ Spool is the v0 implementation of [SPEC.md](SPEC.md). It turns Claude Code's per
 
 ## Install (from this repo)
 
+Requires **Node 20.6+** (uses `node --import` for tsx loading; rebuilds `better-sqlite3` natively).
+
 ```bash
+nvm use                      # picks up .nvmrc → Node 20
 npm install
-./bin/spool doctor          # verify the Claude Code surface
+./bin/spool doctor           # verify the Claude Code surface
 ./bin/spool ingest claude-code --limit 5
 ./bin/spool list
 ./bin/spool web              # open the inspector at http://127.0.0.1:4317

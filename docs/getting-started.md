@@ -4,7 +4,7 @@ Spool is the debugger for AI agents. v0 captures Claude Code sessions and lets y
 
 ## Prereqs
 
-- Node 18.4+
+- Node 20.6+ (the repo's `.nvmrc` pins to Node 20)
 - A `~/.claude/` directory with at least one Claude Code session under `~/.claude/projects/`
 
 ## 60-second tour
