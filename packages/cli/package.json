@@ -1,0 +1,19 @@
+{
+  "name": "@spool/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "spool": "src/index.ts"
+  },
+  "dependencies": {
+    "@spool/shared": "*",
+    "@spool/spec": "*",
+    "@spool/collector": "*",
+    "@spool/server": "*",
+    "@spool/claude-code-adapter": "*",
+    "commander": "^12.1.0",
+    "picocolors": "^1.0.0"
+  }
+}

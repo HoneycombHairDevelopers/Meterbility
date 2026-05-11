@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spool.dev/schemas/trace-format/0.1.0",
+  "title": "Spool Trace Format",
+  "version": "0.1.0",
+  "description": "Wire format for Spool traces. Hosts emit one JSONL file per run; each line is a Step. Context snapshots and decision blobs are content-addressed and referenced by SHA256.",
+  "type": "object",
+  "required": ["spool_trace_version", "run", "steps"],
+  "properties": {
+    "spool_trace_version": { "const": "0.1.0" },
+    "run": { "$ref": "#/$defs/Run" },
+    "steps": { "type": "array", "items": { "$ref": "#/$defs/Step" } },
+    "blobs": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "description": "base64-encoded UTF-8 content" }
+    }
+  },
+  "$defs": {
+    "Run": {
+      "type": "object",
+      "required": ["run_id", "started_at", "source_runtime", "status"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "source_runtime": { "enum": ["claude-code", "codex-cli", "cursor", "sdk-ts", "fork"] },
+        "source_session_id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "enum": ["ok", "error", "abandoned", "in_progress"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "git_branch": { "type": "string" },
+        "cwd": { "type": "string" },
+        "fork_origin_run_id": { "type": "string" },
+        "fork_origin_step_id": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Step": {
+      "type": "object",
+      "required": ["step_id", "sequence", "timestamp", "model", "action", "outcome"],
+      "properties": {
+        "step_id": { "type": "string" },
+        "run_id": { "type": "string" },
+        "parent_step_id": { "type": "string" },
+        "fork_origin_id": { "type": "string" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "model": { "type": "string" },
+        "context_snapshot_id": { "type": "string", "description": "SHA256 of canonicalized context snapshot" },
+        "decision_ref": { "type": "string", "description": "SHA256 of raw model output bytes" },
+        "action": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["tool_call", "message", "sub_agent_dispatch", "thinking_only", "none"] },
+            "tool_name": { "type": "string" },
+            "tool_use_id": { "type": "string" },
+            "tool_input": {},
+            "text": { "type": "string" },
+            "sub_agent": { "type": "string" }
+          }
+        },
+        "outcome": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["ok", "error", "pending"] },
+            "tool_result_ref": { "type": "string" },
+            "is_error": { "type": "boolean" },
+            "summary": { "type": "string" }
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "integer" },
+            "output": { "type": "integer" },
+            "cached_read": { "type": "integer" },
+            "cache_creation": { "type": "integer" },
+            "reasoning": { "type": "integer" }
+          }
+        },
+        "latency_ms": { "type": "integer" },
+        "cost_cents": { "type": "number" },
+        "status": { "enum": ["ok", "error", "abandoned", "in_progress"] },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

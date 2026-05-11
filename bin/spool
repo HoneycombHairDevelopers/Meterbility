@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Spool launcher — runs the TypeScript CLI via tsx. Works without a build step.
+set -e
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+exec npx --prefix "$DIR" tsx "$DIR/packages/cli/src/index.ts" "$@"

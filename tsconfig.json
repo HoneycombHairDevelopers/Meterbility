@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "lib": ["ES2022", "DOM"],
+    "baseUrl": ".",
+    "paths": {
+      "@spool/shared": ["packages/shared/src/index.ts"],
+      "@spool/spec": ["packages/spec/src/index.ts"],
+      "@spool/agent": ["packages/agent/src/index.ts"],
+      "@spool/collector": ["packages/collector/src/index.ts"],
+      "@spool/server": ["packages/server/src/index.ts"],
+      "@spool/claude-code-adapter": ["adapters/claude-code/src/index.ts"]
+    }
+  }
+}

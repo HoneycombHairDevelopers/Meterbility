@@ -1,0 +1,23 @@
+{
+  "name": "spool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The debugger for AI agents",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "adapters/*"
+  ],
+  "scripts": {
+    "spool": "tsx packages/cli/src/index.ts",
+    "test": "tsx scripts/run-tests.ts"
+  },
+  "engines": {
+    "node": ">=18.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
