@@ -157,9 +157,21 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     if (!body.target_kind || !body.target_id) {
       return c.json({ error: "missing target_kind / target_id" }, 400);
     }
+    // Resolve prefix ids before persisting so the API and CLI agree on
+    // canonical form. See annotate.ts for the same fix on the CLI side.
+    let resolvedId = body.target_id;
+    if (body.target_kind === "run") {
+      const run = getRun(store, body.target_id);
+      if (!run) return c.json({ error: "run not found" }, 404);
+      resolvedId = run.run_id;
+    } else if (body.target_kind === "step") {
+      const step = getStep(store, body.target_id);
+      if (!step) return c.json({ error: "step not found" }, 404);
+      resolvedId = step.step_id;
+    }
     const ann = insertAnnotation(store, {
       targetKind: body.target_kind,
-      targetId: body.target_id,
+      targetId: resolvedId,
       author: body.author ?? "anonymous",
       verdict: body.verdict,
       note: body.note,
