@@ -20,8 +20,21 @@ import {
   renderRun,
   renderDiff,
   renderFleet,
+  renderTests,
 } from "./html.ts";
 import { LiveInspector, type LiveEvent } from "./live.ts";
+import { forkRun, fakeResponder, anthropicResponder } from "./fork.ts";
+import {
+  addAssertion,
+  createTest,
+  deleteTest,
+  deriveAssertionsFromRun,
+  getTestByName,
+  listResults,
+  listTests,
+  runTest,
+  type Assertion,
+} from "./regression.ts";
 
 /**
  * Hono app over the local Store. Two surfaces share the same routes:
@@ -152,6 +165,139 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       note: body.note,
     });
     return c.json(ann);
+  });
+
+  app.get("/api/runs/:id/annotations", (c) => {
+    const id = c.req.param("id");
+    return c.json(listAnnotations(store, "run", id));
+  });
+  app.get("/api/steps/:id/annotations", (c) => {
+    const id = c.req.param("id");
+    return c.json(listAnnotations(store, "step", id));
+  });
+
+  app.post("/api/fork", async (c) => {
+    const body = (await c.req.json()) as {
+      origin_run_id: string;
+      at: string | number;
+      edit_type?: string;
+      edit_payload?: unknown;
+      fake?: string;
+      live?: boolean;
+    };
+    if (!body.origin_run_id || body.at === undefined || !body.edit_type) {
+      return c.json({ error: "missing origin_run_id / at / edit_type" }, 400);
+    }
+    const responder = body.fake
+      ? fakeResponder(body.fake)
+      : body.live && process.env.ANTHROPIC_API_KEY
+        ? anthropicResponder(store, {
+            apiKey: process.env.ANTHROPIC_API_KEY,
+            model: "claude-opus-4-7",
+          })
+        : undefined;
+    try {
+      const result = await forkRun(
+        store,
+        {
+          origin_run_id: body.origin_run_id,
+          at: body.at,
+          edit: {
+            type: body.edit_type as Parameters<typeof forkRun>[1]["edit"]["type"],
+            payload: body.edit_payload ?? null,
+          },
+        },
+        responder,
+      );
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  app.get("/api/tests", (c) => c.json(listTests(store)));
+  app.get("/api/tests/:name", (c) => {
+    const t = getTestByName(store, c.req.param("name"));
+    return t ? c.json(t) : c.notFound();
+  });
+  app.get("/api/tests/:name/results", (c) => {
+    const t = getTestByName(store, c.req.param("name"));
+    if (!t) return c.notFound();
+    return c.json(listResults(store, t.test_id, 50));
+  });
+  app.post("/api/tests", async (c) => {
+    const body = (await c.req.json()) as {
+      name: string;
+      description?: string;
+      assertions?: Assertion[];
+      from_run_id?: string;
+    };
+    if (!body.name) return c.json({ error: "missing name" }, 400);
+    let assertions: Assertion[] = body.assertions ?? [];
+    let canonicalRunId: string | undefined;
+    if (body.from_run_id) {
+      const run = getRun(store, body.from_run_id);
+      if (!run) return c.json({ error: "from_run_id not found" }, 404);
+      const steps = listSteps(store, run.run_id);
+      assertions = deriveAssertionsFromRun(run, steps);
+      canonicalRunId = run.run_id;
+    }
+    try {
+      const t = createTest(store, {
+        name: body.name,
+        description: body.description,
+        assertions,
+        canonical_run_id: canonicalRunId,
+      });
+      return c.json(t);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+  app.put("/api/tests/:name/assertions", async (c) => {
+    const name = c.req.param("name");
+    const body = (await c.req.json()) as { assertions: Assertion[] };
+    const t = getTestByName(store, name);
+    if (!t) return c.notFound();
+    // Replace whole assertion list — clean for the in-browser editor.
+    store.db
+      .prepare("UPDATE regression_tests SET assertions_json = ? WHERE test_id = ?")
+      .run(JSON.stringify(body.assertions), t.test_id);
+    return c.json(getTestByName(store, name));
+  });
+  app.post("/api/tests/:name/assertions", async (c) => {
+    const name = c.req.param("name");
+    const body = (await c.req.json()) as { assertion: Assertion };
+    try {
+      const t = addAssertion(store, name, body.assertion);
+      return c.json(t);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+  app.delete("/api/tests/:name", (c) => {
+    const ok = deleteTest(store, c.req.param("name"));
+    return ok ? c.json({ ok: true }) : c.notFound();
+  });
+  app.post("/api/tests/:name/run", async (c) => {
+    const name = c.req.param("name");
+    const body = (await c.req.json().catch(() => ({}))) as {
+      run_id?: string;
+      limit?: number;
+    };
+    const t = getTestByName(store, name);
+    if (!t) return c.notFound();
+    let runs = body.run_id
+      ? [getRun(store, body.run_id)].filter((r): r is NonNullable<typeof r> => !!r)
+      : listRuns(store, { limit: body.limit ?? 50 });
+    const results = runs.map((r) => runTest(store, t, r.run_id));
+    return c.json(results);
+  });
+
+  app.get("/tests", (c) => {
+    const tests = listTests(store);
+    const recent = listResults(store, undefined, 20);
+    return c.html(renderShell("Tests", renderTests(tests, recent)));
   });
 
   return app;

@@ -5,3 +5,5 @@ export * from "./web.ts";
 export * from "./live.ts";
 export * from "./live-heuristics.ts";
 export * from "./regression.ts";
+export * from "./continuation.ts";
+export * from "./slack.ts";

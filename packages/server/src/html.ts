@@ -1,6 +1,7 @@
 import type { Annotation, Run, Step } from "@spool/shared";
 import type { DiffResult } from "./diff.ts";
 import type { FleetEntry } from "./live.ts";
+import type { RegressionResult, RegressionTest } from "./regression.ts";
 
 /**
  * Server-rendered HTML. Single bundle of styles + tiny vanilla JS for
@@ -154,6 +155,89 @@ const STYLES = `
   .pill.live-awaiting_input { color: var(--accent); border-color: rgba(88,166,255,0.4); }
   .pill.live-errored { color: var(--err); border-color: rgba(248,81,73,0.5); }
   .pill.live-completed { color: var(--fg-mute); }
+
+  /* Modals */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px 20px; width: 540px; max-width: 92vw;
+    max-height: 80vh; overflow: auto;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+  }
+  .modal h3 { margin: 0 0 12px 0; font-size: 14px; }
+  .modal label { display: block; font-size: 12px; color: var(--fg-mute); margin-bottom: 4px; margin-top: 10px; }
+  .modal input, .modal textarea, .modal select {
+    width: 100%; padding: 6px 8px; background: var(--bg);
+    border: 1px solid var(--border); color: var(--fg);
+    border-radius: 4px; font-size: 13px; font-family: inherit;
+  }
+  .modal textarea { min-height: 80px; resize: vertical; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+  .modal .actions { margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; }
+  .modal button {
+    padding: 6px 14px; background: var(--bg-3); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+    font-size: 13px;
+  }
+  .modal button.primary { background: var(--accent); color: #0e1116; border-color: var(--accent); }
+  .modal button:hover { background: var(--border); }
+  .modal button.primary:hover { background: #4a8fde; }
+
+  /* Step card additions */
+  .step-card .row-actions {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .step-card .row-actions button {
+    background: var(--bg-3); border: 1px solid var(--border); color: var(--fg-mute);
+    border-radius: 3px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+  }
+  .step-card .row-actions button:hover { color: var(--fg); }
+  .annotations-list {
+    margin-top: 8px; display: flex; flex-direction: column; gap: 4px;
+  }
+
+  /* Tests page */
+  .tests-grid {
+    display: grid; grid-template-columns: 280px 1fr; gap: 16px; min-height: 400px;
+  }
+  .test-list {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px; overflow: auto; max-height: 75vh;
+  }
+  .test-list .item {
+    display: block; padding: 6px 8px; border-radius: 4px;
+    color: var(--fg); cursor: pointer; font-size: 12.5px;
+  }
+  .test-list .item:hover { background: var(--bg-3); }
+  .test-list .item.active { background: var(--bg-3); color: var(--accent); }
+  .test-list .item .meta { font-size: 11px; color: var(--fg-mute); }
+  .test-detail {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 14px 16px; min-height: 200px;
+  }
+  .assertion-row {
+    display: grid; grid-template-columns: 160px 1fr 80px 30px;
+    gap: 8px; align-items: center; padding: 4px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .assertion-row select, .assertion-row input {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--fg); border-radius: 3px; padding: 4px 6px; font-size: 12.5px;
+  }
+  .assertion-row .rm { background: transparent; color: var(--err); border: none; cursor: pointer; }
+  .results-list {
+    margin-top: 14px;
+    border-top: 1px solid var(--border); padding-top: 10px;
+  }
+  .results-list .row {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    padding: 3px 0;
+  }
+  .results-list .pass { color: var(--ok); }
+  .results-list .fail { color: var(--err); }
 `;
 
 const SCRIPT = `
@@ -239,6 +323,196 @@ function jumpToStep(seq) {
   const blk = document.querySelector('.blk[data-seq="' + seq + '"]');
   if (blk) blk.classList.add('active');
 }
+
+/* --- Modal helpers --- */
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.add('open');
+}
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('open');
+}
+
+/* --- Fork modal --- */
+function openForkModal(runId, sequence, defaultText) {
+  document.getElementById('fork-run-id').value = runId;
+  document.getElementById('fork-seq').value = sequence;
+  document.getElementById('fork-payload').value = defaultText || '';
+  document.getElementById('fork-status').textContent = '';
+  openModal('fork-modal');
+}
+async function submitFork() {
+  const status = document.getElementById('fork-status');
+  status.textContent = 'forking…';
+  const body = {
+    origin_run_id: document.getElementById('fork-run-id').value,
+    at: parseInt(document.getElementById('fork-seq').value, 10),
+    edit_type: document.getElementById('fork-edit-type').value,
+    edit_payload: { text: document.getElementById('fork-payload').value },
+    fake: document.getElementById('fork-fake').value || undefined,
+    live: document.getElementById('fork-live').checked,
+  };
+  try {
+    const res = await fetch('/api/fork', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'fork failed');
+    status.innerHTML = 'fork created → <a href="/runs/' + data.fork_run_id + '">open</a> · <a href="/diff?a=' + body.origin_run_id + '&b=' + data.fork_run_id + '">diff</a>';
+  } catch (err) {
+    status.textContent = 'error: ' + err.message;
+    status.style.color = 'var(--err)';
+  }
+}
+
+/* --- Annotation --- */
+function openAnnotateModal(targetKind, targetId) {
+  document.getElementById('ann-kind').value = targetKind;
+  document.getElementById('ann-id').value = targetId;
+  document.getElementById('ann-note').value = '';
+  document.getElementById('ann-verdict').value = '';
+  document.getElementById('ann-status').textContent = '';
+  openModal('annotate-modal');
+}
+async function submitAnnotation() {
+  const status = document.getElementById('ann-status');
+  status.textContent = 'saving…';
+  const body = {
+    target_kind: document.getElementById('ann-kind').value,
+    target_id: document.getElementById('ann-id').value,
+    verdict: document.getElementById('ann-verdict').value || undefined,
+    note: document.getElementById('ann-note').value,
+    author: 'web-ui',
+  };
+  try {
+    const res = await fetch('/api/annotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error('annotate failed');
+    status.textContent = 'saved';
+    setTimeout(() => { closeModal('annotate-modal'); location.reload(); }, 600);
+  } catch (err) {
+    status.textContent = 'error: ' + err.message;
+  }
+}
+
+/* --- Test editor --- */
+let currentTest = null;
+
+async function selectTest(name) {
+  document.querySelectorAll('.test-list .item').forEach(el =>
+    el.classList.toggle('active', el.dataset.name === name)
+  );
+  const res = await fetch('/api/tests/' + encodeURIComponent(name));
+  if (!res.ok) return;
+  currentTest = await res.json();
+  renderTestDetail(currentTest);
+  loadResults(name);
+}
+function renderTestDetail(t) {
+  const root = document.getElementById('test-detail');
+  if (!t) { root.innerHTML = '<div class="empty">Select a test from the left.</div>'; return; }
+  const rows = (t.assertions || []).map((a, i) => assertionRowHtml(a, i)).join('');
+  root.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">' + escapeHtml(t.name) + '</h3>' +
+    '<div><button onclick="addAssertionRow()">+ assertion</button> <button class="primary" onclick="saveAssertions()">Save</button> <button onclick="runTestAgainstAll()">Run on all runs</button></div></div>' +
+    (t.description ? '<p style="color:var(--fg-mute);font-size:12.5px">' + escapeHtml(t.description) + '</p>' : '') +
+    '<div id="assertions-area">' + rows + '</div>' +
+    '<div id="test-results" class="results-list"></div>';
+}
+function assertionRowHtml(a, i) {
+  const kinds = ['includes_tool_call','excludes_tool_call','tool_call_count','output_contains','output_does_not_contain','min_steps','max_steps','final_status','max_cost_cents','no_error_step'];
+  const opts = kinds.map(k => '<option value="' + k + '"' + (k === a.kind ? ' selected' : '') + '>' + k + '</option>').join('');
+  return '<div class="assertion-row" data-idx="' + i + '">' +
+    '<select onchange="updateAssertion(' + i + ', \\'kind\\', this.value)">' + opts + '</select>' +
+    '<input value="' + escapeHtml(String(a.value || '')) + '" onchange="updateAssertion(' + i + ', \\'value\\', this.value)">' +
+    '<input placeholder="label" value="' + escapeHtml(a.label || '') + '" onchange="updateAssertion(' + i + ', \\'label\\', this.value)">' +
+    '<button class="rm" onclick="removeAssertion(' + i + ')" title="remove">×</button>' +
+    '</div>';
+}
+function updateAssertion(idx, key, val) {
+  if (!currentTest) return;
+  if (key === 'value' && /^[\\d.]+$/.test(val) && currentTest.assertions[idx].kind !== 'final_status') val = Number(val);
+  currentTest.assertions[idx][key] = val;
+}
+function addAssertionRow() {
+  if (!currentTest) return;
+  currentTest.assertions = currentTest.assertions || [];
+  currentTest.assertions.push({ kind: 'includes_tool_call', value: '' });
+  renderTestDetail(currentTest);
+}
+function removeAssertion(idx) {
+  if (!currentTest) return;
+  currentTest.assertions.splice(idx, 1);
+  renderTestDetail(currentTest);
+}
+async function saveAssertions() {
+  if (!currentTest) return;
+  const res = await fetch('/api/tests/' + encodeURIComponent(currentTest.name) + '/assertions', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assertions: currentTest.assertions }),
+  });
+  if (res.ok) {
+    currentTest = await res.json();
+    renderTestDetail(currentTest);
+    flash('saved');
+  } else {
+    flash('save failed', true);
+  }
+}
+async function runTestAgainstAll() {
+  if (!currentTest) return;
+  flash('running…');
+  const res = await fetch('/api/tests/' + encodeURIComponent(currentTest.name) + '/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ limit: 50 }),
+  });
+  const results = await res.json();
+  const pass = results.filter(r => r.passed).length;
+  const fail = results.length - pass;
+  flash(pass + ' pass · ' + fail + ' fail', fail > 0);
+  loadResults(currentTest.name);
+}
+async function loadResults(name) {
+  const res = await fetch('/api/tests/' + encodeURIComponent(name) + '/results');
+  const data = await res.json();
+  const root = document.getElementById('test-results');
+  if (!root) return;
+  if (!data.length) { root.innerHTML = '<p style="color:var(--fg-mute);font-size:12px">No results yet.</p>'; return; }
+  root.innerHTML = '<h4 style="margin:8px 0;font-size:12px;color:var(--fg-mute)">Recent results</h4>' +
+    data.map(r =>
+      '<div class="row ' + (r.passed ? 'pass' : 'fail') + '">' +
+      (r.passed ? 'PASS' : 'FAIL') + '  ' +
+      escapeHtml(r.run_id.slice(0,12)) + '  ' +
+      r.assertions.filter(a => a.passed).length + '/' + r.assertions.length + '  ' +
+      escapeHtml(r.created_at) +
+      '</div>'
+    ).join('');
+}
+async function createNewTest() {
+  const name = prompt('New test name:');
+  if (!name) return;
+  const res = await fetch('/api/tests', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (res.ok) location.reload();
+}
+function flash(msg, isError) {
+  const el = document.getElementById('flash');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--err)' : 'var(--ok)';
+  setTimeout(() => { el.textContent = ''; }, 2000);
+}
 `;
 
 export function renderShell(title: string, body: string): string {
@@ -248,9 +522,72 @@ export function renderShell(title: string, body: string): string {
 </head><body>
 <header>
   <h1><a href="/">Spool</a></h1>
+  <nav style="display:flex;gap:14px;font-size:13px;color:var(--fg-mute)">
+    <a href="/">Fleet</a>
+    <a href="/runs">Runs</a>
+    <a href="/tests">Tests</a>
+  </nav>
   <span class="crumbs">${esc(title)}</span>
+  <span id="flash" style="margin-left:auto;font-size:12px"></span>
 </header>
 <main>${body}</main>
+
+<!-- Fork modal -->
+<div id="fork-modal" class="modal-bg" onclick="if(event.target===this)closeModal('fork-modal')">
+  <div class="modal">
+    <h3>Fork from this step</h3>
+    <input type="hidden" id="fork-run-id">
+    <input type="hidden" id="fork-seq">
+    <label>Edit type</label>
+    <select id="fork-edit-type">
+      <option value="replace_user_message">replace_user_message</option>
+      <option value="inject_message">inject_message</option>
+      <option value="replace_system_prompt">replace_system_prompt</option>
+      <option value="modify_tool_description">modify_tool_description</option>
+      <option value="add_context">add_context</option>
+      <option value="remove_tool">remove_tool</option>
+      <option value="change_model">change_model</option>
+    </select>
+    <label>Payload (becomes <code>{ text: ... }</code>)</label>
+    <textarea id="fork-payload" placeholder="The new message text…"></textarea>
+    <label>Fake suffix response (optional — leave blank for live mode)</label>
+    <input id="fork-fake" placeholder="Acknowledged.">
+    <label style="display:flex;gap:8px;align-items:center;margin-top:6px">
+      <input type="checkbox" id="fork-live" style="width:auto"> Use live Anthropic call (requires ANTHROPIC_API_KEY)
+    </label>
+    <div class="actions">
+      <button onclick="closeModal('fork-modal')">Cancel</button>
+      <button class="primary" onclick="submitFork()">Fork</button>
+    </div>
+    <p id="fork-status" style="font-size:12px;color:var(--fg-mute);margin-top:10px"></p>
+  </div>
+</div>
+
+<!-- Annotate modal -->
+<div id="annotate-modal" class="modal-bg" onclick="if(event.target===this)closeModal('annotate-modal')">
+  <div class="modal">
+    <h3>Annotate</h3>
+    <input type="hidden" id="ann-kind">
+    <input type="hidden" id="ann-id">
+    <label>Verdict</label>
+    <select id="ann-verdict">
+      <option value="">(none)</option>
+      <option value="correct">correct</option>
+      <option value="incorrect">incorrect</option>
+      <option value="unclear">unclear</option>
+      <option value="good_decision">good_decision</option>
+      <option value="bad_decision">bad_decision</option>
+    </select>
+    <label>Note</label>
+    <textarea id="ann-note" placeholder="What surprised you about this step?"></textarea>
+    <div class="actions">
+      <button onclick="closeModal('annotate-modal')">Cancel</button>
+      <button class="primary" onclick="submitAnnotation()">Save</button>
+    </div>
+    <p id="ann-status" style="font-size:12px;color:var(--fg-mute);margin-top:10px"></p>
+  </div>
+</div>
+
 <script>${SCRIPT}</script>
 </body></html>`;
 }
@@ -365,14 +702,24 @@ export function renderRun(
     })
     .join("")}</div>`;
 
-  const runAnnotations = annotations.length
-    ? `<div class="step-card"><h3>Run annotations</h3>${annotations
-        .map(
-          (a) =>
-            `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
-        )
-        .join("")}</div>`
-    : "";
+  const runAnnotations = `<div class="step-card">
+    <h3 style="display:flex;align-items:center;gap:8px">
+      <span>Run annotations</span>
+      <span class="row-actions" style="margin-left:auto">
+        <button onclick="openAnnotateModal('run', '${esc(run.run_id)}')">+ annotate</button>
+      </span>
+    </h3>
+    ${
+      annotations.length
+        ? annotations
+            .map(
+              (a) =>
+                `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
+            )
+            .join("")
+        : '<p style="color:var(--fg-mute);font-size:12.5px;margin:0">No annotations yet.</p>'
+    }
+  </div>`;
 
   const forksBlock = forks.length
     ? `<div class="step-card"><h3>Forks of this run</h3>${forks
@@ -397,10 +744,15 @@ export function renderRun(
 
 function renderStepCard(s: Step, decision: string): string {
   const status = `<span class="pill ${esc(s.status)}">${esc(s.status)}</span>`;
-  const stepHeader = `<h3 data-seq="${s.sequence}">
-    #${s.sequence} · ${esc(s.action.kind)}${s.action.tool_name ? ` · <code>${esc(s.action.tool_name)}</code>` : ""}
+  const defaultText = s.action.kind === "message" ? (s.action.text ?? "").slice(0, 200) : "";
+  const stepHeader = `<h3 data-seq="${s.sequence}" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span>#${s.sequence} · ${esc(s.action.kind)}${s.action.tool_name ? ` · <code>${esc(s.action.tool_name)}</code>` : ""}</span>
     ${status}
     <span class="pill">${esc(s.model)}</span>
+    <span class="row-actions" style="margin-left:auto">
+      <button onclick="openForkModal('${esc(s.run_id)}', ${s.sequence}, ${JSON.stringify(defaultText)})">Fork from here</button>
+      <button onclick="openAnnotateModal('step', '${esc(s.step_id)}')">Annotate</button>
+    </span>
   </h3>`;
 
   const tabBar = `<div class="tab-bar">
@@ -473,6 +825,46 @@ export function renderDiff(a: Run, b: Run, d: DiffResult): string {
       <thead><tr><th>Seq</th><th>Kind</th><th>A: ${esc(a.run_id.slice(0, 12))}</th><th>B: ${esc(b.run_id.slice(0, 12))}</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+export function renderTests(tests: RegressionTest[], recent: RegressionResult[]): string {
+  const items = tests.length
+    ? tests
+        .map(
+          (t) =>
+            `<a class="item" data-name="${esc(t.name)}" onclick="selectTest('${esc(t.name)}')">
+              <div>${esc(t.name)}</div>
+              <div class="meta">${t.assertions.length} assertions${t.canonical_run_id ? ` · canon ${esc(t.canonical_run_id.slice(0, 12))}` : ""}</div>
+            </a>`,
+        )
+        .join("")
+    : `<p style="color:var(--fg-mute);font-size:12.5px;padding:8px">No tests yet.</p>`;
+
+  const recentRows = recent.length
+    ? recent
+        .map(
+          (r) =>
+            `<div class="row ${r.passed ? "pass" : "fail"}">
+              ${r.passed ? "PASS" : "FAIL"}  ${esc(r.test_name.padEnd(20))}  ${esc(r.run_id.slice(0, 12))}  ${esc(r.created_at)}
+            </div>`,
+        )
+        .join("")
+    : `<p style="color:var(--fg-mute);font-size:12px">No results yet — pick a test and click "Run on all runs."</p>`;
+
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <h2 style="margin:0">Regression tests</h2>
+    <button class="primary" onclick="createNewTest()" style="background:var(--accent);color:#0e1116;border:1px solid var(--accent);padding:6px 14px;border-radius:4px;cursor:pointer">+ New test</button>
+  </div>
+  <div class="tests-grid">
+    <div class="test-list">${items}</div>
+    <div id="test-detail" class="test-detail">
+      <div class="empty">Select a test from the left to edit, or create a new one.</div>
+    </div>
+  </div>
+  <div style="margin-top:18px">
+    <h3 style="margin-bottom:8px;font-size:13px;color:var(--fg-mute);text-transform:uppercase;letter-spacing:0.05em">Recent results (all tests)</h3>
+    <div class="results-list">${recentRows}</div>
+  </div>`;
 }
 
 function esc(s: string): string {

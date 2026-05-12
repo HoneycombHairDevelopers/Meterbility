@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { serveApp } from "@spool/server";
+import { serveApp, SlackNotifier, type SlackEventKind } from "@spool/server";
 import { openStore } from "../util.ts";
 
 export function registerWebCommand(program: Command): void {
@@ -26,6 +26,16 @@ export function registerWebCommand(program: Command): void {
       (v) => parseInt(v, 10),
       120,
     )
+    .option(
+      "--slack-webhook <url>",
+      "Slack incoming-webhook URL (or set SPOOL_SLACK_WEBHOOK)",
+    )
+    .option(
+      "--slack-event <kind>",
+      "Slack event type to forward (repeatable). Default: alert. Other values: run:created, run:completed",
+      (v: string, prev: string[] = []) => [...prev, v],
+      [] as string[],
+    )
     .action(async (opts: {
       port: number;
       host: string;
@@ -33,6 +43,8 @@ export function registerWebCommand(program: Command): void {
       live?: boolean;
       watchTool: string[];
       stallSeconds: number;
+      slackWebhook?: string;
+      slackEvent: string[];
     }) => {
       const store = openStore();
       const { url, live } = serveApp(store, {
@@ -51,6 +63,30 @@ export function registerWebCommand(program: Command): void {
             `live mode on — watching Claude Code sessions every ${1500}ms. Watching tools: ${opts.watchTool.join(", ") || "(none)"}.`,
           ),
         );
+        const webhook =
+          opts.slackWebhook ?? process.env.SPOOL_SLACK_WEBHOOK ?? "";
+        if (webhook) {
+          try {
+            const events = (
+              opts.slackEvent.length > 0 ? opts.slackEvent : ["alert"]
+            ) as SlackEventKind[];
+            const slack = new SlackNotifier({
+              webhookUrl: webhook,
+              serverUrl: url,
+              events,
+            });
+            slack.attach(live);
+            console.log(
+              pc.dim(
+                `slack notifications enabled · forwarding: ${events.join(", ")}`,
+              ),
+            );
+          } catch (err) {
+            console.error(
+              pc.red("slack disabled: ") + (err as Error).message,
+            );
+          }
+        }
         live.on("data", (e) => {
           if (e.type === "alert") {
             console.log(

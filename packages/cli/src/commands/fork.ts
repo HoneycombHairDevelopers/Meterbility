@@ -2,7 +2,14 @@ import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 import pc from "picocolors";
 import type { ForkEdit, ForkEditType } from "@spool/shared";
-import { forkRun, anthropicResponder, fakeResponder } from "@spool/server";
+import {
+  forkRun,
+  anthropicResponder,
+  continueFork,
+  fakeResponder,
+  type ContinuationModelCaller,
+  type ToolExecutor,
+} from "@spool/server";
 import { openStore } from "../util.ts";
 
 const EDIT_TYPES: ForkEditType[] = [
@@ -39,6 +46,22 @@ export function registerForkCommand(program: Command): void {
     )
     .option("--live-model <model>", "Model for live suffix", "claude-opus-4-7")
     .option("--fake <text>", "Use a fake responder that emits the given text")
+    .option(
+      "--continue <mode>",
+      "After the first suffix step, continue the agent loop. Values: simulate (use original tool results) | live (caller-provided executor; CLI supports bash-only safe mode)",
+    )
+    .option(
+      "--max-iterations <n>",
+      "Cap continuation loop iterations",
+      (v) => parseInt(v, 10),
+      25,
+    )
+    .option(
+      "--allow-tool <name>",
+      "(live continuation) Tools the executor will run. Repeatable.",
+      (v: string, prev: string[] = []) => [...prev, v],
+      [] as string[],
+    )
     .action(async (
       runId: string,
       opts: {
@@ -50,6 +73,9 @@ export function registerForkCommand(program: Command): void {
         live?: boolean;
         liveModel?: string;
         fake?: string;
+        continue?: string;
+        maxIterations: number;
+        allowTool: string[];
       },
     ) => {
       if (!EDIT_TYPES.includes(opts.edit as ForkEditType)) {
@@ -87,6 +113,41 @@ export function registerForkCommand(program: Command): void {
         console.log(
           `  ${pc.dim("suffix")}       ${result.live ? pc.green("live step appended") : pc.yellow("none — use --live or --fake to extend")}`,
         );
+
+        // Optional multi-step continuation.
+        if (opts.continue) {
+          if (opts.continue !== "simulate" && opts.continue !== "live") {
+            throw new Error(
+              `unknown --continue mode: ${opts.continue}\nallowed: simulate, live`,
+            );
+          }
+          if (opts.continue === "live" && !process.env.ANTHROPIC_API_KEY) {
+            throw new Error(
+              "--continue=live requires ANTHROPIC_API_KEY for the model loop",
+            );
+          }
+          const modelCaller = buildContinuationCaller(
+            opts.liveModel ?? "claude-opus-4-7",
+          );
+          const cont = await continueFork(store, result.fork_run_id, {
+            mode: opts.continue,
+            modelCaller,
+            toolExecutor:
+              opts.continue === "live"
+                ? buildBashOnlyExecutor(opts.allowTool)
+                : undefined,
+            maxIterations: opts.maxIterations,
+            originRunId: runId,
+          });
+          console.log(pc.bold("\ncontinuation"));
+          console.log(`  ${pc.dim("mode")}         ${opts.continue}`);
+          console.log(`  ${pc.dim("iterations")}   ${cont.iterations_run}`);
+          console.log(`  ${pc.dim("steps added")}  ${cont.steps_added}`);
+          console.log(
+            `  ${pc.dim("terminal")}     ${terminalColor(cont.terminal_reason)}`,
+          );
+        }
+
         console.log(
           pc.dim(
             `\nopen with:  spool inspect ${result.fork_run_id.slice(0, 12)}` +
@@ -97,6 +158,151 @@ export function registerForkCommand(program: Command): void {
         store.close();
       }
     });
+}
+
+function terminalColor(reason: string): string {
+  switch (reason) {
+    case "model_completed":
+      return pc.green(reason);
+    case "max_iterations":
+      return pc.yellow(reason);
+    case "simulate_miss":
+      return pc.yellow(reason);
+    case "tool_error":
+    case "model_error":
+      return pc.red(reason);
+    default:
+      return reason;
+  }
+}
+
+function buildContinuationCaller(model: string): ContinuationModelCaller {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  return async (args) => {
+    if (!apiKey) {
+      // For dry runs (no key), emit a trivial completion so simulate mode
+      // can still demonstrate the loop's structure without spending money.
+      return {
+        model: "dry-run",
+        decision_content: [
+          { type: "text", text: "(dry run — set ANTHROPIC_API_KEY for live continuation)" },
+        ],
+        action: { kind: "message", text: "(dry run)" },
+        tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+        latency_ms: 0,
+      };
+    }
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const { Store } = await import("@spool/collector");
+    const store = Store.open();
+    try {
+      const client = new Anthropic({ apiKey });
+      // Resolve content_refs to actual text for the API call.
+      const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
+      for (const m of args.history) {
+        if (m.role === "tool") continue; // tool turns are summarized into the assistant's prior message
+        const text = await store.blobs.tryGetString(m.content_ref);
+        if (text) messages.push({ role: m.role, content: text });
+      }
+      const t0 = Date.now();
+      const resp = await client.messages.create({
+        model,
+        max_tokens: 4096,
+        system: args.system_prompt,
+        messages: messages.length
+          ? messages
+          : [{ role: "user", content: "(no history)" }],
+      });
+      const t1 = Date.now();
+      const blocks = resp.content ?? [];
+      const toolUse = blocks.find(
+        (b): b is { type: "tool_use"; id: string; name: string; input: Record<string, unknown> } =>
+          b.type === "tool_use",
+      );
+      const text = blocks
+        .filter((b): b is { type: "text"; text: string } => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+      return {
+        model: resp.model,
+        decision_content: resp.content,
+        action: toolUse
+          ? {
+              kind: "tool_call",
+              tool_name: toolUse.name,
+              tool_use_id: toolUse.id,
+              tool_input: toolUse.input,
+            }
+          : { kind: "message", text },
+        tokens: {
+          input: resp.usage?.input_tokens ?? 0,
+          output: resp.usage?.output_tokens ?? 0,
+          cached_read: resp.usage?.cache_read_input_tokens ?? 0,
+          cache_creation: resp.usage?.cache_creation_input_tokens ?? 0,
+        },
+        latency_ms: t1 - t0,
+      };
+    } finally {
+      store.close();
+    }
+  };
+}
+
+function buildBashOnlyExecutor(allowList: string[]): ToolExecutor {
+  // Safe-by-default: refuse to run any tool unless explicitly opted-in via
+  // --allow-tool. Even "allowed" tools that aren't Bash get a placeholder
+  // response so the loop continues, but we never run arbitrary shell.
+  const allowSet = new Set(allowList);
+  return async (call) => {
+    if (!allowSet.has(call.tool_name)) {
+      return {
+        output: {
+          spool_note: `tool '${call.tool_name}' not in --allow-tool set; skipped`,
+        },
+        is_error: false,
+        summary: `skipped (not allowed): ${call.tool_name}`,
+      };
+    }
+    if (call.tool_name === "Bash") {
+      const input = call.tool_input as { command?: string } | undefined;
+      const cmd = input?.command;
+      if (!cmd || typeof cmd !== "string") {
+        return {
+          output: { error: "missing command" },
+          is_error: true,
+          summary: "missing command",
+        };
+      }
+      // Hard refuse anything destructive-looking.
+      if (/\brm\s+-[rRfF]|sudo\b|mkfs|dd\s+if=|--no-verify|>\s*\/dev\/sd/.test(cmd)) {
+        return {
+          output: { error: "command rejected as destructive" },
+          is_error: true,
+          summary: "destructive command rejected",
+        };
+      }
+      const { spawnSync } = await import("node:child_process");
+      const r = spawnSync("bash", ["-lc", cmd], {
+        encoding: "utf-8",
+        timeout: 30_000,
+      });
+      return {
+        output: {
+          stdout: r.stdout?.slice(0, 8_000) ?? "",
+          stderr: r.stderr?.slice(0, 2_000) ?? "",
+          exit_code: r.status,
+        },
+        is_error: (r.status ?? 0) !== 0,
+        summary: (r.stdout?.split("\n")[0] ?? "").slice(0, 200),
+      };
+    }
+    // Allowed but unhandled — return a no-op so the loop can continue.
+    return {
+      output: { spool_note: `tool '${call.tool_name}' has no live executor; no-op` },
+      is_error: false,
+      summary: `no-op: ${call.tool_name}`,
+    };
+  };
 }
 
 async function resolvePayload(opts: {
