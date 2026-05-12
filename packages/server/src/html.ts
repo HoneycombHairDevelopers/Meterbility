@@ -1,5 +1,6 @@
 import type { Annotation, Run, Step } from "@spool/shared";
 import type { DiffResult } from "./diff.ts";
+import type { FleetEntry } from "./live.ts";
 
 /**
  * Server-rendered HTML. Single bundle of styles + tiny vanilla JS for
@@ -121,9 +122,107 @@ const STYLES = `
   .diff-row.only_b td:nth-child(1) { border-left: 2px solid var(--ok); }
   .diff-row.diverged td:nth-child(1) { border-left: 2px solid var(--fork); }
   .empty { color: var(--fg-mute); font-style: italic; padding: 20px; }
+
+  .fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+  .card {
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 14px;
+  }
+  .card .title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
+  .card .title-row .title { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .meta { font-size: 11.5px; color: var(--fg-mute); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .card .meta .age { font-variant-numeric: tabular-nums; }
+  .ctx-bar {
+    height: 4px; background: var(--bg-3); border-radius: 2px;
+    margin: 6px 0; position: relative; overflow: hidden;
+  }
+  .ctx-bar .fill { height: 100%; background: var(--accent); transition: width 0.4s; }
+  .ctx-bar.warn .fill { background: var(--warn); }
+  .ctx-bar.danger .fill { background: var(--err); }
+  .recent-tools { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--fg-mute); }
+  .recent-tools code {
+    background: var(--bg-3); padding: 1px 4px; border-radius: 3px; margin-right: 3px;
+  }
+  .alert-strip {
+    margin-top: 6px; padding: 4px 8px; border-radius: 3px; font-size: 11.5px;
+    background: rgba(248, 81, 73, 0.12); color: var(--err); border: 1px solid rgba(248,81,73,0.3);
+  }
+  .alert-strip.warn { background: rgba(210,153,34,0.12); color: var(--warn); border-color: rgba(210,153,34,0.3); }
+  .pill.live-progressing { color: var(--ok); border-color: rgba(63,185,80,0.4); }
+  .pill.live-stalled { color: var(--warn); border-color: rgba(210,153,34,0.4); }
+  .pill.live-looping { color: var(--err); border-color: rgba(248,81,73,0.5); }
+  .pill.live-awaiting_input { color: var(--accent); border-color: rgba(88,166,255,0.4); }
+  .pill.live-errored { color: var(--err); border-color: rgba(248,81,73,0.5); }
+  .pill.live-completed { color: var(--fg-mute); }
 `;
 
 const SCRIPT = `
+function fmtAge(iso) {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return 'just now';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  return Math.round(s / 3600) + 'h ago';
+}
+function ctxBarClass(pct) {
+  if (pct >= 90) return 'ctx-bar danger';
+  if (pct >= 70) return 'ctx-bar warn';
+  return 'ctx-bar';
+}
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function renderFleetEntry(e) {
+  const r = e.run;
+  const tools = (e.recent_tools || []).map(t => '<code>' + escapeHtml(t) + '</code>').join('');
+  const alerts = (e.alerts || []).map(a => '<div class="alert-strip ' + (a.kind === 'stall' ? 'warn' : '') + '">' + escapeHtml(a.message) + '</div>').join('');
+  return '<div class="card" data-run="' + escapeHtml(r.run_id) + '">'
+    + '<div class="title-row">'
+    +   '<a class="title" href="/runs/' + escapeHtml(r.run_id) + '">' + escapeHtml(r.title || r.run_id) + '</a>'
+    +   '<span class="pill live-' + escapeHtml(e.status) + '">' + escapeHtml(e.status) + '</span>'
+    + '</div>'
+    + '<div class="meta">'
+    +   '<span class="kv">' + r.step_count + ' steps</span>'
+    +   '<span class="kv">$' + (r.cost_cents / 100).toFixed(2) + '</span>'
+    +   '<span class="kv">' + escapeHtml(r.git_branch || '') + '</span>'
+    +   '<span class="age" data-age="' + escapeHtml(e.last_step_at || '') + '">' + fmtAge(e.last_step_at) + '</span>'
+    + '</div>'
+    + '<div class="' + ctxBarClass(e.context_pct) + '" title="context util ' + e.context_pct + '%"><div class="fill" style="width:' + e.context_pct + '%"></div></div>'
+    + '<div class="recent-tools">' + (tools || '<span style="opacity:0.5">no tools yet</span>') + '</div>'
+    + alerts
+    + '</div>';
+}
+function tickAges() {
+  document.querySelectorAll('[data-age]').forEach(el => {
+    el.textContent = fmtAge(el.dataset.age);
+  });
+}
+function startLive() {
+  if (typeof EventSource === 'undefined') return;
+  const root = document.getElementById('fleet-grid');
+  if (!root) return;
+  const src = new EventSource('/api/live');
+  src.addEventListener('fleet:snapshot', (ev) => {
+    const data = JSON.parse(ev.data);
+    root.innerHTML = data.entries.map(renderFleetEntry).join('') || '<div class="empty">No active runs.</div>';
+  });
+  src.addEventListener('alert', (ev) => {
+    const data = JSON.parse(ev.data);
+    const banner = document.getElementById('alert-banner');
+    if (!banner) return;
+    const div = document.createElement('div');
+    div.className = 'alert-strip';
+    div.innerHTML = '<strong>' + escapeHtml(data.kind) + '</strong> · ' + escapeHtml(data.message) + ' · <a href="/runs/' + escapeHtml(data.run_id) + '">open</a>';
+    banner.appendChild(div);
+    setTimeout(() => div.remove(), 12000);
+  });
+  setInterval(tickAges, 1000);
+}
+window.addEventListener('DOMContentLoaded', startLive);
+
 function showTab(stepId, tab) {
   const tabs = document.querySelectorAll('[data-step="' + stepId + '"] .tab');
   tabs.forEach(t => t.style.display = 'none');
@@ -154,6 +253,51 @@ export function renderShell(title: string, body: string): string {
 <main>${body}</main>
 <script>${SCRIPT}</script>
 </body></html>`;
+}
+
+export function renderFleet(entries: FleetEntry[]): string {
+  const initial = entries
+    .map((e) => fleetEntryHtml(e))
+    .join("");
+  return `<div id="alert-banner" style="margin-bottom:12px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="margin:0">Fleet</h2>
+      <div class="meta-row" style="margin:0">
+        <span class="kv"><strong>${entries.length}</strong> run(s) tracked</span>
+        <span class="kv"><a href="/runs">all runs →</a></span>
+      </div>
+    </div>
+    <div id="fleet-grid" class="fleet">${initial || `<div class="empty">No active runs yet. Open a Claude Code session and Spool will pick it up within a couple of seconds.</div>`}</div>`;
+}
+
+function fleetEntryHtml(e: FleetEntry): string {
+  const r = e.run;
+  const tools = (e.recent_tools ?? [])
+    .map((t) => `<code>${esc(t)}</code>`)
+    .join("");
+  const alerts = (e.alerts ?? [])
+    .map(
+      (a) =>
+        `<div class="alert-strip ${a.kind === "stall" ? "warn" : ""}">${esc(a.message)}</div>`,
+    )
+    .join("");
+  const barClass =
+    e.context_pct >= 90 ? "ctx-bar danger" : e.context_pct >= 70 ? "ctx-bar warn" : "ctx-bar";
+  return `<div class="card" data-run="${esc(r.run_id)}">
+    <div class="title-row">
+      <a class="title" href="/runs/${esc(r.run_id)}">${esc(r.title ?? r.run_id)}</a>
+      <span class="pill live-${esc(e.status)}">${esc(e.status)}</span>
+    </div>
+    <div class="meta">
+      <span class="kv">${r.step_count} steps</span>
+      <span class="kv">$${(r.cost_cents / 100).toFixed(2)}</span>
+      <span class="kv">${esc(r.git_branch ?? "")}</span>
+      <span class="age" data-age="${esc(e.last_step_at ?? "")}"></span>
+    </div>
+    <div class="${barClass}" title="context util ${e.context_pct}%"><div class="fill" style="width:${e.context_pct}%"></div></div>
+    <div class="recent-tools">${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
+    ${alerts}
+  </div>`;
 }
 
 export function renderRunList(runs: Run[]): string {

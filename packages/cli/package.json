@@ -13,6 +13,10 @@
     "@spool/collector": "*",
     "@spool/server": "*",
     "@spool/claude-code-adapter": "*",
+    "@spool/codex-cli-adapter": "*",
+    "@spool/cursor-adapter": "*",
+    "@spool/agent": "*",
+    "@spool/store-postgres": "*",
     "commander": "^12.1.0",
     "picocolors": "^1.0.0"
   }

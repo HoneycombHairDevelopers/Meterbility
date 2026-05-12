@@ -10,6 +10,8 @@ import { registerAnnotateCommand } from "./commands/annotate.ts";
 import { registerWebCommand } from "./commands/web.ts";
 import { registerDoctorCommand } from "./commands/doctor.ts";
 import { registerExportCommand } from "./commands/export.ts";
+import { registerTestCommand } from "./commands/test.ts";
+import { registerDbCommand } from "./commands/db.ts";
 
 const program = new Command();
 program
@@ -26,6 +28,8 @@ registerDiffCommand(program);
 registerAnnotateCommand(program);
 registerWebCommand(program);
 registerExportCommand(program);
+registerTestCommand(program);
+registerDbCommand(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red("error: ") + (err as Error).message);

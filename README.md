@@ -6,7 +6,7 @@ Spool is the v0 implementation of [SPEC.md](SPEC.md). It turns Claude Code's per
 
 ## Status
 
-- **v0** — Claude Code, local-only, post-hoc inspection.
+- **v0.1** — Claude Code + Codex CLI capture, custom-agent SDK, live fleet view, notifications, regression suite, optional Postgres backend.
 - **Working end-to-end.** Try the [60-second tour](docs/getting-started.md).
 - **Not on npm yet.** Run from a clone (see below).
 
@@ -25,27 +25,31 @@ npm install
 
 `./bin/spool` is the launcher. To put it on `$PATH`, symlink it into `~/.local/bin/` or wherever you keep scripts.
 
-## What v0 ships
+## What ships today
 
-Mapped against [SPEC §19](SPEC.md):
+Against [SPEC §19](SPEC.md) (v0) and [§20](SPEC.md) (v0.1):
 
-| Capability                          | Status |
-| ----------------------------------- | ------ |
-| Claude Code session capture (hook)  | ✅     |
-| Local SQLite + filesystem blobs     | ✅     |
-| `spool list`                         | ✅     |
-| `spool inspect`                      | ✅     |
-| `spool fork`                         | ✅     |
-| `spool diff` (structural)            | ✅     |
-| `spool annotate`                     | ✅     |
-| `spool export` (open trace format)   | ✅     |
-| `spool web` (local UI)               | ✅     |
-| Redaction pass on capture            | ✅     |
-| Replay engine (deterministic prefix) | ✅     |
-| Live suffix (Anthropic API)          | ✅ (opt-in via `--live`) |
-| Live inspector (real-time)           | ⏳ v0.1 |
-| Multi-runtime support                | ⏳ v0.1 |
-| Hosted backend / team features       | ⏳ v0.1+ |
+| Capability                                | Status |
+| ----------------------------------------- | ------ |
+| Claude Code session capture (hook mode)   | ✅ v0  |
+| Codex CLI / Codex Desktop capture          | ✅ v0.1 |
+| Cursor composer/Agents-window capture      | ✅ v0.1 (reads `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`) |
+| Custom-agent SDK (`@spool/agent`)         | ✅ v0.1 |
+| `traceAnthropic` SDK helper                | ✅ v0.1 |
+| Local SQLite + filesystem blobs           | ✅ v0  |
+| Postgres backend (optional, hosted)        | ✅ v0.1 (`spool db postgres-init/sync`) |
+| `spool list` / `inspect` / `fork` / `diff` / `annotate` / `export` / `web` / `doctor` | ✅ v0 |
+| Live inspector (real-time fleet view, SSE) | ✅ v0.1 (`spool web --live`) |
+| Notifications (loop / threshold / stall / tool-watch) | ✅ v0.1 |
+| Regression suite (`spool test ...`)       | ✅ v0.1 |
+| Trace format spec v0.2                     | ✅ v0.1 |
+| Replay engine (deterministic prefix)      | ✅ v0  |
+| Live suffix (Anthropic API)                | ✅ v0  |
+| Sandbox templates                         | ⏳ v0.2 |
+| Live Probe (pause + inject + resume)       | ⏳ v0.2 |
+| LangChain / Vercel AI SDK adapters         | ⏳ v0.2 |
+| Python SDK                                 | ⏳ v0.2 |
+| Team tier (multi-user, RBAC)               | ⏳ v0.2 |
 
 ## The five DevTools panels
 
@@ -59,22 +63,34 @@ See [Appendix B in the spec](SPEC.md). Source tree:
 packages/
   cli/               # `spool` command (commander)
   shared/            # types, hashing, redaction, paths
-  spec/              # trace-format schema + model pricing
+  spec/              # trace-format schema (v0.1 + v0.2) + pricing
   collector/         # SQLite + content-addressed blob store
-  server/            # replay, fork, diff, web (Hono)
+  server/            # replay, fork, diff, web (Hono), live inspector, regression
+  agent/             # custom-agent SDK (SpoolTracer + traceAnthropic)
+  store-postgres/    # optional Postgres backend (sync from local SQLite)
   web/               # placeholder for future SPA
 adapters/
   claude-code/       # JSONL → Spool Step model
+  codex-cli/         # Codex / Codex Desktop rollout JSONL adapter
+  cursor/            # Cursor composer/Agents reverse-engineered SQLite adapter
 docs/
   getting-started.md
   trace-format.md
   architecture.md
+  sdk.md
+  live-inspector.md
+  regression.md
+  postgres.md
 ```
 
 ## Docs
 
 - [Getting started](docs/getting-started.md) — 60-second tour.
-- [Trace format v0.1](docs/trace-format.md) — wire format spec.
+- [SDK guide](docs/sdk.md) — instrument a custom TS agent.
+- [Live inspector](docs/live-inspector.md) — `spool web --live` and notifications.
+- [Regression suite](docs/regression.md) — promote canonicals + assertions.
+- [Postgres backend](docs/postgres.md) — optional hosted store for team tier.
+- [Trace format](docs/trace-format.md) — v0.1 + v0.2 wire format spec.
 - [Architecture](docs/architecture.md) — how capture, storage, replay, and diff fit together.
 
 ## License

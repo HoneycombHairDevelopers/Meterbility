@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import type { Annotation, Run, Step } from "@spool/shared";
 import {
@@ -13,7 +14,14 @@ import {
 } from "@spool/collector";
 import type { Store } from "@spool/collector";
 import { diffRuns } from "./diff.ts";
-import { renderShell, renderRunList, renderRun, renderDiff } from "./html.ts";
+import {
+  renderShell,
+  renderRunList,
+  renderRun,
+  renderDiff,
+  renderFleet,
+} from "./html.ts";
+import { LiveInspector, type LiveEvent } from "./live.ts";
 
 /**
  * Hono app over the local Store. Two surfaces share the same routes:
@@ -21,13 +29,52 @@ import { renderShell, renderRunList, renderRun, renderDiff } from "./html.ts";
  *  - Server-rendered HTML (`/`, `/runs/:id`, `/diff?a=&b=`) — what
  *    `spool web` opens by default.
  */
-export function buildApp(store: Store) {
+export interface BuildAppOptions {
+  /** When provided, the live inspector is mounted and SSE streams its events. */
+  live?: LiveInspector;
+}
+
+export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   const app = new Hono();
 
   app.get("/", (c) => {
+    if (opts.live) {
+      const entries = opts.live.fleetEntries();
+      return c.html(renderShell("Spool · Fleet", renderFleet(entries)));
+    }
     const runs = listRuns(store, { limit: 100 });
     return c.html(renderShell("Spool", renderRunList(runs)));
   });
+
+  app.get("/runs", (c) => {
+    const runs = listRuns(store, { limit: 200 });
+    return c.html(renderShell("Runs", renderRunList(runs)));
+  });
+
+  // Server-Sent Events for the live fleet view.
+  if (opts.live) {
+    const live = opts.live;
+    app.get("/api/live", (c) => {
+      c.header("Content-Type", "text/event-stream");
+      c.header("Cache-Control", "no-cache");
+      c.header("Connection", "keep-alive");
+      return stream(c, async (s) => {
+        const send = (e: LiveEvent) => {
+          void s.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+        };
+        const handler = (e: LiveEvent) => send(e);
+        live.on("data", handler);
+        // Initial snapshot so the client populates immediately.
+        send({ type: "fleet:snapshot", entries: live.fleetEntries() });
+        await new Promise<void>((resolve) => {
+          s.onAbort(() => {
+            live.off("data", handler);
+            resolve();
+          });
+        });
+      });
+    });
+  }
 
   app.get("/runs/:id", async (c) => {
     const runId = c.req.param("id");
@@ -125,18 +172,29 @@ async function loadDecisionPreviews(
 export interface ServeOptions {
   port?: number;
   host?: string;
+  live?: boolean;
+  liveOptions?: import("./live.ts").LiveOptions;
 }
 
 export function serveApp(
   store: Store,
   opts: ServeOptions = {},
-): { url: string; close: () => void } {
-  const app = buildApp(store);
+): { url: string; close: () => void; live?: LiveInspector } {
+  let live: LiveInspector | undefined;
+  if (opts.live) {
+    live = new LiveInspector(store, opts.liveOptions);
+    void live.start();
+  }
+  const app = buildApp(store, { live });
   const port = opts.port ?? 4317;
   const host = opts.host ?? "127.0.0.1";
   const server = serve({ fetch: app.fetch, port, hostname: host });
   return {
     url: `http://${host}:${port}`,
-    close: () => server.close(),
+    live,
+    close: () => {
+      live?.stop();
+      server.close();
+    },
   };
 }

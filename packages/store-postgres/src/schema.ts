@@ -1,19 +1,21 @@
-import type Database from "better-sqlite3";
+import type { Client } from "pg";
 
 /**
- * Schema v1 — flat tables that map directly onto SPEC §6 entities. JSON
- * columns hold the structured-but-not-indexed parts (action, outcome,
- * tags). Foreign keys are enforced; large content lives in the blob store
- * referenced by SHA256.
+ * Postgres schema mirroring `@spool/collector` (SQLite). Same column
+ * names, same semantics. Differences:
+ *   - JSON columns use `jsonb` (queryable + indexable later).
+ *   - Timestamps use `timestamptz` rather than free-form text.
+ *   - Indexes are explicit; SQLite's `WAL` / `synchronous` pragmas have
+ *     no Postgres equivalent and aren't applied.
+ *
+ * Designed for Spool's hosted/team tier (SPEC §15.3). Local mode keeps
+ * the SQLite store as default; this exists for the deployments where
+ * multiple operators share a project's run history.
  */
-export const SCHEMA_VERSION = 1;
+export const POSTGRES_SCHEMA_VERSION = 2;
 
-export function ensureSchema(db: Database.Database): void {
-  db.pragma("journal_mode = WAL");
-  db.pragma("synchronous = NORMAL");
-  db.pragma("foreign_keys = ON");
-
-  db.exec(`
+export async function ensurePostgresSchema(client: Client): Promise<void> {
+  await client.query(`
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -23,14 +25,14 @@ export function ensureSchema(db: Database.Database): void {
       project_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       cwd TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL
+      created_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS agents (
       agent_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(project_id),
       name TEXT NOT NULL,
-      created_at TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
       UNIQUE(project_id, name)
     );
 
@@ -42,18 +44,18 @@ export function ensureSchema(db: Database.Database): void {
       source_runtime TEXT NOT NULL,
       title TEXT,
       status TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      ended_at TEXT,
+      started_at TIMESTAMPTZ NOT NULL,
+      ended_at TIMESTAMPTZ,
       git_branch TEXT,
       cwd TEXT,
       fork_origin_run_id TEXT REFERENCES runs(run_id),
       fork_origin_step_id TEXT,
-      tokens_total_input INTEGER NOT NULL DEFAULT 0,
-      tokens_total_output INTEGER NOT NULL DEFAULT 0,
-      tokens_total_cached INTEGER NOT NULL DEFAULT 0,
-      cost_cents REAL NOT NULL DEFAULT 0,
+      tokens_total_input BIGINT NOT NULL DEFAULT 0,
+      tokens_total_output BIGINT NOT NULL DEFAULT 0,
+      tokens_total_cached BIGINT NOT NULL DEFAULT 0,
+      cost_cents DOUBLE PRECISION NOT NULL DEFAULT 0,
       step_count INTEGER NOT NULL DEFAULT 0,
-      tags TEXT NOT NULL DEFAULT '[]'
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb
     );
 
     CREATE INDEX IF NOT EXISTS idx_runs_project_started
@@ -69,21 +71,21 @@ export function ensureSchema(db: Database.Database): void {
       parent_step_id TEXT,
       fork_origin_id TEXT,
       sequence INTEGER NOT NULL,
-      timestamp TEXT NOT NULL,
+      timestamp TIMESTAMPTZ NOT NULL,
       model TEXT NOT NULL,
       context_snapshot_id TEXT NOT NULL,
       decision_ref TEXT NOT NULL,
-      action_json TEXT NOT NULL,
-      outcome_json TEXT NOT NULL,
-      tokens_input INTEGER NOT NULL DEFAULT 0,
-      tokens_output INTEGER NOT NULL DEFAULT 0,
-      tokens_cached_read INTEGER NOT NULL DEFAULT 0,
-      tokens_cache_creation INTEGER NOT NULL DEFAULT 0,
-      tokens_reasoning INTEGER,
+      action JSONB NOT NULL,
+      outcome JSONB NOT NULL,
+      tokens_input BIGINT NOT NULL DEFAULT 0,
+      tokens_output BIGINT NOT NULL DEFAULT 0,
+      tokens_cached_read BIGINT NOT NULL DEFAULT 0,
+      tokens_cache_creation BIGINT NOT NULL DEFAULT 0,
+      tokens_reasoning BIGINT,
       latency_ms INTEGER NOT NULL DEFAULT 0,
-      cost_cents REAL NOT NULL DEFAULT 0,
+      cost_cents DOUBLE PRECISION NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
-      tags TEXT NOT NULL DEFAULT '[]',
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
       UNIQUE(run_id, sequence)
     );
 
@@ -92,13 +94,19 @@ export function ensureSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_steps_context
       ON steps(context_snapshot_id);
 
-    -- Stored context snapshots. The 'id' is the SHA256 of the canonicalized
-    -- snapshot JSON; the snapshot JSON itself lives in the blob store.
     CREATE TABLE IF NOT EXISTS context_snapshots (
       snapshot_id TEXT PRIMARY KEY,
       blob_ref TEXT NOT NULL,
       component_count INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
+      created_at TIMESTAMPTZ NOT NULL
+    );
+
+    -- Blob content is stored inline as bytea in Postgres mode (no
+    -- separate filesystem layer). Use BlobStore.put / .get on the store.
+    CREATE TABLE IF NOT EXISTS blobs (
+      blob_ref TEXT PRIMARY KEY,
+      content BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS forks (
@@ -107,8 +115,8 @@ export function ensureSchema(db: Database.Database): void {
       origin_step_id TEXT NOT NULL,
       fork_run_id TEXT NOT NULL REFERENCES runs(run_id),
       edit_type TEXT NOT NULL,
-      edit_payload_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      edit_payload JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_forks_origin
@@ -121,61 +129,41 @@ export function ensureSchema(db: Database.Database): void {
       author TEXT NOT NULL,
       verdict TEXT,
       note TEXT,
-      created_at TEXT NOT NULL
+      created_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_annotations_target
       ON annotations(target_kind, target_id);
 
-    -- Idempotency aid for the Claude Code adapter: remember the last byte
-    -- offset we ingested per session file so we can resume cheaply.
-    CREATE TABLE IF NOT EXISTS ingest_progress (
-      source_runtime TEXT NOT NULL,
-      source_path TEXT NOT NULL,
-      last_offset INTEGER NOT NULL,
-      last_ingested_at TEXT NOT NULL,
-      PRIMARY KEY (source_runtime, source_path)
-    );
-
-    CREATE TABLE IF NOT EXISTS redaction_log (
-      blob_ref TEXT NOT NULL,
-      rule TEXT NOT NULL,
-      count INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_redaction_blob
-      ON redaction_log(blob_ref);
-
-    -- Regression suite (v0.1). A test = name + assertion list.
-    -- Optionally references a canonical run that originated the test.
     CREATE TABLE IF NOT EXISTS regression_tests (
       test_id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       description TEXT,
-      assertions_json TEXT NOT NULL,
+      assertions JSONB NOT NULL,
       canonical_run_id TEXT REFERENCES runs(run_id),
-      created_at TEXT NOT NULL
+      created_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS regression_results (
       result_id TEXT PRIMARY KEY,
       test_id TEXT NOT NULL REFERENCES regression_tests(test_id) ON DELETE CASCADE,
       run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-      passed INTEGER NOT NULL,
-      details_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      passed BOOLEAN NOT NULL,
+      details JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
     );
+
     CREATE INDEX IF NOT EXISTS idx_regression_results_test
       ON regression_results(test_id, created_at DESC);
   `);
 
-  const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
-    | { value: string }
-    | undefined;
-  if (!row) {
-    db.prepare("INSERT INTO meta(key,value) VALUES(?,?)").run(
-      "schema_version",
-      String(SCHEMA_VERSION),
+  const versionRow = await client.query(
+    "SELECT value FROM meta WHERE key = 'schema_version'",
+  );
+  if (versionRow.rowCount === 0) {
+    await client.query(
+      "INSERT INTO meta(key,value) VALUES ($1,$2)",
+      ["schema_version", String(POSTGRES_SCHEMA_VERSION)],
     );
   }
 }

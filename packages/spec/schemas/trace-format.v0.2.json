@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spool.dev/schemas/trace-format/0.2.0",
+  "title": "Spool Trace Format",
+  "version": "0.2.0",
+  "description": "Wire format for Spool traces. Hosts emit one JSON document per run; each step is content-addressed via SHA256 refs. v0.2 adds cross-vendor source_runtime values, fork/regression metadata, and explicit blob refs everywhere.",
+  "type": "object",
+  "required": ["spool_trace_version", "run", "steps"],
+  "properties": {
+    "spool_trace_version": { "enum": ["0.1.0", "0.2.0"] },
+    "run": { "$ref": "#/$defs/Run" },
+    "steps": { "type": "array", "items": { "$ref": "#/$defs/Step" } },
+    "blobs": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "description": "base64-encoded UTF-8 content" }
+    },
+    "annotations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Annotation" }
+    },
+    "regressions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RegressionResult" }
+    }
+  },
+  "$defs": {
+    "Run": {
+      "type": "object",
+      "required": ["run_id", "started_at", "source_runtime", "status"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "source_runtime": {
+          "enum": ["claude-code", "codex-cli", "cursor", "sdk-ts", "sdk-py", "fork"]
+        },
+        "source_session_id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "enum": ["ok", "error", "abandoned", "in_progress"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "git_branch": { "type": "string" },
+        "cwd": { "type": "string" },
+        "fork_origin_run_id": { "type": "string" },
+        "fork_origin_step_id": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Step": {
+      "type": "object",
+      "required": ["step_id", "sequence", "timestamp", "model", "action", "outcome"],
+      "properties": {
+        "step_id": { "type": "string" },
+        "run_id": { "type": "string" },
+        "parent_step_id": { "type": "string" },
+        "fork_origin_id": { "type": "string" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "model": { "type": "string" },
+        "context_snapshot_id": { "type": "string" },
+        "decision_ref": { "type": "string" },
+        "action": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["tool_call", "message", "sub_agent_dispatch", "thinking_only", "none"] },
+            "tool_name": { "type": "string" },
+            "tool_use_id": { "type": "string" },
+            "tool_input": {},
+            "text": { "type": "string" },
+            "sub_agent": { "type": "string" }
+          }
+        },
+        "outcome": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["ok", "error", "pending"] },
+            "tool_result_ref": { "type": "string" },
+            "is_error": { "type": "boolean" },
+            "summary": { "type": "string" }
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "integer" },
+            "output": { "type": "integer" },
+            "cached_read": { "type": "integer" },
+            "cache_creation": { "type": "integer" },
+            "reasoning": { "type": "integer" }
+          }
+        },
+        "latency_ms": { "type": "integer" },
+        "cost_cents": { "type": "number" },
+        "status": { "enum": ["ok", "error", "abandoned", "in_progress"] },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Annotation": {
+      "type": "object",
+      "required": ["target_kind", "target_id", "author", "created_at"],
+      "properties": {
+        "target_kind": { "enum": ["step", "run"] },
+        "target_id": { "type": "string" },
+        "author": { "type": "string" },
+        "verdict": {
+          "enum": ["correct", "incorrect", "unclear", "good_decision", "bad_decision"]
+        },
+        "note": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "RegressionResult": {
+      "type": "object",
+      "required": ["test_id", "test_name", "run_id", "passed"],
+      "properties": {
+        "test_id": { "type": "string" },
+        "test_name": { "type": "string" },
+        "run_id": { "type": "string" },
+        "passed": { "type": "boolean" },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["assertion", "passed", "reason"],
+            "properties": {
+              "assertion": {
+                "type": "object",
+                "required": ["kind", "value"],
+                "properties": {
+                  "kind": { "type": "string" },
+                  "value": {},
+                  "at": { "type": "integer" },
+                  "label": { "type": "string" }
+                }
+              },
+              "passed": { "type": "boolean" },
+              "reason": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

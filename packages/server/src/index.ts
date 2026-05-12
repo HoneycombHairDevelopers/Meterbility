@@ -2,3 +2,6 @@ export * from "./replay.ts";
 export * from "./fork.ts";
 export * from "./diff.ts";
 export * from "./web.ts";
+export * from "./live.ts";
+export * from "./live-heuristics.ts";
+export * from "./regression.ts";

@@ -10,10 +10,66 @@ export function registerWebCommand(program: Command): void {
     .option("-p, --port <n>", "Port", (v) => parseInt(v, 10), 4317)
     .option("-h, --host <addr>", "Host", "127.0.0.1")
     .option("--no-open", "Do not auto-open the browser")
-    .action(async (opts: { port: number; host: string; open: boolean }) => {
+    .option(
+      "--live",
+      "Watch ~/.claude/projects for live agent activity (fleet view + SSE)",
+    )
+    .option(
+      "--watch-tool <name>",
+      "Fire an alert when this tool is invoked (repeatable)",
+      (val: string, prev: string[] = []) => [...prev, val],
+      [] as string[],
+    )
+    .option(
+      "--stall-seconds <n>",
+      "Stall alert threshold in seconds",
+      (v) => parseInt(v, 10),
+      120,
+    )
+    .action(async (opts: {
+      port: number;
+      host: string;
+      open: boolean;
+      live?: boolean;
+      watchTool: string[];
+      stallSeconds: number;
+    }) => {
       const store = openStore();
-      const { url } = serveApp(store, { port: opts.port, host: opts.host });
+      const { url, live } = serveApp(store, {
+        port: opts.port,
+        host: opts.host,
+        live: opts.live === true,
+        liveOptions: {
+          watchTools: opts.watchTool,
+          stallSeconds: opts.stallSeconds,
+        },
+      });
       console.log(pc.green("Spool running at ") + pc.cyan(url));
+      if (live) {
+        console.log(
+          pc.dim(
+            `live mode on — watching Claude Code sessions every ${1500}ms. Watching tools: ${opts.watchTool.join(", ") || "(none)"}.`,
+          ),
+        );
+        live.on("data", (e) => {
+          if (e.type === "alert") {
+            console.log(
+              pc.yellow(`alert[${e.kind}]`) +
+                ` ${e.run_id.slice(0, 12)} · ${e.message}`,
+            );
+          } else if (e.type === "run:created") {
+            console.log(
+              pc.blue("run:created") +
+                ` ${e.run.run_id.slice(0, 12)} · ${e.run.title ?? ""}`,
+            );
+          } else if (e.type === "run:completed") {
+            console.log(
+              pc.green("run:completed") +
+                ` ${e.run.run_id.slice(0, 12)} · status=${e.run.status}`,
+            );
+          }
+        });
+      }
       console.log(pc.dim("press ctrl-c to stop"));
       if (opts.open !== false) {
         await openBrowser(url);
