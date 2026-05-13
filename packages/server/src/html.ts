@@ -11,375 +11,846 @@ import type { RegressionResult, RegressionTest } from "./regression.ts";
  */
 
 const STYLES = `
+  /* ─── Cerulean Design System tokens ─────────────────────────────── */
   :root {
-    --bg: #0e1116;
-    --bg-2: #161b22;
-    --bg-3: #1f2630;
-    --border: #2a323d;
-    --fg: #e6edf3;
-    --fg-mute: #8b949e;
-    --accent: #58a6ff;
-    --ok: #3fb950;
-    --warn: #d29922;
-    --err: #f85149;
-    --fork: #bc8cff;
+    /* Brand */
+    --cerulean-50:  #EBF7FC;
+    --cerulean-100: #CFEAF6;
+    --cerulean-200: #A5D9EE;
+    --cerulean-300: #6FC1E1;
+    --cerulean-400: #38BDF8;
+    --cerulean-500: #00A6E0;
+    --cerulean-600: #0284C0;
+    --cerulean-700: #0369A1;
+    --cerulean-800: #075985;
+    --cerulean-900: #0C4A6E;
+
+    /* Surfaces */
+    --surface-0: #08090B;
+    --surface-1: #0E1014;
+    --surface-2: #161A21;
+    --surface-3: #1F2630;
+    --surface-4: #2A3340;
+    --border-subtle: #1A1F2A;
+    --border-default: #252D3A;
+    --border-strong: #3A4655;
+
+    /* Text */
+    --text-primary: #E8ECEF;
+    --text-secondary: #9AA5B5;
+    --text-tertiary: #5F6B7C;
+    --text-disabled: #3F4856;
+    --text-on-accent: #04141E;
+
+    /* Semantic */
+    --amber-400: #FBBF24;
+    --amber-bg: rgba(251,191,36,0.08);
+    --coral-400: #F87171;
+    --coral-bg: rgba(248,113,113,0.08);
+    --mint-400:  #34D399;
+    --mint-bg:   rgba(52,211,153,0.08);
+    --violet-400:#A78BFA;
+    --violet-bg: rgba(167,139,250,0.08);
+
+    /* Type */
+    --font-sans: "Geist", "Söhne", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --font-mono: "Geist Mono", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+    /* Spacing */
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+    --space-12: 48px; --space-16: 64px;
+
+    /* Radius */
+    --radius-xs: 2px; --radius-sm: 4px; --radius-md: 6px;
+    --radius-lg: 8px; --radius-xl: 12px;
+
+    /* Elevation */
+    --elevation-0: 0 0 0 1px var(--border-default);
+    --elevation-1: 0 0 0 1px var(--border-strong),
+                   inset 0 1px 0 0 rgba(255,255,255,0.03);
+    --elevation-2: 0 0 0 1px var(--border-strong),
+                   0 20px 60px -20px rgba(0,0,0,0.8),
+                   inset 0 1px 0 0 rgba(255,255,255,0.04);
+    --focus-ring: 0 0 0 2px var(--surface-0),
+                  0 0 0 4px var(--cerulean-400);
+    --brand-glow: 0 0 80px -20px rgba(56,189,248,0.35);
+
+    /* Motion */
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --duration-fast: 120ms;
+    --duration-default: 200ms;
+    --duration-slow: 400ms;
+
+    /* ─── Aliases for legacy class references ─── */
+    --bg:        var(--surface-0);
+    --bg-2:      var(--surface-1);
+    --bg-3:      var(--surface-2);
+    --border:    var(--border-default);
+    --fg:        var(--text-primary);
+    --fg-mute:   var(--text-secondary);
+    --accent:    var(--cerulean-400);
+    --ok:        var(--mint-400);
+    --warn:      var(--amber-400);
+    --err:       var(--coral-400);
+    --fork:      var(--violet-400);
   }
+
+  /* ─── Reset + base ──────────────────────────────────────────────── */
   * { box-sizing: border-box; }
+  ::selection { background: rgba(56,189,248,0.25); color: var(--text-primary); }
   html, body {
     margin: 0; padding: 0;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-                 "Segoe UI", Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--fg);
-    font-size: 14px; line-height: 1.5;
+    background: var(--surface-0); color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "ss01", "cv11";
   }
   code, pre, .mono {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco,
-                 Consolas, "Liberation Mono", "Courier New", monospace;
+    font-family: var(--font-mono);
     font-size: 12.5px;
+    font-feature-settings: normal;
   }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
+
+  /* ─── Links ─────────────────────────────────────────────────────── */
+  a { color: var(--cerulean-400); text-decoration: none; transition: color var(--duration-fast) var(--ease-out); }
+  a:hover { color: var(--cerulean-300); text-decoration: underline; text-underline-offset: 2px; }
+
+  /* ─── Section labels (Modal-style) ──────────────────────────────── */
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cerulean-400);
+    margin-bottom: var(--space-2);
+  }
+
+  /* ─── Header ────────────────────────────────────────────────────── */
   header {
-    padding: 12px 20px; border-bottom: 1px solid var(--border);
-    background: var(--bg-2);
-    display: flex; align-items: center; gap: 16px;
-    position: sticky; top: 0; z-index: 10;
+    position: sticky; top: 0; z-index: 30;
+    height: 60px;
+    padding: 0 var(--space-6);
+    background: rgba(8, 9, 11, 0.78);
+    backdrop-filter: blur(14px) saturate(180%);
+    -webkit-backdrop-filter: blur(14px) saturate(180%);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; gap: var(--space-6);
   }
-  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
-  header .crumbs { color: var(--fg-mute); font-size: 13px; }
-  main { padding: 20px; max-width: 1500px; margin: 0 auto; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td {
-    text-align: left; padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-    vertical-align: top;
+  header .brand {
+    display: inline-flex; align-items: center; gap: 10px;
+    color: var(--text-primary);
+    font-weight: 600; font-size: 15px; letter-spacing: -0.01em;
   }
-  th { color: var(--fg-mute); font-weight: 500; font-size: 12px;
-       text-transform: uppercase; letter-spacing: 0.04em; }
-  tr:hover td { background: var(--bg-2); }
-  .pill {
-    display: inline-block; padding: 1px 6px; border-radius: 4px;
-    font-size: 11px; background: var(--bg-3); color: var(--fg-mute);
-    border: 1px solid var(--border);
+  header .brand:hover { text-decoration: none; color: var(--text-primary); }
+  header .brand-mark {
+    width: 18px; height: 18px;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, var(--cerulean-400) 0%, var(--cerulean-700) 100%);
+    box-shadow: var(--brand-glow);
   }
-  .pill.ok { color: var(--ok); border-color: rgba(63,185,80,0.35); }
-  .pill.error { color: var(--err); border-color: rgba(248,81,73,0.35); }
-  .pill.in_progress { color: var(--warn); border-color: rgba(210,153,34,0.35); }
-  .pill.abandoned { color: var(--fg-mute); }
-  .pill.fork { color: var(--fork); border-color: rgba(188,140,255,0.4); }
-  .timeline {
-    display: flex; flex-wrap: wrap; gap: 3px;
-    background: var(--bg-2); padding: 12px; border: 1px solid var(--border);
-    border-radius: 6px; margin-bottom: 12px;
-    position: sticky; top: 52px; z-index: 5;
-    max-height: 140px; overflow-y: auto;
+  header .topnav { display: flex; gap: var(--space-5); font-size: 13px; }
+  header .topnav a {
+    color: var(--text-secondary);
+    padding: 4px 0;
+    transition: color var(--duration-fast) var(--ease-out);
   }
+  header .topnav a:hover { color: var(--text-primary); text-decoration: none; }
+  header .crumbs {
+    color: var(--text-tertiary); font-size: 13px;
+    font-family: var(--font-mono);
+  }
+  header #flash {
+    margin-left: auto; font-size: 12px;
+    font-family: var(--font-mono);
+  }
+
+  main {
+    padding: var(--space-8) var(--space-6) var(--space-12);
+    max-width: 1500px; margin: 0 auto;
+  }
+
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+  h3 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+
+  /* ─── Tables ────────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    font-size: 13px;
+    border-collapse: collapse;
+  }
+  th, td { text-align: left; vertical-align: middle; }
+  th {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-default);
+    background: var(--surface-0);
+  }
+  td {
+    padding: var(--space-3) var(--space-4);
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  td.numeric, td.mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  tbody tr { transition: background var(--duration-fast) var(--ease-out); }
+  tbody tr:hover { background: var(--surface-1); }
+
+  /* ─── Badges (status pills) ─────────────────────────────────────── */
+  .badge, .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--border-default);
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .badge--info,
+  .pill.in_progress, .pill.live-awaiting_input {
+    color: var(--cerulean-300);
+    background: rgba(56, 189, 248, 0.08);
+    border-color: rgba(56, 189, 248, 0.25);
+  }
+  .badge--success,
+  .pill.ok, .pill.live-progressing, .pill.live-completed {
+    color: var(--mint-400);
+    background: var(--mint-bg);
+    border-color: rgba(52, 211, 153, 0.25);
+  }
+  .badge--warn,
+  .pill.live-stalled {
+    color: var(--amber-400);
+    background: var(--amber-bg);
+    border-color: rgba(251, 191, 36, 0.25);
+  }
+  .badge--error,
+  .pill.error, .pill.live-errored, .pill.live-looping {
+    color: var(--coral-400);
+    background: var(--coral-bg);
+    border-color: rgba(248, 113, 113, 0.25);
+  }
+  .badge--premium,
+  .pill.fork {
+    color: var(--violet-400);
+    background: var(--violet-bg);
+    border-color: rgba(167, 139, 250, 0.25);
+  }
+  .badge--muted,
+  .pill.abandoned {
+    color: var(--text-tertiary);
+    background: var(--surface-2);
+    border-color: var(--border-default);
+  }
+
+  /* Status dots */
+  .dot {
+    width: 6px; height: 6px; border-radius: var(--radius-full);
+    display: inline-block;
+    background: currentColor;
+  }
+  .dot--success { color: var(--mint-400); box-shadow: 0 0 6px rgba(52, 211, 153, 0.6); }
+  .dot--error   { color: var(--coral-400); }
+  .dot--warn    { color: var(--amber-400); }
+  .dot--info    { color: var(--cerulean-400); box-shadow: 0 0 6px rgba(56, 189, 248, 0.5); }
+  .dot--muted   { color: var(--text-tertiary); box-shadow: none; }
+
+  /* Auto-dot for live-status pills inside fleet cards. Lives in the
+     pseudo-element so we don't have to change every render call site. */
+  .pill.live-progressing::before,
+  .pill.live-stalled::before,
+  .pill.live-looping::before,
+  .pill.live-awaiting_input::before,
+  .pill.live-errored::before,
+  .pill.live-completed::before {
+    content: ""; width: 6px; height: 6px; border-radius: var(--radius-full);
+    background: currentColor; flex-shrink: 0;
+  }
+  .pill.live-progressing::before { box-shadow: 0 0 6px rgba(52,211,153,0.6); }
+  .pill.live-awaiting_input::before { box-shadow: 0 0 6px rgba(56,189,248,0.5); }
+  .pill.live-looping::before { box-shadow: 0 0 6px rgba(248,113,113,0.5); }
+
+  /* ─── Buttons ───────────────────────────────────────────────────── */
+  button {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+  }
+  button:hover { background: var(--surface-2); border-color: var(--border-strong); }
+  button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  button.primary {
+    background: var(--cerulean-400);
+    color: var(--text-on-accent);
+    border-color: var(--cerulean-400);
+    font-weight: 500;
+  }
+  button.primary:hover {
+    background: var(--cerulean-300);
+    border-color: var(--cerulean-300);
+  }
+  button.primary:active {
+    background: var(--cerulean-500);
+    border-color: var(--cerulean-500);
+  }
+  button.tertiary {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--cerulean-400);
+    padding: 6px 8px;
+  }
+  button.tertiary:hover {
+    background: rgba(56, 189, 248, 0.08);
+    color: var(--cerulean-300);
+    border-color: transparent;
+  }
+
+  /* ─── Inputs ────────────────────────────────────────────────────── */
+  input, textarea, select {
+    background: var(--surface-1);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow var(--duration-fast) var(--ease-out);
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--cerulean-400);
+    box-shadow: var(--focus-ring);
+  }
+  input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
+  textarea { min-height: 88px; resize: vertical; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; }
+
+  /* ─── Filter bar ────────────────────────────────────────────────── */
   .filter-bar {
-    display: flex; align-items: center; gap: 8px;
-    margin: 0 0 10px 0; flex-wrap: wrap;
+    display: flex; align-items: center; gap: var(--space-2);
+    margin: 0 0 var(--space-3) 0; flex-wrap: wrap;
   }
   .filter-chip {
-    padding: 3px 10px; border-radius: 12px; font-size: 12px;
-    background: var(--bg-2); border: 1px solid var(--border);
-    color: var(--fg-mute); cursor: pointer; user-select: none;
+    padding: 4px 12px; border-radius: var(--radius-full);
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    background: transparent; border: 1px solid var(--border-default);
+    color: var(--text-tertiary);
+    cursor: pointer; user-select: none;
+    transition: color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out);
   }
-  .filter-chip:hover { color: var(--fg); }
+  .filter-chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
   .filter-chip.active {
-    background: var(--bg-3); color: var(--fg);
-    border-color: var(--accent);
+    color: var(--cerulean-400);
+    border-color: var(--cerulean-400);
+    background: rgba(56, 189, 248, 0.06);
   }
   .filter-input {
-    background: var(--bg); border: 1px solid var(--border);
-    color: var(--fg); border-radius: 4px;
-    padding: 3px 8px; font-size: 12.5px;
-    min-width: 180px;
+    background: var(--surface-1); border: 1px solid var(--border-default);
+    color: var(--text-primary); border-radius: var(--radius-sm);
+    padding: 5px 10px; font-size: 12.5px;
+    min-width: 220px;
+    font-family: var(--font-mono);
   }
-  .filter-input::placeholder { color: var(--fg-mute); }
-  .filter-input:focus {
-    outline: none; border-color: var(--accent);
-  }
+  .filter-input:focus { outline: none; border-color: var(--cerulean-400); box-shadow: var(--focus-ring); }
+  .filter-input::placeholder { color: var(--text-tertiary); }
+
+  /* ─── Copy button ───────────────────────────────────────────────── */
   .copy-btn {
     background: transparent; border: 1px solid transparent;
-    color: var(--fg-mute); border-radius: 3px;
-    padding: 0 4px; font-size: 11px; cursor: pointer;
-    font-family: inherit;
+    color: var(--text-tertiary);
+    border-radius: var(--radius-xs);
+    padding: 1px 6px; font-size: 11px;
+    cursor: pointer; font-family: var(--font-mono);
+    transition: color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out);
   }
-  .copy-btn:hover { color: var(--fg); border-color: var(--border); background: var(--bg-3); }
-  .copy-btn.copied { color: var(--ok); }
+  .copy-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--border-default);
+    background: var(--surface-2);
+  }
+  .copy-btn.copied { color: var(--mint-400); border-color: rgba(52,211,153,0.3); }
 
-  /* Keyboard help overlay */
+  /* ─── Keyboard help ─────────────────────────────────────────────── */
   .kbd-help {
-    position: fixed; right: 18px; bottom: 18px; z-index: 50;
-    background: var(--bg-2); border: 1px solid var(--border);
-    border-radius: 6px; padding: 10px 14px;
-    font-size: 12px; display: none;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+    position: fixed; right: 24px; bottom: 24px; z-index: 80;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    padding: 14px 18px;
+    font-size: 12px;
+    display: none;
+    box-shadow: var(--elevation-2);
   }
   .kbd-help.open { display: block; }
   .kbd-help kbd {
-    background: var(--bg-3); border: 1px solid var(--border);
+    background: var(--surface-3); border: 1px solid var(--border-strong);
     border-bottom-width: 2px;
-    padding: 0 5px; border-radius: 3px;
-    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
-    color: var(--fg);
+    padding: 1px 6px; border-radius: var(--radius-xs);
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-primary);
   }
   .kbd-help-toggle {
-    position: fixed; right: 18px; bottom: 18px; z-index: 49;
-    width: 28px; height: 28px; border-radius: 14px;
-    background: var(--bg-2); border: 1px solid var(--border);
-    color: var(--fg-mute); cursor: pointer;
+    position: fixed; right: 24px; bottom: 24px; z-index: 79;
+    width: 32px; height: 32px; border-radius: var(--radius-full);
+    background: var(--surface-2); border: 1px solid var(--border-default);
+    color: var(--text-tertiary);
+    cursor: pointer; padding: 0;
     font-size: 14px; line-height: 1;
+    transition: color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
   }
-  .kbd-help-toggle:hover { color: var(--fg); border-color: var(--accent); }
+  .kbd-help-toggle:hover { color: var(--cerulean-400); border-color: var(--cerulean-400); }
+
+  /* ─── Timeline ──────────────────────────────────────────────────── */
+  .timeline {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    background: var(--surface-1); padding: var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md); margin-bottom: var(--space-3);
+    position: sticky; top: 60px; z-index: 20;
+    max-height: 144px; overflow-y: auto;
+  }
   .timeline .blk {
-    min-width: 18px; height: 24px; padding: 2px 5px;
-    border-radius: 3px; background: var(--bg-3);
-    font-size: 11px; color: var(--fg-mute);
-    border: 1px solid var(--border);
+    min-width: 18px; height: 22px; padding: 2px 7px;
+    border-radius: var(--radius-xs); background: var(--surface-2);
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-tertiary);
+    border: 1px solid var(--border-default);
     cursor: pointer; user-select: none;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out);
+    line-height: 18px;
   }
-  .timeline .blk.ok { border-color: rgba(63,185,80,0.5); color: var(--fg); }
-  .timeline .blk.error { background: rgba(248,81,73,0.18); border-color: var(--err); color: var(--err); }
-  .timeline .blk.in_progress { border-color: rgba(210,153,34,0.5); color: var(--warn); }
-  .timeline .blk.active { outline: 2px solid var(--accent); }
+  .timeline .blk:hover {
+    color: var(--text-primary);
+    border-color: var(--border-strong);
+  }
+  .timeline .blk.ok { color: var(--text-secondary); border-color: rgba(52,211,153,0.3); }
+  .timeline .blk.error {
+    background: var(--coral-bg); border-color: rgba(248,113,113,0.4); color: var(--coral-400);
+  }
+  .timeline .blk.in_progress { color: var(--cerulean-300); border-color: rgba(56,189,248,0.3); }
+  .timeline .blk.active {
+    color: var(--text-on-accent);
+    background: var(--cerulean-400);
+    border-color: var(--cerulean-400);
+    box-shadow: 0 0 0 2px rgba(56,189,248,0.2);
+  }
+
+  /* ─── Step cards ────────────────────────────────────────────────── */
   .step-card {
-    background: var(--bg-2); border: 1px solid var(--border);
-    border-radius: 6px; padding: 14px 16px; margin-bottom: 12px;
-    /* Sticky <header> is ~52px tall; leave room when scrolling to a card. */
-    scroll-margin-top: 64px;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-5) var(--space-6);
+    margin-bottom: var(--space-3);
+    scroll-margin-top: 80px;
+    transition: border-color var(--duration-default) var(--ease-out),
+                transform var(--duration-default) var(--ease-out),
+                box-shadow var(--duration-default) var(--ease-out);
+  }
+  .step-card:hover {
+    border-color: var(--border-strong);
   }
   .step-card.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent) inset, 0 4px 16px rgba(88,166,255,0.08);
+    border-color: var(--cerulean-400);
+    box-shadow: 0 0 0 1px var(--cerulean-400) inset,
+                0 4px 32px -8px rgba(56, 189, 248, 0.16);
   }
-  .step-card h3 { margin: 0 0 8px 0; font-size: 14px; font-weight: 600; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .step-card h3 { margin: 0 0 var(--space-3) 0; font-size: 13px; }
+  .step-card .row-actions {
+    display: flex; gap: var(--space-2); align-items: center;
+  }
+  .step-card .row-actions button {
+    background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+    border-radius: var(--radius-sm); padding: 3px 10px; font-size: 11px;
+  }
+  .step-card .row-actions button:hover {
+    color: var(--text-primary); border-color: var(--border-strong); background: var(--surface-2);
+  }
+
+  /* ─── Code blocks (decision/action/outcome bodies) ──────────────── */
   pre.body {
-    background: var(--bg); border: 1px solid var(--border);
-    padding: 10px; border-radius: 4px; max-height: 360px;
-    overflow: auto; white-space: pre-wrap; word-break: break-word;
+    background: var(--surface-0);
+    border: 1px solid var(--border-default);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-sm);
+    max-height: 360px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-primary);
   }
-  .tab-bar { display: flex; gap: 4px; margin-bottom: 8px; }
+
+  /* ─── Tab bar (per-step Decision/Action/etc.) ───────────────────── */
+  .tab-bar { display: flex; gap: var(--space-1); margin-bottom: var(--space-3); }
   .tab-bar button {
-    background: var(--bg-3); color: var(--fg-mute);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 10px; cursor: pointer; font-size: 12px;
+    background: transparent; color: var(--text-tertiary);
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    padding: 5px 12px; cursor: pointer;
+    font-family: var(--font-mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    transition: color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out);
   }
-  .tab-bar button.active { color: var(--fg); background: var(--bg-2); }
+  .tab-bar button:hover { color: var(--text-primary); }
+  .tab-bar button.active {
+    color: var(--cerulean-400);
+    background: var(--surface-2);
+    border-color: var(--border-default);
+  }
+
+  /* ─── Meta row (run header) ─────────────────────────────────────── */
   .meta-row {
-    display: flex; gap: 10px; flex-wrap: wrap;
-    font-size: 12px; color: var(--fg-mute);
-    margin-bottom: 12px;
+    display: flex; gap: var(--space-5); flex-wrap: wrap;
+    font-size: 12.5px; color: var(--text-tertiary);
+    margin-bottom: var(--space-4);
+    font-family: var(--font-mono);
   }
-  .meta-row .kv strong { color: var(--fg); font-weight: 500; }
+  .meta-row .kv { display: inline-flex; gap: 6px; align-items: baseline; }
+  .meta-row .kv strong {
+    color: var(--text-tertiary); font-weight: 500;
+    text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em;
+  }
+  .meta-row .kv .val,
+  .meta-row .kv > span:not(.copy-btn):not(.badge):not(.pill) {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ─── Annotations ───────────────────────────────────────────────── */
   .annotation {
-    background: rgba(88,166,255,0.07); border-left: 2px solid var(--accent);
-    padding: 6px 10px; margin: 6px 0; border-radius: 0 3px 3px 0;
+    background: rgba(56, 189, 248, 0.05);
+    border-left: 2px solid var(--cerulean-400);
+    padding: var(--space-2) var(--space-3);
+    margin: var(--space-2) 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     font-size: 12.5px;
   }
-  .diff-row td { padding: 10px; }
-  .diff-row.shared { opacity: 0.6; }
-  .diff-row.context_diff td:nth-child(1) { border-left: 2px solid var(--warn); }
-  .diff-row.decision_diff td:nth-child(1) { border-left: 2px solid var(--accent); }
-  .diff-row.action_diff td:nth-child(1) { border-left: 2px solid var(--err); }
-  .diff-row.outcome_diff td:nth-child(1) { border-left: 2px solid var(--fork); }
-  .diff-row.only_a td:nth-child(1) { border-left: 2px solid var(--err); }
-  .diff-row.only_b td:nth-child(1) { border-left: 2px solid var(--ok); }
-  .diff-row.diverged td:nth-child(1) { border-left: 2px solid var(--fork); }
-  .empty { color: var(--fg-mute); font-style: italic; padding: 20px; }
+  .annotation strong { color: var(--text-primary); }
 
-  .fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+  /* ─── Diff rows ─────────────────────────────────────────────────── */
+  .diff-row td { padding: var(--space-3) var(--space-4); }
+  .diff-row.shared { opacity: 0.55; }
+  .diff-row.context_diff td:nth-child(1) { border-left: 2px solid var(--amber-400); }
+  .diff-row.decision_diff td:nth-child(1) { border-left: 2px solid var(--cerulean-400); }
+  .diff-row.action_diff td:nth-child(1) { border-left: 2px solid var(--coral-400); }
+  .diff-row.outcome_diff td:nth-child(1) { border-left: 2px solid var(--violet-400); }
+  .diff-row.only_a td:nth-child(1) { border-left: 2px solid var(--coral-400); }
+  .diff-row.only_b td:nth-child(1) { border-left: 2px solid var(--mint-400); }
+  .diff-row.diverged td:nth-child(1) { border-left: 2px solid var(--violet-400); }
+
+  .empty {
+    color: var(--text-tertiary); font-style: italic;
+    padding: var(--space-12) var(--space-6);
+    text-align: center;
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+  }
+
+  /* ─── Fleet grid ────────────────────────────────────────────────── */
+  .fleet {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: var(--space-4);
+  }
   .card {
-    background: var(--bg-2); border: 1px solid var(--border);
-    border-radius: 6px; padding: 12px 14px;
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-5);
+    position: relative;
+    transition: border-color var(--duration-default) var(--ease-out),
+                transform var(--duration-default) var(--ease-out),
+                box-shadow var(--duration-default) var(--ease-out);
   }
-  .card .title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
-  .card .title-row .title { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .card .meta { font-size: 11.5px; color: var(--fg-mute); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
-  .card .meta .age { font-variant-numeric: tabular-nums; }
+  .card:hover {
+    border-color: var(--border-strong);
+    transform: translateY(-1px);
+    box-shadow: var(--elevation-1);
+  }
+  .card .title-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: var(--space-3); gap: var(--space-3);
+  }
+  .card .title-row .title {
+    font-weight: 600; font-size: 14px; letter-spacing: -0.005em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-primary);
+  }
+  .card .title-row .title:hover { color: var(--cerulean-400); text-decoration: none; }
+  .card .meta {
+    font-family: var(--font-mono);
+    font-size: 11px; color: var(--text-tertiary);
+    display: flex; gap: var(--space-3); flex-wrap: wrap;
+    margin-top: var(--space-3);
+    letter-spacing: 0.02em;
+  }
+  .card .meta .kv { color: var(--text-secondary); }
+  .card .meta .age { font-variant-numeric: tabular-nums; color: var(--text-tertiary); }
+
+  /* Context utilization bar */
   .ctx-bar {
-    height: 4px; background: var(--bg-3); border-radius: 2px;
-    margin: 6px 0; position: relative; overflow: hidden;
+    height: 3px; background: var(--surface-3);
+    border-radius: var(--radius-full);
+    margin: var(--space-3) 0;
+    position: relative; overflow: hidden;
   }
-  .ctx-bar .fill { height: 100%; background: var(--accent); transition: width 0.4s; }
-  .ctx-bar.warn .fill { background: var(--warn); }
-  .ctx-bar.danger .fill { background: var(--err); }
+  .ctx-bar .fill {
+    height: 100%;
+    background: var(--cerulean-400);
+    transition: width var(--duration-slow) var(--ease-out);
+    border-radius: var(--radius-full);
+  }
+  .ctx-bar.warn .fill { background: var(--amber-400); }
+  .ctx-bar.danger .fill { background: var(--coral-400); }
+
   .recent-tools {
-    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
-    color: var(--fg-mute);
-    display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-secondary);
+    display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
   }
+  /* Small mono-uppercase label rendered before the tool chips. Same
+     idiom as section-label so the fleet card reads consistently with
+     the rest of the system. */
   .recent-tools-label {
-    font-family: ui-monospace, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--fg-mute);
+    color: var(--text-tertiary);
     margin-right: 4px;
-    opacity: 0.7;
   }
   .recent-tools code {
-    background: var(--bg-3); padding: 1px 4px; border-radius: 3px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    padding: 1px 6px; border-radius: var(--radius-xs);
+    color: var(--cerulean-300);
   }
   .alert-strip {
-    margin-top: 6px; padding: 4px 8px; border-radius: 3px; font-size: 11.5px;
-    background: rgba(248, 81, 73, 0.12); color: var(--err); border: 1px solid rgba(248,81,73,0.3);
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    background: var(--coral-bg); color: var(--coral-400);
+    border: 1px solid rgba(248,113,113,0.25);
   }
-  .alert-strip.warn { background: rgba(210,153,34,0.12); color: var(--warn); border-color: rgba(210,153,34,0.3); }
-  .pill.live-progressing { color: var(--ok); border-color: rgba(63,185,80,0.4); }
-  .pill.live-stalled { color: var(--warn); border-color: rgba(210,153,34,0.4); }
-  .pill.live-looping { color: var(--err); border-color: rgba(248,81,73,0.5); }
-  .pill.live-awaiting_input { color: var(--accent); border-color: rgba(88,166,255,0.4); }
-  .pill.live-errored { color: var(--err); border-color: rgba(248,81,73,0.5); }
-  .pill.live-completed { color: var(--fg-mute); }
+  .alert-strip.warn {
+    background: var(--amber-bg); color: var(--amber-400);
+    border-color: rgba(251,191,36,0.25);
+  }
 
-  .live-badge {
-    font-size: 11px; padding: 2px 8px; border-radius: 10px;
-    background: rgba(63,185,80,0.12); color: var(--ok);
-    border: 1px solid rgba(63,185,80,0.35);
-    font-family: ui-monospace, Menlo, monospace;
-  }
-  .live-badge.static {
-    background: var(--bg-3); color: var(--fg-mute);
-    border-color: var(--border);
-  }
   .static-banner {
-    background: var(--bg-2); border: 1px dashed var(--border);
-    border-radius: 6px; padding: 8px 12px;
-    font-size: 12px; color: var(--fg-mute);
-    margin-bottom: 12px;
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-left: 2px solid var(--cerulean-400);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-4);
+    font-size: 12.5px; color: var(--text-secondary);
+    margin-bottom: var(--space-4);
   }
+  .static-banner strong { color: var(--text-primary); }
   .static-banner code {
-    background: var(--bg-3); padding: 1px 6px; border-radius: 3px;
-    color: var(--fg);
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    padding: 1px 6px; border-radius: var(--radius-xs);
+    color: var(--cerulean-300);
+    font-family: var(--font-mono);
   }
 
-  /* Modals */
+  /* ─── Modals ────────────────────────────────────────────────────── */
   .modal-bg {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    position: fixed; inset: 0;
+    background: rgba(8, 9, 11, 0.7);
+    backdrop-filter: blur(4px);
     display: none; align-items: center; justify-content: center; z-index: 100;
   }
   .modal-bg.open { display: flex; }
   .modal {
-    background: var(--bg-2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 18px 20px; width: 540px; max-width: 92vw;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    width: 540px; max-width: 92vw;
     max-height: 80vh; overflow: auto;
-    box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+    box-shadow: var(--elevation-2);
   }
-  .modal h3 { margin: 0 0 12px 0; font-size: 14px; }
-  .modal label { display: block; font-size: 12px; color: var(--fg-mute); margin-bottom: 4px; margin-top: 10px; }
-  .modal input, .modal textarea, .modal select {
-    width: 100%; padding: 6px 8px; background: var(--bg);
-    border: 1px solid var(--border); color: var(--fg);
-    border-radius: 4px; font-size: 13px; font-family: inherit;
+  .modal h3 { margin: 0 0 var(--space-4) 0; font-size: 16px; font-weight: 600; }
+  .modal label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-1);
+    margin-top: var(--space-3);
   }
-  .modal textarea { min-height: 80px; resize: vertical; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
-  .modal .actions { margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; }
-  .modal button {
-    padding: 6px 14px; background: var(--bg-3); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
-    font-size: 13px;
-  }
-  .modal button.primary { background: var(--accent); color: #0e1116; border-color: var(--accent); }
-  .modal button:hover { background: var(--border); }
-  .modal button.primary:hover { background: #4a8fde; }
-
-  /* Step card additions */
-  .step-card .row-actions {
-    display: flex; gap: 6px; align-items: center;
-  }
-  .step-card .row-actions button {
-    background: var(--bg-3); border: 1px solid var(--border); color: var(--fg-mute);
-    border-radius: 3px; padding: 2px 8px; font-size: 11px; cursor: pointer;
-  }
-  .step-card .row-actions button:hover { color: var(--fg); }
-  .annotations-list {
-    margin-top: 8px; display: flex; flex-direction: column; gap: 4px;
+  .modal input, .modal textarea, .modal select { width: 100%; }
+  .modal .actions {
+    margin-top: var(--space-5); display: flex;
+    gap: var(--space-2); justify-content: flex-end;
   }
 
-  /* Tests page */
+  /* ─── Tests page ────────────────────────────────────────────────── */
   .tests-grid {
-    display: grid; grid-template-columns: 280px 1fr; gap: 16px; min-height: 400px;
+    display: grid; grid-template-columns: 280px 1fr;
+    gap: var(--space-4); min-height: 400px;
   }
   .test-list {
-    background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
-    padding: 8px; overflow: auto; max-height: 75vh;
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-2);
+    overflow: auto; max-height: 75vh;
   }
   .test-list .item {
-    display: block; padding: 6px 8px; border-radius: 4px;
-    color: var(--fg); cursor: pointer; font-size: 12.5px;
+    display: block; padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary); cursor: pointer; font-size: 13px;
+    transition: background var(--duration-fast) var(--ease-out);
   }
-  .test-list .item:hover { background: var(--bg-3); }
-  .test-list .item.active { background: var(--bg-3); color: var(--accent); }
-  .test-list .item .meta { font-size: 11px; color: var(--fg-mute); }
+  .test-list .item:hover { background: var(--surface-2); text-decoration: none; }
+  .test-list .item.active {
+    background: var(--surface-2);
+    color: var(--cerulean-400);
+    border-left: 2px solid var(--cerulean-400);
+  }
+  .test-list .item .meta {
+    font-family: var(--font-mono);
+    font-size: 11px; color: var(--text-tertiary);
+    margin-top: 2px;
+  }
   .test-detail {
-    background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
-    padding: 14px 16px; min-height: 200px;
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-5) var(--space-6);
+    min-height: 200px;
   }
   .assertion-row {
-    display: grid; grid-template-columns: 160px 1fr 80px 30px;
-    gap: 8px; align-items: center; padding: 4px 0;
-    border-bottom: 1px dashed var(--border);
+    display: grid;
+    grid-template-columns: 180px 1fr 90px 32px;
+    gap: var(--space-2); align-items: center;
+    padding: var(--space-2) 0;
+    border-bottom: 1px dashed var(--border-subtle);
   }
-  .assertion-row select, .assertion-row input {
-    background: var(--bg); border: 1px solid var(--border);
-    color: var(--fg); border-radius: 3px; padding: 4px 6px; font-size: 12.5px;
+  .assertion-row select, .assertion-row input { padding: 5px 8px; font-size: 12.5px; }
+  .assertion-row .rm {
+    background: transparent; color: var(--coral-400); border: none; cursor: pointer;
+    font-size: 16px; line-height: 1;
   }
-  .assertion-row .rm { background: transparent; color: var(--err); border: none; cursor: pointer; }
+  .assertion-row .rm:hover { color: var(--coral-500); background: transparent; border: none; }
   .results-list {
-    margin-top: 14px;
-    border-top: 1px solid var(--border); padding-top: 10px;
+    margin-top: var(--space-4);
+    border-top: 1px solid var(--border-subtle); padding-top: var(--space-3);
   }
   .results-list .row {
-    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    font-family: var(--font-mono); font-size: 12px;
     padding: 3px 0;
+    letter-spacing: 0.02em;
   }
-  .results-list .pass { color: var(--ok); }
-  .results-list .fail { color: var(--err); }
+  .results-list .pass { color: var(--mint-400); }
+  .results-list .fail { color: var(--coral-400); }
+
+  /* ─── Reduced motion ────────────────────────────────────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 
   /* ─── API-metered cost disclosure ──────────────────────────────── */
   /* Tooltip-style marker rendered inline next to every $cost figure.
-     Subscription users (Claude Pro / Max) don't actually pay these
-     dollars — Spool's number is the API-equivalent rate, useful for
-     relative comparison, NOT what hits your card. */
+     Subscription users (Claude Pro / Max) don't pay these dollars —
+     Spool's number is the API-equivalent rate, and the API rate itself
+     reflects VC-subsidized 2026 pricing. Tooltip on the chip spells
+     this out; the cost-footnote block at the page bottom expands. */
   .cost-mark {
-    display: inline-block;
-    margin-left: 4px;
-    font-family: ui-monospace, Menlo, monospace;
+    display: inline-flex; align-items: center;
+    margin-left: var(--space-1);
+    font-family: var(--font-mono);
     font-size: 9px;
     font-weight: 500;
     letter-spacing: 0.06em;
-    color: var(--fg-mute);
-    border: 1px solid var(--border);
-    background: var(--bg-3);
-    padding: 0 4px;
-    border-radius: 2px;
+    color: var(--text-tertiary);
+    border: 1px solid var(--border-default);
+    background: var(--surface-2);
+    padding: 1px 4px;
+    border-radius: var(--radius-xs);
     cursor: help;
     text-transform: uppercase;
     vertical-align: middle;
-    line-height: 1.4;
+    transition: color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
   }
-  .cost-mark:hover { color: var(--accent); border-color: var(--accent); }
+  .cost-mark:hover {
+    color: var(--cerulean-300);
+    border-color: var(--cerulean-400);
+  }
 
   .cost-footnote {
-    margin-top: 24px;
-    padding: 8px 12px;
-    font-size: 11.5px; color: var(--fg-mute);
-    background: var(--bg-2);
-    border: 1px dashed var(--border);
-    border-radius: 4px;
+    margin-top: var(--space-8);
+    padding: var(--space-3) var(--space-4);
+    font-size: 12px;
     line-height: 1.6;
+    color: var(--text-secondary);
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-left: 2px solid var(--cerulean-400);
+    border-radius: var(--radius-sm);
   }
+  .cost-footnote strong { color: var(--text-primary); }
+  .cost-footnote em { color: var(--cerulean-300); font-style: normal; }
   .cost-footnote .label {
-    color: var(--accent);
+    color: var(--cerulean-400);
     text-transform: uppercase;
     font-size: 10px;
     letter-spacing: 0.1em;
-    font-family: ui-monospace, Menlo, monospace;
-    margin-right: 6px;
+    font-family: var(--font-mono);
+    margin-right: var(--space-2);
   }
 `;
 
@@ -818,23 +1289,29 @@ export function renderShell(
   opts: ShellOptions = {},
 ): string {
   const liveBadge = opts.liveMode
-    ? `<span class="live-badge" title="--live mode: SSE updates enabled">● live</span>`
-    : `<span class="live-badge static" title="--live not enabled. Restart with: spool web --live">○ static</span>`;
+    ? `<span class="badge badge--success" title="--live mode: SSE updates enabled"><span class="dot dot--success"></span>LIVE</span>`
+    : `<span class="badge badge--muted" title="--live not enabled. Restart with: spool web --live"><span class="dot dot--muted"></span>STATIC</span>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>${esc(title)} · Spool</title>
 <meta name="spool-live-mode" content="${opts.liveMode ? "1" : "0"}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>${STYLES}</style>
 </head><body>
 <header>
-  <h1><a href="/">Spool</a></h1>
-  <nav style="display:flex;gap:14px;font-size:13px;color:var(--fg-mute)">
+  <a class="brand" href="/">
+    <span class="brand-mark"></span>
+    <span class="brand-name">Spool</span>
+  </a>
+  <nav class="topnav">
     <a href="/">Fleet</a>
     <a href="/runs">Runs</a>
     <a href="/tests">Tests</a>
   </nav>
   ${liveBadge}
   <span class="crumbs">${esc(title)}</span>
-  <span id="flash" style="margin-left:auto;font-size:12px"></span>
+  <span id="flash"></span>
 </header>
 <main>${body}</main>
 
@@ -926,15 +1403,16 @@ export function renderFleet(
   const empty = opts.liveMode
     ? `<div class="empty">No active runs yet. Open a Claude Code session and Spool will pick it up within a couple of seconds.</div>`
     : `<div class="empty">No runs captured. Run <code>spool ingest claude-code --limit 5</code>.</div>`;
-  return `<div id="alert-banner" style="margin-bottom:12px"></div>
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+  return `<div id="alert-banner" style="margin-bottom:var(--space-3)"></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--space-5)">
       <div>
+        <div class="section-label">${opts.liveMode ? "Live · SSE" : "Snapshot"}</div>
         <h2 style="margin:0">Fleet</h2>
-        <div style="font-size:12px;color:var(--fg-mute);margin-top:2px">${esc(subtitle)}</div>
+        <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:var(--space-1)">${esc(subtitle)}</div>
       </div>
       <div class="meta-row" style="margin:0">
-        <span class="kv"><strong>${entries.length}</strong> run(s)</span>
-        <span class="kv"><a href="/runs">all runs →</a></span>
+        <div class="kv"><strong>Runs</strong> <span class="val">${entries.length}</span></div>
+        <div class="kv"><a href="/runs">All runs →</a></div>
       </div>
     </div>
     ${banner}
@@ -967,7 +1445,7 @@ function fleetEntryHtml(e: FleetEntry): string {
       <span class="age" data-age="${esc(e.last_step_at ?? "")}"></span>
     </div>
     <div class="${barClass}" title="context util ${e.context_pct}%"><div class="fill" style="width:${e.context_pct}%"></div></div>
-    <div class="recent-tools"><span class="recent-tools-label">Recent Tools used</span>${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
+    <div class="recent-tools"><span class="recent-tools-label">Tools used</span>${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
     ${alerts}
   </div>`;
 }
@@ -980,7 +1458,7 @@ export function renderRunList(runs: Run[]): string {
     .map((r) => {
       const status = `<span class="pill ${esc(r.status)}">${esc(r.status)}</span>`;
       const fork = r.fork_origin_run_id
-        ? ` <span class="pill fork">fork</span>`
+        ? ` <span class="badge badge--premium">fork</span>`
         : "";
       const cost = costEl(r.cost_cents);
       const title = r.title ?? r.run_id;
@@ -988,21 +1466,25 @@ export function renderRunList(runs: Run[]): string {
         <td><a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}</td>
         <td>${status}</td>
         <td class="mono">${esc(r.run_id.slice(0, 12))}</td>
-        <td>${r.step_count}</td>
-        <td>${cost}</td>
+        <td class="numeric">${r.step_count}</td>
+        <td class="numeric">${cost}</td>
         <td class="mono">${esc(r.started_at)}</td>
         <td class="mono">${esc(r.git_branch ?? "")}</td>
       </tr>`;
     })
     .join("");
-  return `<table>
-    <thead><tr>
-      <th>Title</th><th>Status</th><th>Run</th><th>Steps</th><th>Cost</th>
-      <th>Started</th><th>Branch</th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-  ${COST_FOOTNOTE_HTML}`;
+  return `<div style="margin-bottom:var(--space-5)">
+      <div class="section-label">All runs</div>
+      <h2 style="margin:0">${runs.length} captured</h2>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Title</th><th>Status</th><th>Run</th><th>Steps</th><th>Cost</th>
+        <th>Started</th><th>Branch</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${COST_FOOTNOTE_HTML}`;
 }
 
 export function renderRun(
@@ -1014,13 +1496,13 @@ export function renderRun(
 ): string {
   const meta = `<div class="meta-row">
     <div class="kv"><strong>Status</strong> <span class="pill ${esc(run.status)}">${esc(run.status)}</span></div>
-    <div class="kv"><strong>Steps</strong> ${run.step_count}</div>
-    <div class="kv"><strong>Cost</strong> ${costEl(run.cost_cents)}</div>
-    <div class="kv"><strong>Input</strong> ${run.tokens_total_input.toLocaleString()}</div>
-    <div class="kv"><strong>Output</strong> ${run.tokens_total_output.toLocaleString()}</div>
-    <div class="kv"><strong>Cached</strong> ${run.tokens_total_cached.toLocaleString()}</div>
-    <div class="kv"><strong>Branch</strong> ${esc(run.git_branch ?? "—")}</div>
-    <div class="kv"><strong>Run ID</strong> <span class="mono">${esc(run.run_id.slice(0, 16))}…</span>
+    <div class="kv"><strong>Steps</strong> <span class="val">${run.step_count}</span></div>
+    <div class="kv"><strong>Cost</strong> <span class="val">${costEl(run.cost_cents)}</span></div>
+    <div class="kv"><strong>Input</strong> <span class="val">${run.tokens_total_input.toLocaleString()}</span></div>
+    <div class="kv"><strong>Output</strong> <span class="val">${run.tokens_total_output.toLocaleString()}</span></div>
+    <div class="kv"><strong>Cached</strong> <span class="val">${run.tokens_total_cached.toLocaleString()}</span></div>
+    <div class="kv"><strong>Branch</strong> <span class="val">${esc(run.git_branch ?? "—")}</span></div>
+    <div class="kv"><strong>Run ID</strong> <span class="val mono">${esc(run.run_id.slice(0, 16))}…</span>
       <button class="copy-btn" title="copy full run id" onclick="copyText('${esc(run.run_id)}', this)">copy</button>
     </div>
     ${run.fork_origin_run_id ? `<div class="kv"><strong>Forked from</strong> <a href="/runs/${esc(run.fork_origin_run_id)}">${esc(run.fork_origin_run_id.slice(0, 12))}</a></div>` : ""}
@@ -1057,37 +1539,48 @@ export function renderRun(
   </div>`;
 
   const runAnnotations = `<div class="step-card">
+    <div class="section-label">Annotations</div>
     <h3 style="display:flex;align-items:center;gap:8px">
-      <span>Run annotations</span>
+      <span>Run notes</span>
       <span class="row-actions" style="margin-left:auto">
-        <button onclick="openAnnotateModal('run', '${esc(run.run_id)}')">+ annotate</button>
+        <button onclick="openAnnotateModal('run', '${esc(run.run_id)}')">+ Annotate</button>
       </span>
     </h3>
-    ${annotations.length
-      ? annotations
-        .map(
-          (a) =>
-            `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
-        )
-        .join("")
-      : '<p style="color:var(--fg-mute);font-size:12.5px;margin:0">No annotations yet.</p>'
+    ${
+      annotations.length
+        ? annotations
+            .map(
+              (a) =>
+                `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
+            )
+            .join("")
+        : '<p style="color:var(--text-tertiary);font-size:12.5px;margin:0">No annotations yet.</p>'
     }
   </div>`;
 
   const forksBlock = forks.length
-    ? `<div class="step-card"><h3>Forks of this run</h3>${forks
-      .map(
-        (f) =>
-          `<div class="annotation"><span class="pill fork">${esc(f.edit_type)}</span> from step <code>${esc(f.origin_step_id.slice(0, 12))}</code> → <a href="/runs/${esc(f.fork_run_id)}">${esc(f.fork_run_id.slice(0, 12))}</a> · <a href="/diff?a=${esc(run.run_id)}&b=${esc(f.fork_run_id)}">diff</a></div>`,
-      )
-      .join("")}</div>`
+    ? `<div class="step-card">
+        <div class="section-label">Forks</div>
+        <h3>Derived runs</h3>
+        ${forks
+          .map(
+            (f) =>
+              `<div class="annotation"><span class="badge badge--premium">${esc(f.edit_type)}</span> from step <code>${esc(f.origin_step_id.slice(0, 12))}</code> → <a href="/runs/${esc(f.fork_run_id)}">${esc(f.fork_run_id.slice(0, 12))}</a> · <a href="/diff?a=${esc(run.run_id)}&b=${esc(f.fork_run_id)}">diff</a></div>`,
+          )
+          .join("")}
+      </div>`
     : "";
 
   const stepCards = steps
     .map((s) => renderStepCard(s, stepDecisions.get(s.step_id) ?? ""))
     .join("");
 
-  return `<h2 style="margin-top:0">${esc(run.title ?? run.run_id)}</h2>
+  const runtimeLabel =
+    run.source_runtime === "fork" ? "Fork" : run.source_runtime;
+  return `<div style="margin-bottom:var(--space-6)">
+      <div class="section-label">${esc(runtimeLabel)} · Run</div>
+      <h2 style="margin-top:0">${esc(run.title ?? run.run_id)}</h2>
+    </div>
     ${meta}
     ${timeline}
     ${filterBar}
@@ -1155,11 +1648,14 @@ function prettyJson(maybeJson: string): string {
 }
 
 export function renderDiff(a: Run, b: Run, d: DiffResult): string {
-  const header = `<h2 style="margin-top:0">Diff: ${esc(a.title ?? a.run_id.slice(0, 12))} vs ${esc(b.title ?? b.run_id.slice(0, 12))}</h2>
+  const header = `<div style="margin-bottom:var(--space-5)">
+      <div class="section-label">Trajectory diff</div>
+      <h2 style="margin:0">${esc(a.title ?? a.run_id.slice(0, 12))} <span style="color:var(--text-tertiary);font-weight:400">vs</span> ${esc(b.title ?? b.run_id.slice(0, 12))}</h2>
+    </div>
     <div class="meta-row">
-      <div class="kv"><strong>Shared prefix</strong> ${d.shared_prefix_length} steps</div>
-      <div class="kv"><strong>First divergence</strong> ${d.first_divergence_sequence ?? "—"}</div>
-      <div class="kv"><strong>Total steps</strong> A=${d.total_steps_a} B=${d.total_steps_b}</div>
+      <div class="kv"><strong>Shared prefix</strong> <span class="val">${d.shared_prefix_length} steps</span></div>
+      <div class="kv"><strong>First divergence</strong> <span class="val">${d.first_divergence_sequence ?? "—"}</span></div>
+      <div class="kv"><strong>Total A / B</strong> <span class="val">${d.total_steps_a} / ${d.total_steps_b}</span></div>
     </div>`;
   const rows = d.rows
     .map((row) => {
@@ -1208,9 +1704,12 @@ export function renderTests(tests: RegressionTest[], recent: RegressionResult[])
       .join("")
     : `<p style="color:var(--fg-mute);font-size:12px">No results yet — pick a test and click "Run on all runs."</p>`;
 
-  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-    <h2 style="margin:0">Regression tests</h2>
-    <button class="primary" onclick="createNewTest()" style="background:var(--accent);color:#0e1116;border:1px solid var(--accent);padding:6px 14px;border-radius:4px;cursor:pointer">+ New test</button>
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--space-5)">
+    <div>
+      <div class="section-label">Regression suite</div>
+      <h2 style="margin:0">Tests</h2>
+    </div>
+    <button class="primary" onclick="createNewTest()">+ New test</button>
   </div>
   <div class="tests-grid">
     <div class="test-list">${items}</div>
@@ -1218,8 +1717,8 @@ export function renderTests(tests: RegressionTest[], recent: RegressionResult[])
       <div class="empty">Select a test from the left to edit, or create a new one.</div>
     </div>
   </div>
-  <div style="margin-top:18px">
-    <h3 style="margin-bottom:8px;font-size:13px;color:var(--fg-mute);text-transform:uppercase;letter-spacing:0.05em">Recent results (all tests)</h3>
+  <div style="margin-top:var(--space-6)">
+    <div class="section-label">Recent results · all tests</div>
     <div class="results-list">${recentRows}</div>
   </div>`;
 }
