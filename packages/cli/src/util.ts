@@ -6,9 +6,17 @@ export function openStore(): Store {
   return Store.open();
 }
 
+/**
+ * Format a cost (stored in cents) as dollars. 2 decimals for anything
+ * ≥ half a cent, 4 decimals for sub-cent costs so they don't collapse
+ * to "$0.00". Matches the web UI's formatter so terminal and browser
+ * never mix units.
+ */
 export function fmtCents(cents: number): string {
-  if (cents >= 100) return `$${(cents / 100).toFixed(2)}`;
-  return `${cents.toFixed(2)}¢`;
+  const dollars = cents / 100;
+  if (dollars === 0) return "$0.00";
+  if (Math.abs(dollars) >= 0.005) return `$${dollars.toFixed(2)}`;
+  return `$${dollars.toFixed(4)}`;
 }
 
 export function fmtTokens(n: number): string {

@@ -96,6 +96,14 @@ export function traceAnthropic<
         ? { kind: "message", text }
         : { kind: "thinking_only" };
 
+    // Split 5m vs 1h cache writes when the API exposes the breakdown.
+    // Falls back to bucketing the legacy total as 5m so older SDK
+    // responses don't silently overcharge.
+    const cc = resp.usage?.cache_creation;
+    const tokens5m = cc
+      ? cc.ephemeral_5m_input_tokens ?? 0
+      : (resp.usage?.cache_creation_input_tokens ?? 0);
+    const tokens1h = cc?.ephemeral_1h_input_tokens ?? 0;
     step
       .recordDecision({ decision: resp.content, action })
       .recordTokens({
@@ -103,7 +111,8 @@ export function traceAnthropic<
           input: resp.usage?.input_tokens ?? 0,
           output: resp.usage?.output_tokens ?? 0,
           cached_read: resp.usage?.cache_read_input_tokens ?? 0,
-          cache_creation: resp.usage?.cache_creation_input_tokens ?? 0,
+          cache_creation: tokens5m,
+          cache_creation_1h: tokens1h,
         },
         latency_ms: t1 - t0,
       })
@@ -135,6 +144,10 @@ interface AnthropicMessagesResponse {
     output_tokens?: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    };
   };
   content?: Array<AnthropicTextBlock | AnthropicToolUseBlock | { type: string }>;
 }

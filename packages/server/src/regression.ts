@@ -350,7 +350,7 @@ function evaluateAssertion(
       return {
         assertion,
         passed: run.cost_cents <= want,
-        reason: `expected ≤${want.toFixed(2)}¢, got ${run.cost_cents.toFixed(2)}¢`,
+        reason: `expected ≤$${(want / 100).toFixed(2)}, got $${(run.cost_cents / 100).toFixed(2)}`,
       };
     }
     case "no_error_step": {

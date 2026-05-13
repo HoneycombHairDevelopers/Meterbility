@@ -181,7 +181,7 @@ export class SlackNotifier {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `${icon} *${escapeSlack(e.run.title ?? e.run.run_id)}* finished · ${e.run.step_count} steps · $${(e.run.cost_cents / 100).toFixed(2)}\n<${link(e.run.run_id)}|open in Spool>`,
+              text: `${icon} *${escapeSlack(e.run.title ?? e.run.run_id)}* finished · ${e.run.step_count} steps · ${formatCost(e.run.cost_cents)}\n<${link(e.run.run_id)}|open in Spool>`,
             },
           },
         ],
@@ -219,6 +219,13 @@ function labelForAlert(kind: string): string {
     default:
       return kind;
   }
+}
+
+function formatCost(cents: number): string {
+  const dollars = cents / 100;
+  if (dollars === 0) return "$0.00";
+  if (Math.abs(dollars) >= 0.005) return `$${dollars.toFixed(2)}`;
+  return `$${dollars.toFixed(4)}`;
 }
 
 function escapeSlack(s: string): string {

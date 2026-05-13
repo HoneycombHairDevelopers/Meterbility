@@ -28,7 +28,20 @@ export interface TokenUsage {
   input: number;
   output: number;
   cached_read: number;
+  /**
+   * 5-minute ephemeral cache writes (the cheaper tier — ~1.25× input).
+   * Anthropic field: `usage.cache_creation.ephemeral_5m_input_tokens`,
+   * or fallback to `usage.cache_creation_input_tokens` when the breakdown
+   * isn't present.
+   */
   cache_creation: number;
+  /**
+   * 1-hour ephemeral cache writes (~2× input). Claude Code uses this for
+   * the long-lived system prompt + tool definitions, so it's typically
+   * the dominant cost on long sessions. Optional for back-compat — older
+   * captures will leave this at 0 and continue to be priced as 5m only.
+   */
+  cache_creation_1h?: number;
   reasoning?: number;
 }
 
@@ -175,5 +188,9 @@ export interface ModelPricing {
   input_per_million_cents: number;
   output_per_million_cents: number;
   cached_read_per_million_cents: number;
+  /** 5-minute ephemeral cache writes (~1.25× input). */
   cache_creation_per_million_cents: number;
+  /** 1-hour ephemeral cache writes (~2× input). Optional — defaults to
+   *  2× input when not specified. */
+  cache_creation_1h_per_million_cents?: number;
 }

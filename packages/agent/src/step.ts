@@ -182,6 +182,7 @@ export class SpoolStep {
       output: this.tokens.output,
       cached_read: this.tokens.cached_read,
       cache_creation: this.tokens.cache_creation,
+      cache_creation_1h: this.tokens.cache_creation_1h,
     });
     if (approx && !this.tags.includes("cost:approx")) {
       this.tags.push("cost:approx");

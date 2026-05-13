@@ -12,7 +12,7 @@ import type { Client } from "pg";
  * the SQLite store as default; this exists for the deployments where
  * multiple operators share a project's run history.
  */
-export const POSTGRES_SCHEMA_VERSION = 2;
+export const POSTGRES_SCHEMA_VERSION = 3;
 
 export async function ensurePostgresSchema(client: Client): Promise<void> {
   await client.query(`
@@ -81,6 +81,7 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
       tokens_output BIGINT NOT NULL DEFAULT 0,
       tokens_cached_read BIGINT NOT NULL DEFAULT 0,
       tokens_cache_creation BIGINT NOT NULL DEFAULT 0,
+      tokens_cache_creation_1h BIGINT NOT NULL DEFAULT 0,
       tokens_reasoning BIGINT,
       latency_ms INTEGER NOT NULL DEFAULT 0,
       cost_cents DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -157,6 +158,12 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
       ON regression_results(test_id, created_at DESC);
   `);
 
+  // Migrations from v2 → v3. ALTER TABLE ADD COLUMN IF NOT EXISTS is
+  // standard Postgres, so this is naturally idempotent.
+  await client.query(
+    "ALTER TABLE steps ADD COLUMN IF NOT EXISTS tokens_cache_creation_1h BIGINT NOT NULL DEFAULT 0",
+  );
+
   const versionRow = await client.query(
     "SELECT value FROM meta WHERE key = 'schema_version'",
   );
@@ -164,6 +171,11 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
     await client.query(
       "INSERT INTO meta(key,value) VALUES ($1,$2)",
       ["schema_version", String(POSTGRES_SCHEMA_VERSION)],
+    );
+  } else if (Number(versionRow.rows[0].value) < POSTGRES_SCHEMA_VERSION) {
+    await client.query(
+      "UPDATE meta SET value = $1 WHERE key = 'schema_version'",
+      [String(POSTGRES_SCHEMA_VERSION)],
     );
   }
 }

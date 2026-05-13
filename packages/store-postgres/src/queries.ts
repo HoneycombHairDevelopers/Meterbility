@@ -71,6 +71,7 @@ interface StepRow {
   tokens_output: string | number;
   tokens_cached_read: string | number;
   tokens_cache_creation: string | number;
+  tokens_cache_creation_1h: string | number;
   tokens_reasoning: string | number | null;
   latency_ms: number;
   cost_cents: number;
@@ -96,6 +97,7 @@ function rowToStep(r: StepRow): Step {
       output: Number(r.tokens_output),
       cached_read: Number(r.tokens_cached_read),
       cache_creation: Number(r.tokens_cache_creation),
+      cache_creation_1h: Number(r.tokens_cache_creation_1h ?? 0),
       reasoning: r.tokens_reasoning != null ? Number(r.tokens_reasoning) : undefined,
     },
     latency_ms: r.latency_ms,
@@ -195,8 +197,9 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
        step_id, run_id, parent_step_id, fork_origin_id, sequence, timestamp,
        model, context_snapshot_id, decision_ref, action, outcome,
        tokens_input, tokens_output, tokens_cached_read, tokens_cache_creation,
-       tokens_reasoning, latency_ms, cost_cents, status, tags
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb)
+       tokens_cache_creation_1h, tokens_reasoning, latency_ms, cost_cents,
+       status, tags
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb)
      ON CONFLICT (step_id) DO UPDATE SET
        action = EXCLUDED.action,
        outcome = EXCLUDED.outcome,
@@ -204,6 +207,7 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
        tokens_output = EXCLUDED.tokens_output,
        tokens_cached_read = EXCLUDED.tokens_cached_read,
        tokens_cache_creation = EXCLUDED.tokens_cache_creation,
+       tokens_cache_creation_1h = EXCLUDED.tokens_cache_creation_1h,
        tokens_reasoning = EXCLUDED.tokens_reasoning,
        latency_ms = EXCLUDED.latency_ms,
        cost_cents = EXCLUDED.cost_cents,
@@ -225,6 +229,7 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
       step.tokens.output,
       step.tokens.cached_read,
       step.tokens.cache_creation,
+      step.tokens.cache_creation_1h ?? 0,
       step.tokens.reasoning ?? null,
       step.latency_ms,
       step.cost_cents,

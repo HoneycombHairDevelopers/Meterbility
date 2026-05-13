@@ -646,7 +646,19 @@ const STYLES = `
   .recent-tools {
     font-family: var(--font-mono); font-size: 11px;
     color: var(--text-secondary);
-    display: flex; gap: 4px; flex-wrap: wrap;
+    display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
+  }
+  /* Small mono-uppercase label rendered before the tool chips. Same
+     idiom as section-label so the fleet card reads consistently with
+     the rest of the system. */
+  .recent-tools-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-right: 4px;
   }
   .recent-tools code {
     background: var(--surface-2);
@@ -789,6 +801,57 @@ const STYLES = `
       scroll-behavior: auto !important;
     }
   }
+
+  /* ─── API-metered cost disclosure ──────────────────────────────── */
+  /* Tooltip-style marker rendered inline next to every $cost figure.
+     Subscription users (Claude Pro / Max) don't pay these dollars —
+     Spool's number is the API-equivalent rate, and the API rate itself
+     reflects VC-subsidized 2026 pricing. Tooltip on the chip spells
+     this out; the cost-footnote block at the page bottom expands. */
+  .cost-mark {
+    display: inline-flex; align-items: center;
+    margin-left: var(--space-1);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    border: 1px solid var(--border-default);
+    background: var(--surface-2);
+    padding: 1px 4px;
+    border-radius: var(--radius-xs);
+    cursor: help;
+    text-transform: uppercase;
+    vertical-align: middle;
+    transition: color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
+  }
+  .cost-mark:hover {
+    color: var(--cerulean-300);
+    border-color: var(--cerulean-400);
+  }
+
+  .cost-footnote {
+    margin-top: var(--space-8);
+    padding: var(--space-3) var(--space-4);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-left: 2px solid var(--cerulean-400);
+    border-radius: var(--radius-sm);
+  }
+  .cost-footnote strong { color: var(--text-primary); }
+  .cost-footnote em { color: var(--cerulean-300); font-style: normal; }
+  .cost-footnote .label {
+    color: var(--cerulean-400);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    font-family: var(--font-mono);
+    margin-right: var(--space-2);
+  }
 `;
 
 const SCRIPT = `
@@ -801,6 +864,13 @@ function fmtAge(iso) {
   if (s < 3600) return Math.round(s / 60) + 'm ago';
   return Math.round(s / 3600) + 'h ago';
 }
+function costStr(cents) {
+  const dollars = cents / 100;
+  if (dollars === 0) return '$0.00';
+  if (Math.abs(dollars) >= 0.005) return '$' + dollars.toFixed(2);
+  return '$' + dollars.toFixed(4);
+}
+const COST_MARK = '<span class="cost-mark" title="API-equivalent rate. (1) Subscription users (Pro/Max) pay a flat fee, not this. (2) Reflects VC-subsidized 2026 pricing — training and cluster CapEx aren\\'t in the per-token bill. Use for relative comparison only.">api·metered</span>';
 function ctxBarClass(pct) {
   if (pct >= 90) return 'ctx-bar danger';
   if (pct >= 70) return 'ctx-bar warn';
@@ -821,12 +891,12 @@ function renderFleetEntry(e) {
     + '</div>'
     + '<div class="meta">'
     +   '<span class="kv">' + r.step_count + ' steps</span>'
-    +   '<span class="kv">$' + (r.cost_cents / 100).toFixed(2) + '</span>'
+    +   '<span class="kv">' + costStr(r.cost_cents) + COST_MARK + '</span>'
     +   '<span class="kv">' + escapeHtml(r.git_branch || '') + '</span>'
     +   '<span class="age" data-age="' + escapeHtml(e.last_step_at || '') + '">' + fmtAge(e.last_step_at) + '</span>'
     + '</div>'
     + '<div class="' + ctxBarClass(e.context_pct) + '" title="context util ' + e.context_pct + '%"><div class="fill" style="width:' + e.context_pct + '%"></div></div>'
-    + '<div class="recent-tools">' + (tools || '<span style="opacity:0.5">no tools yet</span>') + '</div>'
+    + '<div class="recent-tools"><span class="recent-tools-label">Tools used</span>' + (tools || '<span style="opacity:0.5">no tools yet</span>') + '</div>'
     + alerts
     + '</div>';
 }
@@ -1346,7 +1416,8 @@ export function renderFleet(
       </div>
     </div>
     ${banner}
-    <div id="fleet-grid" class="fleet">${initial || empty}</div>`;
+    <div id="fleet-grid" class="fleet">${initial || empty}</div>
+    ${COST_FOOTNOTE_HTML}`;
 }
 
 function fleetEntryHtml(e: FleetEntry): string {
@@ -1369,12 +1440,12 @@ function fleetEntryHtml(e: FleetEntry): string {
     </div>
     <div class="meta">
       <span class="kv">${r.step_count} steps</span>
-      <span class="kv">$${(r.cost_cents / 100).toFixed(2)}</span>
+      <span class="kv">${costEl(r.cost_cents)}</span>
       <span class="kv">${esc(r.git_branch ?? "")}</span>
       <span class="age" data-age="${esc(e.last_step_at ?? "")}"></span>
     </div>
     <div class="${barClass}" title="context util ${e.context_pct}%"><div class="fill" style="width:${e.context_pct}%"></div></div>
-    <div class="recent-tools">${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
+    <div class="recent-tools"><span class="recent-tools-label">Tools used</span>${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
     ${alerts}
   </div>`;
 }
@@ -1389,7 +1460,7 @@ export function renderRunList(runs: Run[]): string {
       const fork = r.fork_origin_run_id
         ? ` <span class="badge badge--premium">fork</span>`
         : "";
-      const cost = `$${(r.cost_cents / 100).toFixed(2)}`;
+      const cost = costEl(r.cost_cents);
       const title = r.title ?? r.run_id;
       return `<tr>
         <td><a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}</td>
@@ -1412,7 +1483,8 @@ export function renderRunList(runs: Run[]): string {
         <th>Started</th><th>Branch</th>
       </tr></thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table>
+    ${COST_FOOTNOTE_HTML}`;
 }
 
 export function renderRun(
@@ -1425,7 +1497,7 @@ export function renderRun(
   const meta = `<div class="meta-row">
     <div class="kv"><strong>Status</strong> <span class="pill ${esc(run.status)}">${esc(run.status)}</span></div>
     <div class="kv"><strong>Steps</strong> <span class="val">${run.step_count}</span></div>
-    <div class="kv"><strong>Cost</strong> <span class="val">$${(run.cost_cents / 100).toFixed(2)}</span></div>
+    <div class="kv"><strong>Cost</strong> <span class="val">${costEl(run.cost_cents)}</span></div>
     <div class="kv"><strong>Input</strong> <span class="val">${run.tokens_total_input.toLocaleString()}</span></div>
     <div class="kv"><strong>Output</strong> <span class="val">${run.tokens_total_output.toLocaleString()}</span></div>
     <div class="kv"><strong>Cached</strong> <span class="val">${run.tokens_total_cached.toLocaleString()}</span></div>
@@ -1514,7 +1586,8 @@ export function renderRun(
     ${filterBar}
     ${runAnnotations}
     ${forksBlock}
-    ${stepCards.length ? stepCards : `<div class="empty">No steps in this run.</div>`}`;
+    ${stepCards.length ? stepCards : `<div class="empty">No steps in this run.</div>`}
+    ${COST_FOOTNOTE_HTML}`;
 }
 
 function renderStepCard(s: Step, decision: string): string {
@@ -1543,11 +1616,10 @@ function renderStepCard(s: Step, decision: string): string {
 
   const decisionTab = `<div class="tab tab-decision"><pre class="body">${esc(prettyJson(decision))}</pre></div>`;
   const actionTab = `<div class="tab tab-action" style="display:none"><pre class="body">${esc(JSON.stringify(s.action, null, 2))}</pre></div>`;
-  const outcomeTab = `<div class="tab tab-outcome" style="display:none"><pre class="body">${esc(JSON.stringify(s.outcome, null, 2))}</pre>${
-    s.outcome.tool_result_ref
+  const outcomeTab = `<div class="tab tab-outcome" style="display:none"><pre class="body">${esc(JSON.stringify(s.outcome, null, 2))}</pre>${s.outcome.tool_result_ref
       ? `<p><a href="/api/blob/${esc(s.outcome.tool_result_ref)}" target="_blank">view tool result (${esc(s.outcome.tool_result_ref.slice(0, 12))})</a></p>`
       : ""
-  }</div>`;
+    }</div>`;
   const costTab = `<div class="tab tab-cost" style="display:none"><pre class="body">${esc(
     JSON.stringify(
       {
@@ -1611,25 +1683,25 @@ export function renderDiff(a: Run, b: Run, d: DiffResult): string {
 export function renderTests(tests: RegressionTest[], recent: RegressionResult[]): string {
   const items = tests.length
     ? tests
-        .map(
-          (t) =>
-            `<a class="item" data-name="${esc(t.name)}" onclick="selectTest('${esc(t.name)}')">
+      .map(
+        (t) =>
+          `<a class="item" data-name="${esc(t.name)}" onclick="selectTest('${esc(t.name)}')">
               <div>${esc(t.name)}</div>
               <div class="meta">${t.assertions.length} assertions${t.canonical_run_id ? ` · canon ${esc(t.canonical_run_id.slice(0, 12))}` : ""}</div>
             </a>`,
-        )
-        .join("")
+      )
+      .join("")
     : `<p style="color:var(--fg-mute);font-size:12.5px;padding:8px">No tests yet.</p>`;
 
   const recentRows = recent.length
     ? recent
-        .map(
-          (r) =>
-            `<div class="row ${r.passed ? "pass" : "fail"}">
+      .map(
+        (r) =>
+          `<div class="row ${r.passed ? "pass" : "fail"}">
               ${r.passed ? "PASS" : "FAIL"}  ${esc(r.test_name.padEnd(20))}  ${esc(r.run_id.slice(0, 12))}  ${esc(r.created_at)}
             </div>`,
-        )
-        .join("")
+      )
+      .join("")
     : `<p style="color:var(--fg-mute);font-size:12px">No results yet — pick a test and click "Run on all runs."</p>`;
 
   return `<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--space-5)">
@@ -1650,6 +1722,41 @@ export function renderTests(tests: RegressionTest[], recent: RegressionResult[])
     <div class="results-list">${recentRows}</div>
   </div>`;
 }
+
+/** Render a cost figure with the API-metered marker + tooltip. */
+function costEl(cents: number): string {
+  return `${costStr(cents)}<span class="cost-mark" title="Spool computes cost from token counts × Anthropic public per-token API rates. Two caveats: (1) Claude Pro/Max users pay a flat subscription — this is API-equivalent, NOT money out of your account. (2) Current API rates reflect VC-subsidized 2026 frontier-model economics: they cover inference with margin, but training runs (>$1B per Opus-class model) and cluster CapEx are funded by equity, not per-token revenue. If labs ever have to be cash-flow positive on a fully-loaded basis, expect these numbers to rise. Use for relative comparison between runs.">api·metered</span>`;
+}
+/**
+ * Format a cost (stored in cents) as dollars. Uses 2 decimal places for
+ * anything ≥ half a cent so the common case reads like a normal price,
+ * and bumps to 4 decimals for sub-cent costs so they don't all collapse
+ * to "$0.00". Always shows the dollar sign so the UI never mixes units.
+ */
+function costStr(cents: number): string {
+  const dollars = cents / 100;
+  if (dollars === 0) return "$0.00";
+  if (Math.abs(dollars) >= 0.005) return `$${dollars.toFixed(2)}`;
+  return `$${dollars.toFixed(4)}`;
+}
+
+const COST_FOOTNOTE_HTML = `<div class="cost-footnote">
+  <span class="label">Pricing</span>
+  Costs are token counts × Anthropic's public per-token API rates
+  (Opus 4.x: $15/$75 input/output, $1.50 cached read, $18.75 5m / $30 1h cache write per million).
+  <br><br>
+  <strong>Two things this number is not.</strong>
+  (1) If you're on Claude Pro or Max, you pay a flat subscription —
+  this is the API-equivalent rate, <em>not</em> money out of your account.
+  (2) The API rate itself reflects 2026 frontier-model economics: it covers
+  inference with positive gross margin, but training runs (>$1B per Opus-class model),
+  R&amp;D, and cluster CapEx are funded by VC equity rounds, not per-token revenue.
+  If labs ever have to be cash-flow positive on a fully-loaded basis,
+  expect these numbers to rise — possibly 2–4×.
+  <br><br>
+  Useful for <em>relative</em> comparison between runs (this prompt vs. that prompt,
+  this iteration vs. the canonical), not as a forecast of long-run cost.
+</div>`;
 
 function esc(s: string): string {
   return s

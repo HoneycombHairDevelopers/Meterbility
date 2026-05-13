@@ -383,6 +383,7 @@ async function* buildSteps(args: BuildArgs): AsyncGenerator<Step> {
       output: tokens.output,
       cached_read: tokens.cached_read,
       cache_creation: tokens.cache_creation,
+      cache_creation_1h: tokens.cache_creation_1h,
     });
 
     const tags: string[] = [];
@@ -422,19 +423,44 @@ function mergeTokens(messages: ClaudeMessage[]): TokenUsage {
   let input = 0;
   let output = 0;
   let cached_read = 0;
-  let cache_creation = 0;
+  // Track 5m and 1h cache writes separately so cost can apply the right
+  // rate (1.25× input vs 2× input). Anthropic exposes the breakdown
+  // under `usage.cache_creation`. If only the legacy total is present
+  // we conservatively bucket it as 5m to preserve back-compat with the
+  // old single-rate behavior.
+  let cache_creation_5m = 0;
+  let cache_creation_1h = 0;
   for (const m of messages) {
     const u = m.usage;
     if (!u) continue;
     input = Math.max(input, u.input_tokens ?? 0);
     output = Math.max(output, u.output_tokens ?? 0);
     cached_read = Math.max(cached_read, u.cache_read_input_tokens ?? 0);
-    cache_creation = Math.max(
-      cache_creation,
-      u.cache_creation_input_tokens ?? 0,
-    );
+    const cc = u.cache_creation;
+    if (cc) {
+      cache_creation_5m = Math.max(
+        cache_creation_5m,
+        cc.ephemeral_5m_input_tokens ?? 0,
+      );
+      cache_creation_1h = Math.max(
+        cache_creation_1h,
+        cc.ephemeral_1h_input_tokens ?? 0,
+      );
+    } else if (u.cache_creation_input_tokens !== undefined) {
+      // Legacy field — bucket as 5m (the cheaper assumption).
+      cache_creation_5m = Math.max(
+        cache_creation_5m,
+        u.cache_creation_input_tokens,
+      );
+    }
   }
-  return { input, output, cached_read, cache_creation };
+  return {
+    input,
+    output,
+    cached_read,
+    cache_creation: cache_creation_5m,
+    cache_creation_1h,
+  };
 }
 
 function buildHistoryChain(

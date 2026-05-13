@@ -122,8 +122,12 @@ export class LiveInspector extends EventEmitter {
   private firedAlerts = new Map<string, Set<string>>(); // run_id → alert keys
   private lastSizes = new Map<string, number>(); // path → size at last poll
   private lastStepCounts = new Map<string, number>(); // run_id → step count
+  private lastStatus = new Map<string, Run["status"]>(); // run_id → last seen status
   private timer?: NodeJS.Timeout;
   private stopped = false;
+  /** Set on the first scan so we can backfill state silently — historical
+   *  sessions on disk are not "new runs" the user just kicked off. */
+  private booted = false;
 
   constructor(store: Store, opts: LiveOptions = {}) {
     super();
@@ -140,7 +144,12 @@ export class LiveInspector extends EventEmitter {
         entries: [],
       } satisfies LiveEvent);
     }
-    await this.tick();
+    // First tick = silent backfill. Populate every internal map (knownPaths,
+    // lastSizes, lastStepCounts, lastStatus, firedAlerts) without firing
+    // run:created / run:completed / alert events. Otherwise startup floods
+    // the operator with notifications for sessions that ended weeks ago.
+    await this.tick({ silent: true });
+    this.booted = true;
     this.timer = setInterval(() => {
       void this.tick().catch((err) => {
         // eslint-disable-next-line no-console
@@ -158,26 +167,32 @@ export class LiveInspector extends EventEmitter {
   /**
    * One scan: discover sessions, re-ingest any whose file has grown,
    * compute the current fleet snapshot, fire alerts where appropriate.
+   *
+   * `silent: true` runs the same ingest pipeline but suppresses event
+   * emission — used for the first-tick backfill at startup so historical
+   * runs don't masquerade as freshly-created ones.
    */
-  async tick(): Promise<void> {
+  async tick(opts: { silent?: boolean } = {}): Promise<void> {
     if (this.stopped) return;
+    const silent = opts.silent === true;
 
     const sessions = await discoverSessions();
-    const newPaths: string[] = [];
-    const updatedPaths: string[] = [];
+    // De-dupe paths into a single set so a brand-new file (which qualifies
+    // as both "new" AND "size grew from 0") doesn't get processed twice.
+    const toProcess = new Set<string>();
     for (const s of sessions) {
       if (!this.knownPaths.has(s.path)) {
         this.knownPaths.add(s.path);
-        newPaths.push(s.path);
+        toProcess.add(s.path);
       }
       const lastSize = this.lastSizes.get(s.path) ?? 0;
       if (s.size_bytes > lastSize) {
-        updatedPaths.push(s.path);
+        toProcess.add(s.path);
         this.lastSizes.set(s.path, s.size_bytes);
       }
     }
 
-    for (const path of [...newPaths, ...updatedPaths]) {
+    for (const path of toProcess) {
       try {
         const result = await ingestSession(this.store, path);
         if (result.status === "empty") continue;
@@ -185,18 +200,33 @@ export class LiveInspector extends EventEmitter {
         if (!run) continue;
         const newSteps = collectNewSteps(this.store, run, this.lastStepCounts);
         const wasKnown = this.lastStepCounts.has(run.run_id);
+        const prevStatus = this.lastStatus.get(run.run_id);
         this.lastStepCounts.set(run.run_id, run.step_count);
-        if (!wasKnown) {
-          this.emit("data", { type: "run:created", run } satisfies LiveEvent);
-        } else {
-          this.emit("data", {
-            type: "run:updated",
-            run,
-            new_steps: newSteps,
-          } satisfies LiveEvent);
+        this.lastStatus.set(run.run_id, run.status);
+
+        if (!silent) {
+          if (!wasKnown) {
+            this.emit("data", { type: "run:created", run } satisfies LiveEvent);
+          } else if (newSteps.length > 0) {
+            this.emit("data", {
+              type: "run:updated",
+              run,
+              new_steps: newSteps,
+            } satisfies LiveEvent);
+          }
         }
-        await this.maybeAlert(run, newSteps);
-        if (run.status === "ok" || run.status === "error") {
+
+        // Maybe-alert always runs so firedAlerts gets seeded; pass `silent`
+        // so it suppresses emits during the boot backfill but still records
+        // which alert keys were "already seen" pre-boot.
+        await this.maybeAlert(run, newSteps, silent);
+
+        // Fire run:completed only on the in_progress → ok/error transition,
+        // not every tick a completed run gets re-ingested. During the
+        // silent backfill we never emit; we just record final status.
+        const isTerminal = run.status === "ok" || run.status === "error";
+        const wasTerminal = prevStatus === "ok" || prevStatus === "error";
+        if (!silent && isTerminal && !wasTerminal) {
           this.emit("data", {
             type: "run:completed",
             run,
@@ -210,6 +240,8 @@ export class LiveInspector extends EventEmitter {
 
     // Fleet snapshot every tick, regardless of whether anything changed
     // — the UI uses it to compute "time since last activity" countdowns.
+    // We DO emit this during silent boot so SSE subscribers connecting
+    // immediately after start() get a populated grid right away.
     this.emit("data", {
       type: "fleet:snapshot",
       entries: this.fleetEntries(),
@@ -225,8 +257,17 @@ export class LiveInspector extends EventEmitter {
     });
   }
 
-  private async maybeAlert(run: Run, newSteps: Step[]): Promise<void> {
+  private async maybeAlert(
+    run: Run,
+    newSteps: Step[],
+    silent = false,
+  ): Promise<void> {
     const fired = this.firedAlerts.get(run.run_id) ?? new Set<string>();
+    const fireOrSeed = (key: string, event: LiveEvent) => {
+      if (fired.has(key)) return;
+      fired.add(key);
+      if (!silent) this.emit("data", event);
+    };
 
     // Tool-call alert.
     for (const s of newSteps) {
@@ -235,17 +276,13 @@ export class LiveInspector extends EventEmitter {
         s.action.tool_name &&
         this.opts.watchTools.includes(s.action.tool_name)
       ) {
-        const key = `tool:${s.action.tool_name}:${s.step_id}`;
-        if (!fired.has(key)) {
-          fired.add(key);
-          this.emit("data", {
-            type: "alert",
-            run_id: run.run_id,
-            kind: "tool_called",
-            message: `agent called ${s.action.tool_name}`,
-            meta: { step_id: s.step_id, sequence: s.sequence },
-          } satisfies LiveEvent);
-        }
+        fireOrSeed(`tool:${s.action.tool_name}:${s.step_id}`, {
+          type: "alert",
+          run_id: run.run_id,
+          kind: "tool_called",
+          message: `agent called ${s.action.tool_name}`,
+          meta: { step_id: s.step_id, sequence: s.sequence },
+        });
       }
     }
 
@@ -254,17 +291,13 @@ export class LiveInspector extends EventEmitter {
       const pct = contextUtilization(s);
       for (const t of this.opts.contextThresholds) {
         if (pct >= t) {
-          const key = `ctx:${t}`;
-          if (!fired.has(key)) {
-            fired.add(key);
-            this.emit("data", {
-              type: "alert",
-              run_id: run.run_id,
-              kind: "context_threshold",
-              message: `context utilization ≥ ${t}%`,
-              meta: { sequence: s.sequence, percent: pct },
-            } satisfies LiveEvent);
-          }
+          fireOrSeed(`ctx:${t}`, {
+            type: "alert",
+            run_id: run.run_id,
+            kind: "context_threshold",
+            message: `context utilization ≥ ${t}%`,
+            meta: { sequence: s.sequence, percent: pct },
+          });
         }
       }
     }
@@ -273,34 +306,32 @@ export class LiveInspector extends EventEmitter {
     const allSteps = listSteps(this.store, run.run_id);
     const loop = detectLoop(allSteps, this.opts.loopWindow);
     if (loop) {
-      const key = `loop:${loop.tool}:${loop.signature}`;
-      if (!fired.has(key)) {
-        fired.add(key);
-        this.emit("data", {
-          type: "alert",
-          run_id: run.run_id,
-          kind: "loop",
-          message: `${loop.repeats}× ${loop.tool} with same args`,
-          meta: { window: this.opts.loopWindow },
-        } satisfies LiveEvent);
-      }
+      fireOrSeed(`loop:${loop.tool}:${loop.signature}`, {
+        type: "alert",
+        run_id: run.run_id,
+        kind: "loop",
+        message: `${loop.repeats}× ${loop.tool} with same args`,
+        meta: { window: this.opts.loopWindow },
+      });
     }
 
-    // Stall detection — only meaningful for in-progress runs.
+    // Stall detection — only meaningful for runs we'd plausibly intervene
+    // on. Skip:
+    //   - non-in_progress runs (terminal already)
+    //   - runs that haven't been touched in > 1 hour (operator presumably
+    //     abandoned the session; alerting "no activity for 48h" on a
+    //     historical session is noise, not signal).
     if (run.status === "in_progress" && allSteps.length > 0) {
       const lastTs = new Date(allSteps[allSteps.length - 1]!.timestamp).getTime();
       const ageS = (Date.now() - lastTs) / 1000;
-      if (ageS > this.opts.stallSeconds) {
-        const key = `stall:${Math.floor(ageS / 60)}`;
-        if (!fired.has(key)) {
-          fired.add(key);
-          this.emit("data", {
-            type: "alert",
-            run_id: run.run_id,
-            kind: "stall",
-            message: `no activity for ${Math.round(ageS)}s`,
-          } satisfies LiveEvent);
-        }
+      const HOUR = 3600;
+      if (ageS > this.opts.stallSeconds && ageS < HOUR) {
+        fireOrSeed(`stall:${Math.floor(ageS / 60)}`, {
+          type: "alert",
+          run_id: run.run_id,
+          kind: "stall",
+          message: `no activity for ${Math.round(ageS)}s`,
+        });
       }
     }
 

@@ -1,12 +1,16 @@
 import type Database from "better-sqlite3";
 
 /**
- * Schema v1 — flat tables that map directly onto SPEC §6 entities. JSON
+ * Schema v2 — flat tables that map directly onto SPEC §6 entities. JSON
  * columns hold the structured-but-not-indexed parts (action, outcome,
  * tags). Foreign keys are enforced; large content lives in the blob store
  * referenced by SHA256.
+ *
+ * Migrations from v1 are additive (idempotent ALTER TABLE) — see
+ * `runMigrations` below. Existing captures keep their stored cost; new
+ * captures get the more accurate 5m vs 1h cache-write split.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function ensureSchema(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
@@ -79,6 +83,7 @@ export function ensureSchema(db: Database.Database): void {
       tokens_output INTEGER NOT NULL DEFAULT 0,
       tokens_cached_read INTEGER NOT NULL DEFAULT 0,
       tokens_cache_creation INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_creation_1h INTEGER NOT NULL DEFAULT 0,
       tokens_reasoning INTEGER,
       latency_ms INTEGER NOT NULL DEFAULT 0,
       cost_cents REAL NOT NULL DEFAULT 0,
@@ -169,6 +174,15 @@ export function ensureSchema(db: Database.Database): void {
       ON regression_results(test_id, created_at DESC);
   `);
 
+  // Apply idempotent column-additions for v2+. SQLite has no
+  // CREATE-OR-ALTER, so we check PRAGMA table_info before each ADD.
+  ensureColumn(
+    db,
+    "steps",
+    "tokens_cache_creation_1h",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
+
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }
     | undefined;
@@ -177,5 +191,29 @@ export function ensureSchema(db: Database.Database): void {
       "schema_version",
       String(SCHEMA_VERSION),
     );
+  } else if (Number(row.value) < SCHEMA_VERSION) {
+    db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(
+      String(SCHEMA_VERSION),
+    );
   }
+}
+
+interface SqlitePragmaColumn {
+  cid: number;
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: unknown;
+  pk: number;
+}
+
+function ensureColumn(
+  db: Database.Database,
+  table: string,
+  column: string,
+  ddl: string,
+): void {
+  const cols = db.pragma(`table_info(${table})`) as SqlitePragmaColumn[];
+  if (cols.find((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
 }
