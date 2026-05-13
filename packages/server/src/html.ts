@@ -203,8 +203,43 @@ const STYLES = `
   td.numeric, td.mono {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   tbody tr { transition: background var(--duration-fast) var(--ease-out); }
+
+  /* ─── Scrollable table wrapper ──────────────────────────────────── */
+  /* Wraps wide tables (Runs page) so they scroll horizontally instead
+     of squeezing all 8 columns into the viewport. The table sets its
+     own min-width to keep columns from collapsing when there's space. */
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+  }
+  .table-scroll::-webkit-scrollbar { height: 10px; }
+  .table-scroll::-webkit-scrollbar-track { background: var(--surface-0); }
+  .table-scroll::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border-radius: var(--radius-full);
+    border: 2px solid var(--surface-0);
+  }
+  .table-scroll::-webkit-scrollbar-thumb:hover { background: var(--surface-4); }
+  .runs-table { min-width: 1180px; }
+  .runs-table td:first-child,
+  .runs-table th:first-child {
+    /* Title column gets the most breathing room and is allowed to wrap
+       to one extra line on long titles — but stop at 480px so it
+       doesn't push the rest of the table off-screen. */
+    min-width: 320px; max-width: 480px;
+    white-space: normal;
+  }
+  .runs-table td:last-child,
+  .runs-table th:last-child {
+    /* Project column — cap so deep nested paths don't dominate. */
+    max-width: 240px;
+    overflow: hidden; text-overflow: ellipsis;
+  }
   tbody tr:hover { background: var(--surface-1); }
 
   /* ─── Badges (status pills) ─────────────────────────────────────── */
@@ -1462,14 +1497,19 @@ export function renderRunList(runs: Run[]): string {
         : "";
       const cost = costEl(r.cost_cents);
       const title = r.title ?? r.run_id;
+      const project = projectLabel(r.cwd);
+      const projectFull = r.cwd ?? "";
       return `<tr>
-        <td><a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}</td>
+        <td>
+          <a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}
+        </td>
         <td>${status}</td>
         <td class="mono">${esc(r.run_id.slice(0, 12))}</td>
         <td class="numeric">${r.step_count}</td>
         <td class="numeric">${cost}</td>
         <td class="mono">${esc(r.started_at)}</td>
         <td class="mono">${esc(r.git_branch ?? "")}</td>
+        <td class="mono" title="${esc(projectFull)}">${esc(project)}</td>
       </tr>`;
     })
     .join("");
@@ -1477,14 +1517,46 @@ export function renderRunList(runs: Run[]): string {
       <div class="section-label">All runs</div>
       <h2 style="margin:0">${runs.length} captured</h2>
     </div>
-    <table>
-      <thead><tr>
-        <th>Title</th><th>Status</th><th>Run</th><th>Steps</th><th>Cost</th>
-        <th>Started</th><th>Branch</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="runs-table">
+        <thead><tr>
+          <th>Title</th>
+          <th>Status</th>
+          <th>Run</th>
+          <th>Steps</th>
+          <th>Cost</th>
+          <th>Started</th>
+          <th>Branch</th>
+          <th>Project</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
     ${COST_FOOTNOTE_HTML}`;
+}
+
+/**
+ * Render `r.cwd` as a short, scannable project label — the trailing
+ * 1–2 path segments. Full path stays in the cell's `title=` attribute
+ * for hover. Examples:
+ *   /Users/me/development/Spool-demo  →  Spool-demo
+ *   /Users/me/dev/agents/customer-bot →  agents/customer-bot
+ *   (cursor)                          →  cursor
+ *   (unknown) / undefined             →  —
+ */
+function projectLabel(cwd: string | undefined): string {
+  if (!cwd) return "—";
+  const trimmed = cwd.replace(/\/+$/, "");
+  if (trimmed === "(unknown)") return "—";
+  if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
+    return trimmed.slice(1, -1);
+  }
+  const parts = trimmed.split("/").filter(Boolean);
+  if (parts.length === 0) return trimmed;
+  if (parts.length === 1) return parts[0]!;
+  // Show parent/child for the common /Users/X/dev/<parent>/<repo> pattern
+  // so a grid of similarly-named repos is distinguishable.
+  return parts.slice(-2).join("/");
 }
 
 export function renderRun(
@@ -1502,6 +1574,13 @@ export function renderRun(
     <div class="kv"><strong>Output</strong> <span class="val">${run.tokens_total_output.toLocaleString()}</span></div>
     <div class="kv"><strong>Cached</strong> <span class="val">${run.tokens_total_cached.toLocaleString()}</span></div>
     <div class="kv"><strong>Branch</strong> <span class="val">${esc(run.git_branch ?? "—")}</span></div>
+    ${
+      run.cwd
+        ? `<div class="kv"><strong>Project</strong> <span class="val mono" title="${esc(run.cwd)}">${esc(projectLabel(run.cwd))}</span>
+            <button class="copy-btn" title="copy full project path" onclick="copyText('${esc(run.cwd)}', this)">copy</button>
+          </div>`
+        : ""
+    }
     <div class="kv"><strong>Run ID</strong> <span class="val mono">${esc(run.run_id.slice(0, 16))}…</span>
       <button class="copy-btn" title="copy full run id" onclick="copyText('${esc(run.run_id)}', this)">copy</button>
     </div>
