@@ -206,9 +206,23 @@ const STYLES = `
   .ctx-bar .fill { height: 100%; background: var(--accent); transition: width 0.4s; }
   .ctx-bar.warn .fill { background: var(--warn); }
   .ctx-bar.danger .fill { background: var(--err); }
-  .recent-tools { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--fg-mute); }
+  .recent-tools {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+    color: var(--fg-mute);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  }
+  .recent-tools-label {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-mute);
+    margin-right: 4px;
+    opacity: 0.7;
+  }
   .recent-tools code {
-    background: var(--bg-3); padding: 1px 4px; border-radius: 3px; margin-right: 3px;
+    background: var(--bg-3); padding: 1px 4px; border-radius: 3px;
   }
   .alert-strip {
     margin-top: 6px; padding: 4px 8px; border-radius: 3px; font-size: 11.5px;
@@ -411,7 +425,7 @@ function renderFleetEntry(e) {
     +   '<span class="age" data-age="' + escapeHtml(e.last_step_at || '') + '">' + fmtAge(e.last_step_at) + '</span>'
     + '</div>'
     + '<div class="' + ctxBarClass(e.context_pct) + '" title="context util ' + e.context_pct + '%"><div class="fill" style="width:' + e.context_pct + '%"></div></div>'
-    + '<div class="recent-tools">' + (tools || '<span style="opacity:0.5">no tools yet</span>') + '</div>'
+    + '<div class="recent-tools"><span class="recent-tools-label">Tools used</span>' + (tools || '<span style="opacity:0.5">no tools yet</span>') + '</div>'
     + alerts
     + '</div>';
 }
@@ -953,7 +967,7 @@ function fleetEntryHtml(e: FleetEntry): string {
       <span class="age" data-age="${esc(e.last_step_at ?? "")}"></span>
     </div>
     <div class="${barClass}" title="context util ${e.context_pct}%"><div class="fill" style="width:${e.context_pct}%"></div></div>
-    <div class="recent-tools">${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
+    <div class="recent-tools"><span class="recent-tools-label">Recent Tools used</span>${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
     ${alerts}
   </div>`;
 }
@@ -1049,25 +1063,24 @@ export function renderRun(
         <button onclick="openAnnotateModal('run', '${esc(run.run_id)}')">+ annotate</button>
       </span>
     </h3>
-    ${
-      annotations.length
-        ? annotations
-            .map(
-              (a) =>
-                `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
-            )
-            .join("")
-        : '<p style="color:var(--fg-mute);font-size:12.5px;margin:0">No annotations yet.</p>'
+    ${annotations.length
+      ? annotations
+        .map(
+          (a) =>
+            `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
+        )
+        .join("")
+      : '<p style="color:var(--fg-mute);font-size:12.5px;margin:0">No annotations yet.</p>'
     }
   </div>`;
 
   const forksBlock = forks.length
     ? `<div class="step-card"><h3>Forks of this run</h3>${forks
-        .map(
-          (f) =>
-            `<div class="annotation"><span class="pill fork">${esc(f.edit_type)}</span> from step <code>${esc(f.origin_step_id.slice(0, 12))}</code> → <a href="/runs/${esc(f.fork_run_id)}">${esc(f.fork_run_id.slice(0, 12))}</a> · <a href="/diff?a=${esc(run.run_id)}&b=${esc(f.fork_run_id)}">diff</a></div>`,
-        )
-        .join("")}</div>`
+      .map(
+        (f) =>
+          `<div class="annotation"><span class="pill fork">${esc(f.edit_type)}</span> from step <code>${esc(f.origin_step_id.slice(0, 12))}</code> → <a href="/runs/${esc(f.fork_run_id)}">${esc(f.fork_run_id.slice(0, 12))}</a> · <a href="/diff?a=${esc(run.run_id)}&b=${esc(f.fork_run_id)}">diff</a></div>`,
+      )
+      .join("")}</div>`
     : "";
 
   const stepCards = steps
@@ -1110,11 +1123,10 @@ function renderStepCard(s: Step, decision: string): string {
 
   const decisionTab = `<div class="tab tab-decision"><pre class="body">${esc(prettyJson(decision))}</pre></div>`;
   const actionTab = `<div class="tab tab-action" style="display:none"><pre class="body">${esc(JSON.stringify(s.action, null, 2))}</pre></div>`;
-  const outcomeTab = `<div class="tab tab-outcome" style="display:none"><pre class="body">${esc(JSON.stringify(s.outcome, null, 2))}</pre>${
-    s.outcome.tool_result_ref
+  const outcomeTab = `<div class="tab tab-outcome" style="display:none"><pre class="body">${esc(JSON.stringify(s.outcome, null, 2))}</pre>${s.outcome.tool_result_ref
       ? `<p><a href="/api/blob/${esc(s.outcome.tool_result_ref)}" target="_blank">view tool result (${esc(s.outcome.tool_result_ref.slice(0, 12))})</a></p>`
       : ""
-  }</div>`;
+    }</div>`;
   const costTab = `<div class="tab tab-cost" style="display:none"><pre class="body">${esc(
     JSON.stringify(
       {
@@ -1175,25 +1187,25 @@ export function renderDiff(a: Run, b: Run, d: DiffResult): string {
 export function renderTests(tests: RegressionTest[], recent: RegressionResult[]): string {
   const items = tests.length
     ? tests
-        .map(
-          (t) =>
-            `<a class="item" data-name="${esc(t.name)}" onclick="selectTest('${esc(t.name)}')">
+      .map(
+        (t) =>
+          `<a class="item" data-name="${esc(t.name)}" onclick="selectTest('${esc(t.name)}')">
               <div>${esc(t.name)}</div>
               <div class="meta">${t.assertions.length} assertions${t.canonical_run_id ? ` · canon ${esc(t.canonical_run_id.slice(0, 12))}` : ""}</div>
             </a>`,
-        )
-        .join("")
+      )
+      .join("")
     : `<p style="color:var(--fg-mute);font-size:12.5px;padding:8px">No tests yet.</p>`;
 
   const recentRows = recent.length
     ? recent
-        .map(
-          (r) =>
-            `<div class="row ${r.passed ? "pass" : "fail"}">
+      .map(
+        (r) =>
+          `<div class="row ${r.passed ? "pass" : "fail"}">
               ${r.passed ? "PASS" : "FAIL"}  ${esc(r.test_name.padEnd(20))}  ${esc(r.run_id.slice(0, 12))}  ${esc(r.created_at)}
             </div>`,
-        )
-        .join("")
+      )
+      .join("")
     : `<p style="color:var(--fg-mute);font-size:12px">No results yet — pick a test and click "Run on all runs."</p>`;
 
   return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
