@@ -22,7 +22,11 @@ import {
   renderFleet,
   renderTests,
 } from "./html.ts";
-import { LiveInspector, type LiveEvent } from "./live.ts";
+import {
+  LiveInspector,
+  buildFleetEntries,
+  type LiveEvent,
+} from "./live.ts";
 import { forkRun, fakeResponder, anthropicResponder } from "./fork.ts";
 import {
   addAssertion,
@@ -49,19 +53,25 @@ export interface BuildAppOptions {
 
 export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   const app = new Hono();
+  const liveMode = opts.live !== undefined;
+  const shellOpts = { liveMode };
 
   app.get("/", (c) => {
-    if (opts.live) {
-      const entries = opts.live.fleetEntries();
-      return c.html(renderShell("Spool · Fleet", renderFleet(entries)));
-    }
-    const runs = listRuns(store, { limit: 100 });
-    return c.html(renderShell("Spool", renderRunList(runs)));
+    // Fleet view always renders. With --live, alerts come from the
+    // running LiveInspector; without --live, we build a one-shot
+    // snapshot from the same heuristics — `firedAlerts` is just
+    // omitted, so each card shows no alerts. The /api/live SSE
+    // endpoint only mounts under --live, and the client checks the
+    // live-mode meta tag before opening an EventSource.
+    const entries = opts.live
+      ? opts.live.fleetEntries()
+      : buildFleetEntries(store, { limit: 50 });
+    return c.html(renderShell("Spool · Fleet", renderFleet(entries, { liveMode }), shellOpts));
   });
 
   app.get("/runs", (c) => {
     const runs = listRuns(store, { limit: 200 });
-    return c.html(renderShell("Runs", renderRunList(runs)));
+    return c.html(renderShell("Runs", renderRunList(runs), shellOpts));
   });
 
   // Server-Sent Events for the live fleet view.
@@ -93,14 +103,18 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const runId = c.req.param("id");
     const run = getRun(store, runId);
     if (!run) return c.notFound();
-    const steps = listSteps(store, runId);
-    const annotations = listAnnotations(store, "run", runId);
-    const forks = listForks(store, runId);
+    // Use run.run_id (the resolved canonical id) rather than runId
+    // (which may be a prefix like "run_abc12345"). Otherwise reads
+    // against steps/annotations/forks return empty.
+    const steps = listSteps(store, run.run_id);
+    const annotations = listAnnotations(store, "run", run.run_id);
+    const forks = listForks(store, run.run_id);
     const stepDecisions = await loadDecisionPreviews(store, steps);
     return c.html(
       renderShell(
-        run.title ?? runId,
+        run.title ?? run.run_id,
         renderRun(run, steps, annotations, forks, stepDecisions),
+        shellOpts,
       ),
     );
   });
@@ -113,7 +127,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const runB = getRun(store, b);
     if (!runA || !runB) return c.notFound();
     const result = diffRuns(store, runA.run_id, runB.run_id);
-    return c.html(renderShell("Diff", renderDiff(runA, runB, result)));
+    return c.html(renderShell("Diff", renderDiff(runA, runB, result), shellOpts));
   });
 
   app.get("/api/runs", (c) => c.json(listRuns(store, { limit: 200 })));
@@ -122,7 +136,9 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     return run ? c.json(run) : c.notFound();
   });
   app.get("/api/runs/:id/steps", (c) => {
-    return c.json(listSteps(store, c.req.param("id")));
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    return c.json(listSteps(store, run.run_id));
   });
   app.get("/api/steps/:id", (c) => {
     const step = getStep(store, c.req.param("id"));
@@ -180,12 +196,14 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   });
 
   app.get("/api/runs/:id/annotations", (c) => {
-    const id = c.req.param("id");
-    return c.json(listAnnotations(store, "run", id));
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    return c.json(listAnnotations(store, "run", run.run_id));
   });
   app.get("/api/steps/:id/annotations", (c) => {
-    const id = c.req.param("id");
-    return c.json(listAnnotations(store, "step", id));
+    const step = getStep(store, c.req.param("id"));
+    if (!step) return c.notFound();
+    return c.json(listAnnotations(store, "step", step.step_id));
   });
 
   app.post("/api/fork", async (c) => {
@@ -309,7 +327,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.get("/tests", (c) => {
     const tests = listTests(store);
     const recent = listResults(store, undefined, 20);
-    return c.html(renderShell("Tests", renderTests(tests, recent)));
+    return c.html(renderShell("Tests", renderTests(tests, recent), shellOpts));
   });
 
   return app;

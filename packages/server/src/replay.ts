@@ -279,7 +279,8 @@ export async function appendLiveStep(
 ): Promise<Step> {
   const run = getRun(store, runId);
   if (!run) throw new Error(`unknown run: ${runId}`);
-  const prior = listSteps(store, runId);
+  // Use canonical run.run_id; runId may be a prefix.
+  const prior = listSteps(store, run.run_id);
   const sequence = prior.length;
   const decisionRef = await store.blobs.putJson(args.decisionContent);
   const snapshotRef = await store.blobs.putJson(args.snapshot);

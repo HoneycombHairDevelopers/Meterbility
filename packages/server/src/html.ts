@@ -70,8 +70,67 @@ const STYLES = `
   .timeline {
     display: flex; flex-wrap: wrap; gap: 3px;
     background: var(--bg-2); padding: 12px; border: 1px solid var(--border);
-    border-radius: 6px; margin-bottom: 20px;
+    border-radius: 6px; margin-bottom: 12px;
+    position: sticky; top: 52px; z-index: 5;
+    max-height: 140px; overflow-y: auto;
   }
+  .filter-bar {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 10px 0; flex-wrap: wrap;
+  }
+  .filter-chip {
+    padding: 3px 10px; border-radius: 12px; font-size: 12px;
+    background: var(--bg-2); border: 1px solid var(--border);
+    color: var(--fg-mute); cursor: pointer; user-select: none;
+  }
+  .filter-chip:hover { color: var(--fg); }
+  .filter-chip.active {
+    background: var(--bg-3); color: var(--fg);
+    border-color: var(--accent);
+  }
+  .filter-input {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--fg); border-radius: 4px;
+    padding: 3px 8px; font-size: 12.5px;
+    min-width: 180px;
+  }
+  .filter-input::placeholder { color: var(--fg-mute); }
+  .filter-input:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .copy-btn {
+    background: transparent; border: 1px solid transparent;
+    color: var(--fg-mute); border-radius: 3px;
+    padding: 0 4px; font-size: 11px; cursor: pointer;
+    font-family: inherit;
+  }
+  .copy-btn:hover { color: var(--fg); border-color: var(--border); background: var(--bg-3); }
+  .copy-btn.copied { color: var(--ok); }
+
+  /* Keyboard help overlay */
+  .kbd-help {
+    position: fixed; right: 18px; bottom: 18px; z-index: 50;
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px;
+    font-size: 12px; display: none;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+  }
+  .kbd-help.open { display: block; }
+  .kbd-help kbd {
+    background: var(--bg-3); border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    padding: 0 5px; border-radius: 3px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    color: var(--fg);
+  }
+  .kbd-help-toggle {
+    position: fixed; right: 18px; bottom: 18px; z-index: 49;
+    width: 28px; height: 28px; border-radius: 14px;
+    background: var(--bg-2); border: 1px solid var(--border);
+    color: var(--fg-mute); cursor: pointer;
+    font-size: 14px; line-height: 1;
+  }
+  .kbd-help-toggle:hover { color: var(--fg); border-color: var(--accent); }
   .timeline .blk {
     min-width: 18px; height: 24px; padding: 2px 5px;
     border-radius: 3px; background: var(--bg-3);
@@ -86,6 +145,13 @@ const STYLES = `
   .step-card {
     background: var(--bg-2); border: 1px solid var(--border);
     border-radius: 6px; padding: 14px 16px; margin-bottom: 12px;
+    /* Sticky <header> is ~52px tall; leave room when scrolling to a card. */
+    scroll-margin-top: 64px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .step-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset, 0 4px 16px rgba(88,166,255,0.08);
   }
   .step-card h3 { margin: 0 0 8px 0; font-size: 14px; font-weight: 600; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -155,6 +221,27 @@ const STYLES = `
   .pill.live-awaiting_input { color: var(--accent); border-color: rgba(88,166,255,0.4); }
   .pill.live-errored { color: var(--err); border-color: rgba(248,81,73,0.5); }
   .pill.live-completed { color: var(--fg-mute); }
+
+  .live-badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(63,185,80,0.12); color: var(--ok);
+    border: 1px solid rgba(63,185,80,0.35);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .live-badge.static {
+    background: var(--bg-3); color: var(--fg-mute);
+    border-color: var(--border);
+  }
+  .static-banner {
+    background: var(--bg-2); border: 1px dashed var(--border);
+    border-radius: 6px; padding: 8px 12px;
+    font-size: 12px; color: var(--fg-mute);
+    margin-bottom: 12px;
+  }
+  .static-banner code {
+    background: var(--bg-3); padding: 1px 6px; border-radius: 3px;
+    color: var(--fg);
+  }
 
   /* Modals */
   .modal-bg {
@@ -284,8 +371,18 @@ function tickAges() {
     el.textContent = fmtAge(el.dataset.age);
   });
 }
+function isLiveMode() {
+  const meta = document.querySelector('meta[name="spool-live-mode"]');
+  return meta && meta.getAttribute('content') === '1';
+}
 function startLive() {
-  if (typeof EventSource === 'undefined') return;
+  // The "tick ages every second" loop is useful in both modes; the
+  // SSE EventSource only makes sense when --live is on.
+  if (document.getElementById('fleet-grid')) {
+    setInterval(tickAges, 1000);
+    tickAges();
+  }
+  if (!isLiveMode() || typeof EventSource === 'undefined') return;
   const root = document.getElementById('fleet-grid');
   if (!root) return;
   const src = new EventSource('/api/live');
@@ -303,7 +400,6 @@ function startLive() {
     banner.appendChild(div);
     setTimeout(() => div.remove(), 12000);
   });
-  setInterval(tickAges, 1000);
 }
 window.addEventListener('DOMContentLoaded', startLive);
 
@@ -316,13 +412,145 @@ function showTab(stepId, tab) {
   const btn = document.querySelector('[data-step="' + stepId + '"] .tab-btn[data-tab="' + tab + '"]');
   if (btn) btn.classList.add('active');
 }
-function jumpToStep(seq) {
-  const target = document.querySelector('[data-seq="' + seq + '"]');
-  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function jumpToStep(seq, opts) {
+  // Scroll the step CARD into view, not the timeline block (which shares
+  // the data-seq attribute). Sticky header offset is handled in CSS via
+  // scroll-margin-top on .step-card.
+  const card = document.getElementById('step-' + seq);
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setActiveStep(seq);
+  if (!(opts && opts.skipHash)) {
+    history.replaceState(null, '', '#step-' + seq);
+  }
+}
+function setActiveStep(seq) {
   document.querySelectorAll('.blk').forEach(b => b.classList.remove('active'));
   const blk = document.querySelector('.blk[data-seq="' + seq + '"]');
-  if (blk) blk.classList.add('active');
+  if (blk) {
+    blk.classList.add('active');
+    // Keep the active block in view as user scrolls past it.
+    blk.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
+  document.querySelectorAll('.step-card.active').forEach(c => c.classList.remove('active'));
+  const card = document.getElementById('step-' + seq);
+  if (card) card.classList.add('active');
 }
+
+/* --- IntersectionObserver: highlight whichever step is in view --- */
+function initStepObserver() {
+  const cards = Array.from(document.querySelectorAll('.step-card[data-step-seq]'));
+  if (cards.length === 0) return;
+  const visible = new Map();
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) visible.set(e.target, e.intersectionRatio);
+      else visible.delete(e.target);
+    }
+    // Pick the most-visible card; on ties, the one earliest in the DOM.
+    let best = null; let bestRatio = -1;
+    for (const [el, ratio] of visible) {
+      if (ratio > bestRatio) { best = el; bestRatio = ratio; }
+    }
+    if (best) {
+      const seq = best.getAttribute('data-step-seq');
+      if (seq !== null) setActiveStep(Number(seq));
+    }
+  }, { threshold: [0, 0.2, 0.5, 1], rootMargin: '-80px 0px -50% 0px' });
+  cards.forEach(c => io.observe(c));
+}
+
+/* --- Keyboard navigation --- */
+function initKeyboardNav() {
+  const cards = () => Array.from(document.querySelectorAll('.step-card[data-step-seq]'));
+  const currentSeq = () => {
+    const active = document.querySelector('.step-card.active');
+    return active ? Number(active.getAttribute('data-step-seq')) : -1;
+  };
+  document.addEventListener('keydown', (e) => {
+    // Don't intercept while typing in inputs/textareas.
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    const all = cards();
+    if (all.length === 0) return;
+    const cur = currentSeq();
+    let next = null;
+    if (e.key === 'j' || e.key === 'ArrowDown') {
+      next = all.find(c => Number(c.getAttribute('data-step-seq')) > cur);
+      if (!next) next = all[all.length - 1];
+    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      const before = all.filter(c => Number(c.getAttribute('data-step-seq')) < cur);
+      next = before[before.length - 1] || all[0];
+    } else if (e.key === 'g') {
+      next = all[0];
+    } else if (e.key === 'G') {
+      next = all[all.length - 1];
+    } else if (e.key === '/') {
+      const f = document.getElementById('step-filter');
+      if (f) { e.preventDefault(); f.focus(); }
+      return;
+    } else if (e.key === '?') {
+      const help = document.getElementById('kbd-help');
+      if (help) { e.preventDefault(); help.classList.toggle('open'); }
+      return;
+    } else {
+      return;
+    }
+    if (next) {
+      e.preventDefault();
+      jumpToStep(Number(next.getAttribute('data-step-seq')));
+    }
+  });
+}
+
+/* --- URL hash on load --- */
+function restoreFromHash() {
+  const m = (location.hash || '').match(/^#step-(\\d+)$/);
+  if (!m) return;
+  // wait a tick so layout is final
+  setTimeout(() => jumpToStep(Number(m[1]), { skipHash: true }), 30);
+}
+
+/* --- Filter chips --- */
+function applyFilter(kind) {
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.toggle('active', c.dataset.kind === kind));
+  const cards = document.querySelectorAll('.step-card[data-step-seq]');
+  cards.forEach(c => {
+    const action = c.getAttribute('data-action-kind') || '';
+    const status = c.getAttribute('data-step-status') || '';
+    let show = true;
+    if (kind === 'tools') show = action === 'tool_call';
+    else if (kind === 'messages') show = action === 'message';
+    else if (kind === 'errors') show = status === 'error';
+    c.style.display = show ? '' : 'none';
+  });
+  const query = (document.getElementById('step-filter') || {}).value || '';
+  if (query) applyTextFilter(query);
+}
+function applyTextFilter(q) {
+  const ql = q.toLowerCase();
+  document.querySelectorAll('.step-card[data-step-seq]').forEach(c => {
+    if (c.style.display === 'none') return; // already filtered out by chip
+    const text = (c.innerText || '').toLowerCase();
+    c.style.display = !ql || text.includes(ql) ? '' : 'none';
+  });
+}
+
+/* --- Copy to clipboard --- */
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    if (!btn) return;
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 1200);
+  });
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  initStepObserver();
+  initKeyboardNav();
+  restoreFromHash();
+});
 
 /* --- Modal helpers --- */
 function openModal(id) {
@@ -515,9 +743,23 @@ function flash(msg, isError) {
 }
 `;
 
-export function renderShell(title: string, body: string): string {
+export interface ShellOptions {
+  /** True when `spool web --live` is on. Controls the SSE EventSource
+   *  startup and the small "live" badge in the nav. */
+  liveMode?: boolean;
+}
+
+export function renderShell(
+  title: string,
+  body: string,
+  opts: ShellOptions = {},
+): string {
+  const liveBadge = opts.liveMode
+    ? `<span class="live-badge" title="--live mode: SSE updates enabled">● live</span>`
+    : `<span class="live-badge static" title="--live not enabled. Restart with: spool web --live">○ static</span>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>${esc(title)} · Spool</title>
+<meta name="spool-live-mode" content="${opts.liveMode ? "1" : "0"}">
 <style>${STYLES}</style>
 </head><body>
 <header>
@@ -527,6 +769,7 @@ export function renderShell(title: string, body: string): string {
     <a href="/runs">Runs</a>
     <a href="/tests">Tests</a>
   </nav>
+  ${liveBadge}
   <span class="crumbs">${esc(title)}</span>
   <span id="flash" style="margin-left:auto;font-size:12px"></span>
 </header>
@@ -588,23 +831,51 @@ export function renderShell(title: string, body: string): string {
   </div>
 </div>
 
+<!-- Keyboard help -->
+<div id="kbd-help" class="kbd-help">
+  <div style="font-weight:600;margin-bottom:6px">Keyboard shortcuts</div>
+  <div><kbd>j</kbd> / <kbd>↓</kbd> next step</div>
+  <div><kbd>k</kbd> / <kbd>↑</kbd> previous step</div>
+  <div><kbd>g</kbd> first step · <kbd>G</kbd> last step</div>
+  <div><kbd>/</kbd> focus text filter</div>
+  <div><kbd>?</kbd> toggle this help</div>
+</div>
+<button class="kbd-help-toggle" title="keyboard shortcuts (?)" onclick="document.getElementById('kbd-help').classList.toggle('open')">?</button>
+
 <script>${SCRIPT}</script>
 </body></html>`;
 }
 
-export function renderFleet(entries: FleetEntry[]): string {
-  const initial = entries
-    .map((e) => fleetEntryHtml(e))
-    .join("");
+export function renderFleet(
+  entries: FleetEntry[],
+  opts: { liveMode?: boolean } = {},
+): string {
+  const initial = entries.map((e) => fleetEntryHtml(e)).join("");
+  const banner = opts.liveMode
+    ? ""
+    : `<div class="static-banner">
+         <strong>Static snapshot.</strong> Status, context %, and recent tools are computed from captured data — no auto-updates.
+         For live monitoring + alerts (Slack, loop / stall / context-threshold), restart with <code>spool web --live</code>.
+       </div>`;
+  const subtitle = opts.liveMode
+    ? "live · auto-updating via SSE"
+    : "static snapshot of last 50 runs · click any card to drill in";
+  const empty = opts.liveMode
+    ? `<div class="empty">No active runs yet. Open a Claude Code session and Spool will pick it up within a couple of seconds.</div>`
+    : `<div class="empty">No runs captured. Run <code>spool ingest claude-code --limit 5</code>.</div>`;
   return `<div id="alert-banner" style="margin-bottom:12px"></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h2 style="margin:0">Fleet</h2>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+      <div>
+        <h2 style="margin:0">Fleet</h2>
+        <div style="font-size:12px;color:var(--fg-mute);margin-top:2px">${esc(subtitle)}</div>
+      </div>
       <div class="meta-row" style="margin:0">
-        <span class="kv"><strong>${entries.length}</strong> run(s) tracked</span>
+        <span class="kv"><strong>${entries.length}</strong> run(s)</span>
         <span class="kv"><a href="/runs">all runs →</a></span>
       </div>
     </div>
-    <div id="fleet-grid" class="fleet">${initial || `<div class="empty">No active runs yet. Open a Claude Code session and Spool will pick it up within a couple of seconds.</div>`}</div>`;
+    ${banner}
+    <div id="fleet-grid" class="fleet">${initial || empty}</div>`;
 }
 
 function fleetEntryHtml(e: FleetEntry): string {
@@ -684,7 +955,9 @@ export function renderRun(
     <div class="kv"><strong>Output</strong> ${run.tokens_total_output.toLocaleString()}</div>
     <div class="kv"><strong>Cached</strong> ${run.tokens_total_cached.toLocaleString()}</div>
     <div class="kv"><strong>Branch</strong> ${esc(run.git_branch ?? "—")}</div>
-    <div class="kv"><strong>Run ID</strong> <span class="mono">${esc(run.run_id)}</span></div>
+    <div class="kv"><strong>Run ID</strong> <span class="mono">${esc(run.run_id.slice(0, 16))}…</span>
+      <button class="copy-btn" title="copy full run id" onclick="copyText('${esc(run.run_id)}', this)">copy</button>
+    </div>
     ${run.fork_origin_run_id ? `<div class="kv"><strong>Forked from</strong> <a href="/runs/${esc(run.fork_origin_run_id)}">${esc(run.fork_origin_run_id.slice(0, 12))}</a></div>` : ""}
   </div>`;
 
@@ -701,6 +974,22 @@ export function renderRun(
       return `<div class="blk ${esc(s.status)}" data-seq="${s.sequence}" title="step ${s.sequence}: ${esc(s.action.kind)}${s.action.tool_name ? " " + esc(s.action.tool_name) : ""}" onclick="jumpToStep(${s.sequence})">${s.sequence}. ${label}</div>`;
     })
     .join("")}</div>`;
+
+  const errorCount = steps.filter((s) => s.status === "error").length;
+  const toolCount = steps.filter((s) => s.action.kind === "tool_call").length;
+  const msgCount = steps.filter((s) => s.action.kind === "message").length;
+  const filterBar = `<div class="filter-bar">
+    <span class="filter-chip active" data-kind="all" onclick="applyFilter('all')">All · ${steps.length}</span>
+    <span class="filter-chip" data-kind="tools" onclick="applyFilter('tools')">Tool calls · ${toolCount}</span>
+    <span class="filter-chip" data-kind="messages" onclick="applyFilter('messages')">Messages · ${msgCount}</span>
+    <span class="filter-chip" data-kind="errors" onclick="applyFilter('errors')">Errors · ${errorCount}</span>
+    <input class="filter-input" id="step-filter" type="text"
+      placeholder="filter by text (press / to focus)"
+      oninput="applyTextFilter(this.value)">
+    <span style="margin-left:auto;font-size:11px;color:var(--fg-mute)">
+      <kbd>j</kbd>/<kbd>k</kbd> next/prev · <kbd>g</kbd>/<kbd>G</kbd> top/bottom · <kbd>?</kbd> help
+    </span>
+  </div>`;
 
   const runAnnotations = `<div class="step-card">
     <h3 style="display:flex;align-items:center;gap:8px">
@@ -737,6 +1026,7 @@ export function renderRun(
   return `<h2 style="margin-top:0">${esc(run.title ?? run.run_id)}</h2>
     ${meta}
     ${timeline}
+    ${filterBar}
     ${runAnnotations}
     ${forksBlock}
     ${stepCards.length ? stepCards : `<div class="empty">No steps in this run.</div>`}`;
@@ -745,10 +1035,13 @@ export function renderRun(
 function renderStepCard(s: Step, decision: string): string {
   const status = `<span class="pill ${esc(s.status)}">${esc(s.status)}</span>`;
   const defaultText = s.action.kind === "message" ? (s.action.text ?? "").slice(0, 200) : "";
-  const stepHeader = `<h3 data-seq="${s.sequence}" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-    <span>#${s.sequence} · ${esc(s.action.kind)}${s.action.tool_name ? ` · <code>${esc(s.action.tool_name)}</code>` : ""}</span>
+  const stepHeader = `<h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <a href="#step-${s.sequence}" onclick="jumpToStep(${s.sequence}); event.preventDefault();"
+       style="color:var(--fg);text-decoration:none">#${s.sequence}</a>
+    <span>· ${esc(s.action.kind)}${s.action.tool_name ? ` · <code>${esc(s.action.tool_name)}</code>` : ""}</span>
     ${status}
     <span class="pill">${esc(s.model)}</span>
+    <button class="copy-btn" title="copy step id" onclick="copyText('${esc(s.step_id)}', this)">${esc(s.step_id.slice(0, 12))}</button>
     <span class="row-actions" style="margin-left:auto">
       <button onclick="openForkModal('${esc(s.run_id)}', ${s.sequence}, ${JSON.stringify(defaultText)})">Fork from here</button>
       <button onclick="openAnnotateModal('step', '${esc(s.step_id)}')">Annotate</button>
@@ -785,7 +1078,7 @@ function renderStepCard(s: Step, decision: string): string {
   )}</pre></div>`;
   const contextTab = `<div class="tab tab-context" style="display:none"><p><a href="/api/blob/${esc(s.context_snapshot_id)}" target="_blank">view context snapshot (${esc(s.context_snapshot_id.slice(0, 12))})</a></p></div>`;
 
-  return `<div class="step-card" data-step="${esc(s.step_id)}">${stepHeader}${tabBar}${decisionTab}${actionTab}${outcomeTab}${costTab}${contextTab}</div>`;
+  return `<div class="step-card" id="step-${s.sequence}" data-step="${esc(s.step_id)}" data-step-seq="${s.sequence}" data-action-kind="${esc(s.action.kind)}" data-step-status="${esc(s.status)}">${stepHeader}${tabBar}${decisionTab}${actionTab}${outcomeTab}${costTab}${contextTab}</div>`;
 }
 
 function prettyJson(maybeJson: string): string {

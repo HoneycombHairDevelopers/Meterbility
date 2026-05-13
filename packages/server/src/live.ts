@@ -1,7 +1,5 @@
 import { EventEmitter } from "node:events";
-import { stat, watch } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { claudeProjectsRoot } from "@spool/shared";
 import { ingestSession, discoverSessions } from "@spool/claude-code-adapter";
 import {
@@ -72,6 +70,50 @@ const DEFAULT_OPTS: Required<LiveOptions> = {
   watchTools: [],
   loopWindow: 4,
 };
+
+/**
+ * Build the fleet snapshot from the store. Pulled out of `LiveInspector`
+ * so the web UI can render the same view as a one-shot, even when
+ * `spool web` was launched without `--live`. Live mode passes its
+ * `firedAlerts` map; static mode passes nothing and just gets empty
+ * alert lists.
+ */
+export function buildFleetEntries(
+  store: Store,
+  opts: {
+    limit?: number;
+    stallSeconds?: number;
+    firedAlerts?: Map<string, Set<string>>;
+  } = {},
+): FleetEntry[] {
+  const limit = opts.limit ?? 50;
+  const stallSeconds = opts.stallSeconds ?? 120;
+  const firedAlerts = opts.firedAlerts;
+  const runs = listRuns(store, { limit });
+  return runs.map((run) => {
+    const steps = listSteps(store, run.run_id);
+    const lastStep = steps[steps.length - 1];
+    const status = classifyRunStatus(run, steps, stallSeconds);
+    const ctxPct = contextUtilization(lastStep);
+    const recentTools = steps
+      .slice(-5)
+      .map((s) => s.action.tool_name)
+      .filter((x): x is string => !!x);
+    const alerts = firedAlerts
+      ? Array.from(firedAlerts.get(run.run_id) ?? new Set<string>()).map(
+          (kind) => ({ kind, message: kind }),
+        )
+      : [];
+    return {
+      run,
+      status,
+      context_pct: ctxPct,
+      recent_tools: recentTools,
+      last_step_at: lastStep?.timestamp,
+      alerts,
+    };
+  });
+}
 
 export class LiveInspector extends EventEmitter {
   private store: Store;
@@ -176,29 +218,10 @@ export class LiveInspector extends EventEmitter {
 
   /** Compute the current fleet view (active + recently-completed runs). */
   fleetEntries(): FleetEntry[] {
-    const runs = listRuns(this.store, { limit: 50 });
-    return runs.map((run) => {
-      const steps = listSteps(this.store, run.run_id);
-      const lastStep = steps[steps.length - 1];
-      const status = classifyRunStatus(run, steps, this.opts.stallSeconds);
-      const ctxPct = contextUtilization(lastStep);
-      const recentTools = steps
-        .slice(-5)
-        .map((s) => s.action.tool_name)
-        .filter((x): x is string => !!x);
-      const alerts = (this.firedAlerts.get(run.run_id) ?? new Set())
-        .values();
-      return {
-        run,
-        status,
-        context_pct: ctxPct,
-        recent_tools: recentTools,
-        last_step_at: lastStep?.timestamp,
-        alerts: Array.from(alerts).map((kind) => ({
-          kind,
-          message: kind,
-        })),
-      };
+    return buildFleetEntries(this.store, {
+      stallSeconds: this.opts.stallSeconds,
+      firedAlerts: this.firedAlerts,
+      limit: 50,
     });
   }
 
