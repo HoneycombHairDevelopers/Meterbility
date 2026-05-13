@@ -21,7 +21,15 @@ import {
   renderDiff,
   renderFleet,
   renderTests,
+  renderContext,
+  type RenderedComponent,
+  type RenderedContext,
 } from "./html.ts";
+import type {
+  ContextSnapshot,
+  ConversationMessage,
+  RetrievedDocument,
+} from "@spool/shared";
 import {
   LiveInspector,
   buildFleetEntries,
@@ -153,6 +161,47 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     if (!text) return c.notFound();
     c.header("Content-Type", "text/plain; charset=utf-8");
     return c.body(text);
+  });
+
+  /**
+   * Rendered context viewer. The raw `/api/blob/<snapshot_id>` returns
+   * the snapshot manifest (a JSON of pointers); this route resolves
+   * every content_ref into the actual text and renders by component,
+   * so "view context" shows what the model actually saw.
+   *
+   * Query params:
+   *   ?run=<id>&step=<id>&seq=N  — optional, drives the page meta-row
+   */
+  app.get("/contexts/:id", async (c) => {
+    const snapshotId = c.req.param("id");
+    const ref = resolveSnapshotBlobRef(store, snapshotId);
+    const manifestText = await store.blobs.tryGetString(ref);
+    if (!manifestText) return c.notFound();
+    let manifest: ContextSnapshot;
+    try {
+      manifest = JSON.parse(manifestText) as ContextSnapshot;
+    } catch {
+      return c.text("invalid snapshot JSON", 500);
+    }
+    const rendered = await resolveContext(store, manifest);
+    // Try to attribute back to a run via the optional query params.
+    const runQ = c.req.query("run");
+    const stepQ = c.req.query("step");
+    const seqQ = c.req.query("seq");
+    const run = runQ ? getRun(store, runQ) : undefined;
+    if (run) rendered.runtime = run.source_runtime;
+    const meta = {
+      runId: run?.run_id,
+      stepId: stepQ ?? undefined,
+      sequence: seqQ !== undefined ? Number(seqQ) : undefined,
+    };
+    return c.html(
+      renderShell(
+        `Context · ${snapshotId.slice(0, 12)}`,
+        renderContext(snapshotId, rendered, meta),
+        shellOpts,
+      ),
+    );
   });
   app.get("/api/diff", (c) => {
     const a = c.req.query("a");
@@ -331,6 +380,74 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   });
 
   return app;
+}
+
+/**
+ * Walk a ContextSnapshot manifest, resolve every content_ref via the
+ * blob store, and produce a RenderedContext with inline text bodies.
+ * Falls back to a "(missing blob)" placeholder if a ref can't be
+ * resolved — better to show something than a blank page.
+ */
+async function resolveContext(
+  store: Store,
+  snapshot: ContextSnapshot,
+): Promise<RenderedContext> {
+  let totalChars = 0;
+  const components: RenderedComponent[] = [];
+  const fetchText = async (ref: string): Promise<string> => {
+    const text = (await store.blobs.tryGetString(ref)) ?? "(missing blob)";
+    totalChars += text.length;
+    return text;
+  };
+  for (const c of snapshot.components) {
+    if (c.type === "system_prompt") {
+      components.push({
+        type: "system_prompt",
+        ref: c.content_ref,
+        text: await fetchText(c.content_ref),
+      });
+    } else if (c.type === "tool_definitions") {
+      components.push({
+        type: "tool_definitions",
+        ref: c.content_ref,
+        text: await fetchText(c.content_ref),
+      });
+    } else if (c.type === "conversation_history") {
+      const messages: Array<{
+        role: "user" | "assistant" | "tool";
+        ref: string;
+        text: string;
+        step_ref?: string;
+      }> = [];
+      for (const m of (c.messages as ConversationMessage[]) ?? []) {
+        messages.push({
+          role: m.role,
+          ref: m.content_ref,
+          text: await fetchText(m.content_ref),
+          step_ref: m.step_ref,
+        });
+      }
+      components.push({ type: "conversation_history", messages });
+    } else if (c.type === "retrieved_documents") {
+      const docs: Array<{ source: string; ref: string; text: string }> = [];
+      for (const d of (c.docs as RetrievedDocument[]) ?? []) {
+        docs.push({
+          source: d.source,
+          ref: d.content_ref,
+          text: await fetchText(d.content_ref),
+        });
+      }
+      components.push({ type: "retrieved_documents", docs });
+    } else if (c.type === "compaction_summary") {
+      components.push({
+        type: "compaction_summary",
+        ref: c.content_ref,
+        text: await fetchText(c.content_ref),
+        replaces_steps: c.replaces_steps,
+      });
+    }
+  }
+  return { components, totalChars };
 }
 
 async function loadDecisionPreviews(

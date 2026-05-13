@@ -896,7 +896,7 @@ function renderFleetEntry(e) {
     +   '<span class="age" data-age="' + escapeHtml(e.last_step_at || '') + '">' + fmtAge(e.last_step_at) + '</span>'
     + '</div>'
     + '<div class="' + ctxBarClass(e.context_pct) + '" title="context util ' + e.context_pct + '%"><div class="fill" style="width:' + e.context_pct + '%"></div></div>'
-    + '<div class="recent-tools"><span class="recent-tools-label">Tools used</span>' + (tools || '<span style="opacity:0.5">no tools yet</span>') + '</div>'
+    + '<div class="recent-tools"><span class="recent-tools-label">Recent Tools Used</span>' + (tools || '<span style="opacity:0.5">no tools yet</span>') + '</div>'
     + alerts
     + '</div>';
 }
@@ -1445,7 +1445,7 @@ function fleetEntryHtml(e: FleetEntry): string {
       <span class="age" data-age="${esc(e.last_step_at ?? "")}"></span>
     </div>
     <div class="${barClass}" title="context util ${e.context_pct}%"><div class="fill" style="width:${e.context_pct}%"></div></div>
-    <div class="recent-tools"><span class="recent-tools-label">Tools used</span>${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
+    <div class="recent-tools"><span class="recent-tools-label">Recent Tools used</span>${tools || '<span style="opacity:0.5">no tools yet</span>'}</div>
     ${alerts}
   </div>`;
 }
@@ -1546,15 +1546,14 @@ export function renderRun(
         <button onclick="openAnnotateModal('run', '${esc(run.run_id)}')">+ Annotate</button>
       </span>
     </h3>
-    ${
-      annotations.length
-        ? annotations
-            .map(
-              (a) =>
-                `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
-            )
-            .join("")
-        : '<p style="color:var(--text-tertiary);font-size:12.5px;margin:0">No annotations yet.</p>'
+    ${annotations.length
+      ? annotations
+        .map(
+          (a) =>
+            `<div class="annotation"><strong>${esc(a.author)}</strong> · <em>${esc(a.verdict ?? "note")}</em> · ${esc(a.note ?? "")}</div>`,
+        )
+        .join("")
+      : '<p style="color:var(--text-tertiary);font-size:12.5px;margin:0">No annotations yet.</p>'
     }
   </div>`;
 
@@ -1563,11 +1562,11 @@ export function renderRun(
         <div class="section-label">Forks</div>
         <h3>Derived runs</h3>
         ${forks
-          .map(
-            (f) =>
-              `<div class="annotation"><span class="badge badge--premium">${esc(f.edit_type)}</span> from step <code>${esc(f.origin_step_id.slice(0, 12))}</code> → <a href="/runs/${esc(f.fork_run_id)}">${esc(f.fork_run_id.slice(0, 12))}</a> · <a href="/diff?a=${esc(run.run_id)}&b=${esc(f.fork_run_id)}">diff</a></div>`,
-          )
-          .join("")}
+      .map(
+        (f) =>
+          `<div class="annotation"><span class="badge badge--premium">${esc(f.edit_type)}</span> from step <code>${esc(f.origin_step_id.slice(0, 12))}</code> → <a href="/runs/${esc(f.fork_run_id)}">${esc(f.fork_run_id.slice(0, 12))}</a> · <a href="/diff?a=${esc(run.run_id)}&b=${esc(f.fork_run_id)}">diff</a></div>`,
+      )
+      .join("")}
       </div>`
     : "";
 
@@ -1617,8 +1616,8 @@ function renderStepCard(s: Step, decision: string): string {
   const decisionTab = `<div class="tab tab-decision"><pre class="body">${esc(prettyJson(decision))}</pre></div>`;
   const actionTab = `<div class="tab tab-action" style="display:none"><pre class="body">${esc(JSON.stringify(s.action, null, 2))}</pre></div>`;
   const outcomeTab = `<div class="tab tab-outcome" style="display:none"><pre class="body">${esc(JSON.stringify(s.outcome, null, 2))}</pre>${s.outcome.tool_result_ref
-      ? `<p><a href="/api/blob/${esc(s.outcome.tool_result_ref)}" target="_blank">view tool result (${esc(s.outcome.tool_result_ref.slice(0, 12))})</a></p>`
-      : ""
+    ? `<p><a href="/api/blob/${esc(s.outcome.tool_result_ref)}" target="_blank">view tool result (${esc(s.outcome.tool_result_ref.slice(0, 12))})</a></p>`
+    : ""
     }</div>`;
   const costTab = `<div class="tab tab-cost" style="display:none"><pre class="body">${esc(
     JSON.stringify(
@@ -1633,7 +1632,17 @@ function renderStepCard(s: Step, decision: string): string {
       2,
     ),
   )}</pre></div>`;
-  const contextTab = `<div class="tab tab-context" style="display:none"><p><a href="/api/blob/${esc(s.context_snapshot_id)}" target="_blank">view context snapshot (${esc(s.context_snapshot_id.slice(0, 12))})</a></p></div>`;
+  const contextTab = `<div class="tab tab-context" style="display:none">
+    <p>
+      <a href="/contexts/${esc(s.context_snapshot_id)}?run=${esc(s.run_id)}&step=${esc(s.step_id)}&seq=${s.sequence}" target="_blank">
+        view full context
+      </a>
+      &nbsp;·&nbsp;
+      <a href="/api/blob/${esc(s.context_snapshot_id)}" target="_blank" style="color:var(--text-tertiary);font-size:11px">
+        raw manifest (${esc(s.context_snapshot_id.slice(0, 12))})
+      </a>
+    </p>
+  </div>`;
 
   return `<div class="step-card" id="step-${s.sequence}" data-step="${esc(s.step_id)}" data-step-seq="${s.sequence}" data-action-kind="${esc(s.action.kind)}" data-step-status="${esc(s.status)}">${stepHeader}${tabBar}${decisionTab}${actionTab}${outcomeTab}${costTab}${contextTab}</div>`;
 }
@@ -1757,6 +1766,195 @@ const COST_FOOTNOTE_HTML = `<div class="cost-footnote">
   Useful for <em>relative</em> comparison between runs (this prompt vs. that prompt,
   this iteration vs. the canonical), not as a forecast of long-run cost.
 </div>`;
+
+/**
+ * Render a full context snapshot — resolves every content_ref into the
+ * actual text the model saw, and renders by component type. The raw
+ * snapshot JSON is just a manifest of SHA256 pointers; this page is
+ * what you actually want when you click "view context."
+ *
+ * Caller passes the resolved {@link RenderedContext} (already loaded
+ * blobs in memory) so this function stays pure / async-free.
+ */
+export function renderContext(
+  snapshotId: string,
+  ctx: RenderedContext,
+  meta: { runId?: string; stepId?: string; sequence?: number } = {},
+): string {
+  const header = `<div style="margin-bottom:var(--space-6)">
+    <div class="section-label">Context snapshot</div>
+    <h2 style="margin:0">What the model saw${
+      meta.sequence !== undefined ? ` at step #${meta.sequence}` : ""
+    }</h2>
+    <div class="meta-row" style="margin-top:var(--space-3)">
+      <div class="kv"><strong>Snapshot</strong> <span class="val mono">${esc(snapshotId.slice(0, 16))}…</span>
+        <button class="copy-btn" onclick="copyText('${esc(snapshotId)}', this)">copy</button>
+      </div>
+      ${
+        meta.runId
+          ? `<div class="kv"><strong>Run</strong> <a class="val mono" href="/runs/${esc(meta.runId)}">${esc(meta.runId.slice(0, 16))}</a></div>`
+          : ""
+      }
+      ${
+        meta.stepId
+          ? `<div class="kv"><strong>Step</strong> <span class="val mono">${esc(meta.stepId.slice(0, 16))}…</span></div>`
+          : ""
+      }
+      <div class="kv"><strong>Components</strong> <span class="val">${ctx.components.length}</span></div>
+      <div class="kv"><strong>Total chars</strong> <span class="val">${ctx.totalChars.toLocaleString()}</span></div>
+    </div>
+  </div>`;
+
+  if (ctx.components.length === 0) {
+    return (
+      header +
+      `<div class="empty">This snapshot has no captured components.<br>
+       Note: Claude Code captures don't include the system prompt or tool definitions —
+       only what's visible in <code>~/.claude/projects/&lt;cwd&gt;/&lt;session&gt;.jsonl</code>.</div>`
+    );
+  }
+
+  const blocks = ctx.components.map((c) => renderContextComponent(c)).join("");
+
+  const fidelityNote =
+    ctx.runtime === "claude-code"
+      ? `<div class="static-banner" style="margin-top:var(--space-6)">
+           <strong>Note on fidelity.</strong> Spool captures what Claude Code writes
+           to its session log: conversation history. The system prompt, tool definitions,
+           and any RAG context Anthropic injects server-side aren't in the log and
+           aren't shown here. SDK-captured runs (<code>@spool/agent</code>) carry the
+           full context.
+         </div>`
+      : "";
+
+  return header + blocks + fidelityNote;
+}
+
+export interface RenderedContext {
+  components: RenderedComponent[];
+  totalChars: number;
+  runtime?: string;
+}
+
+export type RenderedComponent =
+  | { type: "system_prompt"; ref: string; text: string }
+  | { type: "tool_definitions"; ref: string; text: string }
+  | {
+      type: "conversation_history";
+      messages: Array<{
+        role: "user" | "assistant" | "tool";
+        ref: string;
+        text: string;
+        step_ref?: string;
+      }>;
+    }
+  | {
+      type: "retrieved_documents";
+      docs: Array<{ source: string; ref: string; text: string }>;
+    }
+  | {
+      type: "compaction_summary";
+      ref: string;
+      text: string;
+      replaces_steps: string[];
+    };
+
+function renderContextComponent(c: RenderedComponent): string {
+  switch (c.type) {
+    case "system_prompt":
+      return `<div class="step-card">
+        <div class="section-label">System prompt</div>
+        <h3 style="display:flex;align-items:baseline;gap:8px">
+          <span>${c.text.length.toLocaleString()} chars</span>
+          <button class="copy-btn" onclick="copyText('${esc(c.ref)}', this)">${esc(c.ref.slice(0, 12))}</button>
+        </h3>
+        <pre class="body">${esc(c.text)}</pre>
+      </div>`;
+
+    case "tool_definitions":
+      return `<div class="step-card">
+        <div class="section-label">Tool definitions</div>
+        <h3>${c.text.length.toLocaleString()} chars</h3>
+        <pre class="body">${esc(prettyJsonMaybe(c.text))}</pre>
+      </div>`;
+
+    case "conversation_history":
+      return `<div class="step-card">
+        <div class="section-label">Conversation history · ${c.messages.length} turn${c.messages.length === 1 ? "" : "s"}</div>
+        <h3>Messages</h3>
+        ${c.messages
+          .map(
+            (m, i) =>
+              `<div class="annotation" style="border-left-color:${roleColor(m.role)}">
+                <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+                  <span class="badge ${roleBadgeClass(m.role)}">${esc(m.role.toUpperCase())}</span>
+                  <span style="color:var(--text-tertiary);font-size:11px;font-family:var(--font-mono)">#${i} · ${m.text.length.toLocaleString()} chars</span>
+                  <button class="copy-btn" style="margin-left:auto" onclick="copyText('${esc(m.ref)}', this)">${esc(m.ref.slice(0, 12))}</button>
+                </div>
+                <pre class="body" style="margin:0">${esc(m.text)}</pre>
+              </div>`,
+          )
+          .join("")}
+      </div>`;
+
+    case "retrieved_documents":
+      return `<div class="step-card">
+        <div class="section-label">Retrieved documents · ${c.docs.length}</div>
+        <h3>RAG context</h3>
+        ${c.docs
+          .map(
+            (d) =>
+              `<div class="annotation">
+                <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+                  <strong>${esc(d.source)}</strong>
+                  <span style="color:var(--text-tertiary);font-size:11px">${d.text.length.toLocaleString()} chars</span>
+                </div>
+                <pre class="body" style="margin:0">${esc(d.text)}</pre>
+              </div>`,
+          )
+          .join("")}
+      </div>`;
+
+    case "compaction_summary":
+      return `<div class="step-card">
+        <div class="section-label">Compaction summary</div>
+        <h3>Replaces ${c.replaces_steps.length} step${c.replaces_steps.length === 1 ? "" : "s"}</h3>
+        <pre class="body">${esc(c.text)}</pre>
+      </div>`;
+  }
+}
+
+function roleColor(role: string): string {
+  switch (role) {
+    case "user":
+      return "var(--cerulean-400)";
+    case "assistant":
+      return "var(--mint-400)";
+    case "tool":
+      return "var(--amber-400)";
+    default:
+      return "var(--border-default)";
+  }
+}
+function roleBadgeClass(role: string): string {
+  switch (role) {
+    case "user":
+      return "badge--info";
+    case "assistant":
+      return "badge--success";
+    case "tool":
+      return "badge--warn";
+    default:
+      return "badge--muted";
+  }
+}
+function prettyJsonMaybe(s: string): string {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
+}
 
 function esc(s: string): string {
   return s
