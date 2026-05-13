@@ -350,6 +350,7 @@ async function persistModelStep(
     output: result.tokens.output,
     cached_read: result.tokens.cached_read,
     cache_creation: result.tokens.cache_creation,
+    cache_creation_1h: result.tokens.cache_creation_1h,
   });
   const tags = ["continuation"];
   if (approx) tags.push("cost:approx");

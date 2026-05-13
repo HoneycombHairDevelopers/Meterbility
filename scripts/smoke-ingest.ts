@@ -36,7 +36,7 @@ if (runs[0]) {
     console.log(
       `  #${s.sequence} ${s.action.kind} ${s.action.tool_name ?? ""}`,
       `tokens=${s.tokens.input}/${s.tokens.output}`,
-      `cost=${s.cost_cents.toFixed(3)}¢`,
+      `cost=$${(s.cost_cents / 100).toFixed(4)}`,
       `status=${s.status}`,
     );
   }

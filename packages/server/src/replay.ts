@@ -295,6 +295,7 @@ export async function appendLiveStep(
     output: args.tokens.output,
     cached_read: args.tokens.cached_read,
     cache_creation: args.tokens.cache_creation,
+    cache_creation_1h: args.tokens.cache_creation_1h,
   });
   const tags: string[] = ["live-suffix"];
   if (approx) tags.push("cost:approx");

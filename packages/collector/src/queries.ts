@@ -51,6 +51,7 @@ interface StepRow {
   tokens_output: number;
   tokens_cached_read: number;
   tokens_cache_creation: number;
+  tokens_cache_creation_1h: number;
   tokens_reasoning: number | null;
   latency_ms: number;
   cost_cents: number;
@@ -100,6 +101,7 @@ function rowToStep(row: StepRow): Step {
       output: row.tokens_output,
       cached_read: row.tokens_cached_read,
       cache_creation: row.tokens_cache_creation,
+      cache_creation_1h: row.tokens_cache_creation_1h ?? 0,
       reasoning: row.tokens_reasoning ?? undefined,
     },
     latency_ms: row.latency_ms,
@@ -199,7 +201,7 @@ export function updateRunTotals(store: Store, runId: string): void {
          tokens_total_output = COALESCE(
            (SELECT SUM(tokens_output) FROM steps WHERE run_id = runs.run_id), 0),
          tokens_total_cached = COALESCE(
-           (SELECT SUM(tokens_cached_read + tokens_cache_creation)
+           (SELECT SUM(tokens_cached_read + tokens_cache_creation + tokens_cache_creation_1h)
               FROM steps WHERE run_id = runs.run_id), 0),
          cost_cents = COALESCE(
            (SELECT SUM(cost_cents) FROM steps WHERE run_id = runs.run_id), 0)
@@ -226,8 +228,9 @@ export function insertStep(store: Store, step: Step): void {
         step_id, run_id, parent_step_id, fork_origin_id, sequence, timestamp,
         model, context_snapshot_id, decision_ref, action_json, outcome_json,
         tokens_input, tokens_output, tokens_cached_read, tokens_cache_creation,
-        tokens_reasoning, latency_ms, cost_cents, status, tags
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        tokens_cache_creation_1h, tokens_reasoning, latency_ms, cost_cents,
+        status, tags
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       step.step_id,
@@ -245,6 +248,7 @@ export function insertStep(store: Store, step: Step): void {
       step.tokens.output,
       step.tokens.cached_read,
       step.tokens.cache_creation,
+      step.tokens.cache_creation_1h ?? 0,
       step.tokens.reasoning ?? null,
       step.latency_ms,
       step.cost_cents,
@@ -529,7 +533,15 @@ export function aggregateTokens(steps: Step[]): TokenUsage {
       output: acc.output + s.tokens.output,
       cached_read: acc.cached_read + s.tokens.cached_read,
       cache_creation: acc.cache_creation + s.tokens.cache_creation,
+      cache_creation_1h:
+        (acc.cache_creation_1h ?? 0) + (s.tokens.cache_creation_1h ?? 0),
     }),
-    { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+    {
+      input: 0,
+      output: 0,
+      cached_read: 0,
+      cache_creation: 0,
+      cache_creation_1h: 0,
+    },
   );
 }

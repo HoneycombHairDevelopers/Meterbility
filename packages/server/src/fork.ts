@@ -211,6 +211,19 @@ export function anthropicResponder(
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("\n");
+    // Split 5m / 1h cache writes when the API exposes the breakdown.
+    const cc = (resp.usage as
+      | {
+          cache_creation?: {
+            ephemeral_5m_input_tokens?: number;
+            ephemeral_1h_input_tokens?: number;
+          };
+        }
+      | undefined)?.cache_creation;
+    const tokens5m = cc
+      ? cc.ephemeral_5m_input_tokens ?? 0
+      : (resp.usage?.cache_creation_input_tokens ?? 0);
+    const tokens1h = cc?.ephemeral_1h_input_tokens ?? 0;
     return {
       model: resp.model,
       action: { kind: "message", text },
@@ -219,7 +232,8 @@ export function anthropicResponder(
         input: resp.usage?.input_tokens ?? 0,
         output: resp.usage?.output_tokens ?? 0,
         cached_read: resp.usage?.cache_read_input_tokens ?? 0,
-        cache_creation: resp.usage?.cache_creation_input_tokens ?? 0,
+        cache_creation: tokens5m,
+        cache_creation_1h: tokens1h,
       },
       latency_ms: t1 - t0,
       decision_content: resp.content,

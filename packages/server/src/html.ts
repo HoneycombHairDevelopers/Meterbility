@@ -325,6 +325,48 @@ const STYLES = `
   }
   .results-list .pass { color: var(--ok); }
   .results-list .fail { color: var(--err); }
+
+  /* ─── API-metered cost disclosure ──────────────────────────────── */
+  /* Tooltip-style marker rendered inline next to every $cost figure.
+     Subscription users (Claude Pro / Max) don't actually pay these
+     dollars — Spool's number is the API-equivalent rate, useful for
+     relative comparison, NOT what hits your card. */
+  .cost-mark {
+    display: inline-block;
+    margin-left: 4px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--fg-mute);
+    border: 1px solid var(--border);
+    background: var(--bg-3);
+    padding: 0 4px;
+    border-radius: 2px;
+    cursor: help;
+    text-transform: uppercase;
+    vertical-align: middle;
+    line-height: 1.4;
+  }
+  .cost-mark:hover { color: var(--accent); border-color: var(--accent); }
+
+  .cost-footnote {
+    margin-top: 24px;
+    padding: 8px 12px;
+    font-size: 11.5px; color: var(--fg-mute);
+    background: var(--bg-2);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    line-height: 1.6;
+  }
+  .cost-footnote .label {
+    color: var(--accent);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    font-family: ui-monospace, Menlo, monospace;
+    margin-right: 6px;
+  }
 `;
 
 const SCRIPT = `
@@ -337,6 +379,13 @@ function fmtAge(iso) {
   if (s < 3600) return Math.round(s / 60) + 'm ago';
   return Math.round(s / 3600) + 'h ago';
 }
+function costStr(cents) {
+  const dollars = cents / 100;
+  if (dollars === 0) return '$0.00';
+  if (Math.abs(dollars) >= 0.005) return '$' + dollars.toFixed(2);
+  return '$' + dollars.toFixed(4);
+}
+const COST_MARK = '<span class="cost-mark" title="API-equivalent rate. (1) Subscription users (Pro/Max) pay a flat fee, not this. (2) Reflects VC-subsidized 2026 pricing — training and cluster CapEx aren\\'t in the per-token bill. Use for relative comparison only.">api·metered</span>';
 function ctxBarClass(pct) {
   if (pct >= 90) return 'ctx-bar danger';
   if (pct >= 70) return 'ctx-bar warn';
@@ -357,7 +406,7 @@ function renderFleetEntry(e) {
     + '</div>'
     + '<div class="meta">'
     +   '<span class="kv">' + r.step_count + ' steps</span>'
-    +   '<span class="kv">$' + (r.cost_cents / 100).toFixed(2) + '</span>'
+    +   '<span class="kv">' + costStr(r.cost_cents) + COST_MARK + '</span>'
     +   '<span class="kv">' + escapeHtml(r.git_branch || '') + '</span>'
     +   '<span class="age" data-age="' + escapeHtml(e.last_step_at || '') + '">' + fmtAge(e.last_step_at) + '</span>'
     + '</div>'
@@ -875,7 +924,8 @@ export function renderFleet(
       </div>
     </div>
     ${banner}
-    <div id="fleet-grid" class="fleet">${initial || empty}</div>`;
+    <div id="fleet-grid" class="fleet">${initial || empty}</div>
+    ${COST_FOOTNOTE_HTML}`;
 }
 
 function fleetEntryHtml(e: FleetEntry): string {
@@ -898,7 +948,7 @@ function fleetEntryHtml(e: FleetEntry): string {
     </div>
     <div class="meta">
       <span class="kv">${r.step_count} steps</span>
-      <span class="kv">$${(r.cost_cents / 100).toFixed(2)}</span>
+      <span class="kv">${costEl(r.cost_cents)}</span>
       <span class="kv">${esc(r.git_branch ?? "")}</span>
       <span class="age" data-age="${esc(e.last_step_at ?? "")}"></span>
     </div>
@@ -918,7 +968,7 @@ export function renderRunList(runs: Run[]): string {
       const fork = r.fork_origin_run_id
         ? ` <span class="pill fork">fork</span>`
         : "";
-      const cost = `${(r.cost_cents / 100).toFixed(2)}$`;
+      const cost = costEl(r.cost_cents);
       const title = r.title ?? r.run_id;
       return `<tr>
         <td><a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}</td>
@@ -937,7 +987,8 @@ export function renderRunList(runs: Run[]): string {
       <th>Started</th><th>Branch</th>
     </tr></thead>
     <tbody>${rows}</tbody>
-  </table>`;
+  </table>
+  ${COST_FOOTNOTE_HTML}`;
 }
 
 export function renderRun(
@@ -950,7 +1001,7 @@ export function renderRun(
   const meta = `<div class="meta-row">
     <div class="kv"><strong>Status</strong> <span class="pill ${esc(run.status)}">${esc(run.status)}</span></div>
     <div class="kv"><strong>Steps</strong> ${run.step_count}</div>
-    <div class="kv"><strong>Cost</strong> ${(run.cost_cents / 100).toFixed(2)}$</div>
+    <div class="kv"><strong>Cost</strong> ${costEl(run.cost_cents)}</div>
     <div class="kv"><strong>Input</strong> ${run.tokens_total_input.toLocaleString()}</div>
     <div class="kv"><strong>Output</strong> ${run.tokens_total_output.toLocaleString()}</div>
     <div class="kv"><strong>Cached</strong> ${run.tokens_total_cached.toLocaleString()}</div>
@@ -1029,7 +1080,8 @@ export function renderRun(
     ${filterBar}
     ${runAnnotations}
     ${forksBlock}
-    ${stepCards.length ? stepCards : `<div class="empty">No steps in this run.</div>`}`;
+    ${stepCards.length ? stepCards : `<div class="empty">No steps in this run.</div>`}
+    ${COST_FOOTNOTE_HTML}`;
 }
 
 function renderStepCard(s: Step, decision: string): string {
@@ -1159,6 +1211,41 @@ export function renderTests(tests: RegressionTest[], recent: RegressionResult[])
     <div class="results-list">${recentRows}</div>
   </div>`;
 }
+
+/** Render a cost figure with the API-metered marker + tooltip. */
+function costEl(cents: number): string {
+  return `${costStr(cents)}<span class="cost-mark" title="Spool computes cost from token counts × Anthropic public per-token API rates. Two caveats: (1) Claude Pro/Max users pay a flat subscription — this is API-equivalent, NOT money out of your account. (2) Current API rates reflect VC-subsidized 2026 frontier-model economics: they cover inference with margin, but training runs (>$1B per Opus-class model) and cluster CapEx are funded by equity, not per-token revenue. If labs ever have to be cash-flow positive on a fully-loaded basis, expect these numbers to rise. Use for relative comparison between runs.">api·metered</span>`;
+}
+/**
+ * Format a cost (stored in cents) as dollars. Uses 2 decimal places for
+ * anything ≥ half a cent so the common case reads like a normal price,
+ * and bumps to 4 decimals for sub-cent costs so they don't all collapse
+ * to "$0.00". Always shows the dollar sign so the UI never mixes units.
+ */
+function costStr(cents: number): string {
+  const dollars = cents / 100;
+  if (dollars === 0) return "$0.00";
+  if (Math.abs(dollars) >= 0.005) return `$${dollars.toFixed(2)}`;
+  return `$${dollars.toFixed(4)}`;
+}
+
+const COST_FOOTNOTE_HTML = `<div class="cost-footnote">
+  <span class="label">Pricing</span>
+  Costs are token counts × Anthropic's public per-token API rates
+  (Opus 4.x: $15/$75 input/output, $1.50 cached read, $18.75 5m / $30 1h cache write per million).
+  <br><br>
+  <strong>Two things this number is not.</strong>
+  (1) If you're on Claude Pro or Max, you pay a flat subscription —
+  this is the API-equivalent rate, <em>not</em> money out of your account.
+  (2) The API rate itself reflects 2026 frontier-model economics: it covers
+  inference with positive gross margin, but training runs (>$1B per Opus-class model),
+  R&amp;D, and cluster CapEx are funded by VC equity rounds, not per-token revenue.
+  If labs ever have to be cash-flow positive on a fully-loaded basis,
+  expect these numbers to rise — possibly 2–4×.
+  <br><br>
+  Useful for <em>relative</em> comparison between runs (this prompt vs. that prompt,
+  this iteration vs. the canonical), not as a forecast of long-run cost.
+</div>`;
 
 function esc(s: string): string {
   return s
