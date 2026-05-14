@@ -1142,6 +1142,10 @@ function openForkModal(runId, sequence, defaultText) {
 async function submitFork() {
   const status = document.getElementById('fork-status');
   status.textContent = 'forking…';
+  status.style.color = 'var(--fg-mute)';
+  const continueMode = document.getElementById('fork-continue').value;
+  const allowToolsRaw = (document.getElementById('fork-allow-tools') || {}).value || '';
+  const allowTools = allowToolsRaw.split(',').map(s => s.trim()).filter(Boolean);
   const body = {
     origin_run_id: document.getElementById('fork-run-id').value,
     at: parseInt(document.getElementById('fork-seq').value, 10),
@@ -1149,7 +1153,12 @@ async function submitFork() {
     edit_payload: { text: document.getElementById('fork-payload').value },
     fake: document.getElementById('fork-fake').value || undefined,
     live: document.getElementById('fork-live').checked,
+    continue: continueMode === 'none' ? undefined : continueMode,
+    max_iterations: parseInt(document.getElementById('fork-max-iter').value || '25', 10),
+    model: document.getElementById('fork-model').value || undefined,
+    allow_tools: allowTools.length ? allowTools : undefined,
   };
+  if (continueMode !== 'none') status.textContent = 'forking + continuing (' + continueMode + ')…';
   try {
     const res = await fetch('/api/fork', {
       method: 'POST',
@@ -1158,7 +1167,15 @@ async function submitFork() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'fork failed');
-    status.innerHTML = 'fork created → <a href="/runs/' + data.fork_run_id + '">open</a> · <a href="/diff?a=' + body.origin_run_id + '&b=' + data.fork_run_id + '">diff</a>';
+    let summary = 'fork created → <a href="/runs/' + data.fork_run_id + '">open</a> · <a href="/diff?a=' + body.origin_run_id + '&b=' + data.fork_run_id + '">diff</a>';
+    if (data.continuation) {
+      const c = data.continuation;
+      const colorFor = (r) => r === 'model_completed' ? 'var(--ok)' : r === 'tool_error' || r === 'model_error' ? 'var(--err)' : 'var(--warn)';
+      summary += '<br><span style="color:var(--fg-mute);font-size:11px">continued · ' + c.iterations + ' iterations · ' + c.steps_added + ' steps added · </span>';
+      summary += '<span style="color:' + colorFor(c.terminal_reason) + ';font-size:11px">' + c.terminal_reason + '</span>';
+    }
+    status.innerHTML = summary;
+    status.style.color = 'var(--fg)';
   } catch (err) {
     status.textContent = 'error: ' + err.message;
     status.style.color = 'var(--err)';
@@ -1216,10 +1233,23 @@ function renderTestDetail(t) {
   if (!t) { root.innerHTML = '<div class="empty">Select a test from the left.</div>'; return; }
   const rows = (t.assertions || []).map((a, i) => assertionRowHtml(a, i)).join('');
   root.innerHTML =
-    '<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">' + escapeHtml(t.name) + '</h3>' +
-    '<div><button onclick="addAssertionRow()">+ assertion</button> <button class="primary" onclick="saveAssertions()">Save</button> <button onclick="runTestAgainstAll()">Run on all runs</button></div></div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+      '<h3 style="margin:0">' + escapeHtml(t.name) + '</h3>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+        '<button onclick="addAssertionRow()">+ assertion</button>' +
+        ' <button class="primary" onclick="saveAssertions()">Save</button>' +
+        ' <button onclick="runTestAgainstAll()">Run on all runs</button>' +
+        ' <button onclick="deleteCurrentTest()" style="color:var(--err);border-color:var(--err)">Delete test</button>' +
+      '</div>' +
+    '</div>' +
     (t.description ? '<p style="color:var(--fg-mute);font-size:12.5px">' + escapeHtml(t.description) + '</p>' : '') +
     '<div id="assertions-area">' + rows + '</div>' +
+    '<div style="margin-top:14px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+      '<input id="single-run-id" placeholder="run_… (full or 12-char prefix)"' +
+      ' style="font-family:ui-monospace,Menlo,monospace;min-width:240px">' +
+      ' <button onclick="runTestAgainstOne()">Run on this run</button>' +
+      ' <span id="single-run-status" style="font-size:12px;color:var(--fg-mute);font-family:ui-monospace,Menlo,monospace"></span>' +
+    '</div>' +
     '<div id="test-results" class="results-list"></div>';
 }
 function assertionRowHtml(a, i) {
@@ -1261,6 +1291,43 @@ async function saveAssertions() {
     flash('saved');
   } else {
     flash('save failed', true);
+  }
+}
+async function deleteCurrentTest() {
+  if (!currentTest) return;
+  if (!confirm('Delete test "' + currentTest.name + '"? This is permanent.')) return;
+  const res = await fetch('/api/tests/' + encodeURIComponent(currentTest.name), {
+    method: 'DELETE',
+  });
+  if (res.ok) {
+    flash('deleted ' + currentTest.name);
+    setTimeout(() => location.reload(), 600);
+  } else {
+    flash('delete failed', true);
+  }
+}
+async function runTestAgainstOne() {
+  if (!currentTest) return;
+  const id = (document.getElementById('single-run-id') || {}).value || '';
+  if (!id) { setStatus('single-run-status', 'enter a run id', true); return; }
+  setStatus('single-run-status', 'running…');
+  try {
+    const res = await fetch('/api/tests/' + encodeURIComponent(currentTest.name) + '/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: id }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'run failed');
+    const r = data[0];
+    if (!r) { setStatus('single-run-status', 'no result returned', true); return; }
+    const passed = r.assertions.filter(a => a.passed).length;
+    setStatus('single-run-status',
+      (r.passed ? '✓ PASS' : '✗ FAIL') + '  ' + passed + '/' + r.assertions.length + '  ' + r.run_id.slice(0,12),
+      !r.passed);
+    loadResults(currentTest.name);
+  } catch (err) {
+    setStatus('single-run-status', 'error: ' + err.message, true);
   }
 }
 async function runTestAgainstAll() {
@@ -1310,6 +1377,124 @@ function flash(msg, isError) {
   el.style.color = isError ? 'var(--err)' : 'var(--ok)';
   setTimeout(() => { el.textContent = ''; }, 2000);
 }
+
+/* ─── Settings page ────────────────────────────────────────────── */
+function setStatus(id, msg, isError) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--err)' : 'var(--ok)';
+}
+async function saveSetting(key, value, statusId) {
+  setStatus(statusId, 'saving…');
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'save failed');
+    setStatus(statusId, 'saved');
+  } catch (err) {
+    setStatus(statusId, 'error: ' + err.message, true);
+  }
+}
+async function saveDefaults() {
+  const tools = (document.getElementById('watch-tools') || {}).value || '';
+  const stall = (document.getElementById('stall-seconds') || {}).value || '120';
+  const model = (document.getElementById('default-model') || {}).value || 'claude-opus-4-7';
+  const iter = (document.getElementById('default-max-iter') || {}).value || '25';
+  await saveSetting('live.watch_tools', tools, 'defaults-status');
+  await saveSetting('live.stall_seconds', stall, 'defaults-status');
+  await saveSetting('fork.default_model', model, 'defaults-status');
+  await saveSetting('fork.default_max_iterations', iter, 'defaults-status');
+  setStatus('defaults-status', 'all defaults saved');
+}
+async function runIngest(runtime) {
+  const limit = parseInt((document.getElementById('ingest-limit') || {}).value || '5', 10);
+  setStatus('ingest-status', 'ingesting ' + runtime + '…');
+  try {
+    const res = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runtime, limit }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'ingest failed');
+    const summary = runtime === 'cursor'
+      ? data.composers + ' composer(s) · ' + data.steps + ' step(s)'
+      : data.runs + ' run(s) · ' + data.steps + ' step(s) · ' + (data.bytes / 1024).toFixed(1) + 'KB';
+    setStatus('ingest-status', '✓ ' + runtime + ': ' + summary);
+  } catch (err) {
+    setStatus('ingest-status', 'error: ' + err.message, true);
+  }
+}
+async function runDoctor() {
+  const root = document.getElementById('doctor-results');
+  if (!root) return;
+  root.innerHTML = '<span style="color:var(--fg-mute)">running…</span>';
+  try {
+    const res = await fetch('/api/doctor');
+    const data = await res.json();
+    const colorFor = (s) => s === 'ok' ? 'var(--ok)' : s === 'warn' ? 'var(--warn)' : 'var(--err)';
+    const iconFor = (s) => s === 'ok' ? '✔' : s === 'warn' ? '⚠' : '✖';
+    root.innerHTML = data.checks.map(c =>
+      '<div style="padding:3px 0"><span style="color:' + colorFor(c.status) + ';margin-right:8px">' + iconFor(c.status) + '</span>' +
+      '<strong style="color:var(--fg)">' + escapeHtml(c.name) + '</strong> ' +
+      '<span style="color:var(--fg-mute);margin-left:8px">' + escapeHtml(c.detail) + '</span></div>'
+    ).join('');
+  } catch (err) {
+    root.innerHTML = '<span style="color:var(--err)">' + escapeHtml(err.message) + '</span>';
+  }
+}
+async function testSlack() {
+  const webhook = (document.getElementById('slack-webhook') || {}).value;
+  setStatus('slack-status', 'sending…');
+  try {
+    const res = await fetch('/api/slack/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook: webhook && !webhook.startsWith('(') ? webhook : undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'send failed');
+    setStatus('slack-status', '✓ test message sent');
+  } catch (err) {
+    setStatus('slack-status', 'error: ' + err.message, true);
+  }
+}
+async function postgresInit() {
+  const url = (document.getElementById('pg-url') || {}).value;
+  setStatus('pg-status', 'connecting…');
+  try {
+    const res = await fetch('/api/db/postgres-init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url && !url.startsWith('(') ? url : undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'connect failed');
+    setStatus('pg-status', '✓ schema_version=' + data.schema_version);
+  } catch (err) {
+    setStatus('pg-status', 'error: ' + err.message, true);
+  }
+}
+async function postgresSync() {
+  const url = (document.getElementById('pg-url') || {}).value;
+  setStatus('pg-status', 'syncing…');
+  try {
+    const res = await fetch('/api/db/postgres-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url && !url.startsWith('(') ? url : undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'sync failed');
+    setStatus('pg-status', '✓ ' + data.runs + ' runs · ' + data.steps + ' steps · ' + data.blobs + ' blobs (' + (data.bytes/1024).toFixed(1) + 'KB)');
+  } catch (err) {
+    setStatus('pg-status', 'error: ' + err.message, true);
+  }
+}
 `;
 
 export interface ShellOptions {
@@ -1343,6 +1528,7 @@ export function renderShell(
     <a href="/">Fleet</a>
     <a href="/runs">Runs</a>
     <a href="/tests">Tests</a>
+    <a href="/settings">Settings</a>
   </nav>
   ${liveBadge}
   <span class="crumbs">${esc(title)}</span>
@@ -1373,6 +1559,25 @@ export function renderShell(
     <label style="display:flex;gap:8px;align-items:center;margin-top:6px">
       <input type="checkbox" id="fork-live" style="width:auto"> Use live Anthropic call (requires ANTHROPIC_API_KEY)
     </label>
+
+    <hr style="border:0;border-top:1px solid var(--border);margin:16px 0">
+    <label>Continuation (multi-step replay)</label>
+    <select id="fork-continue">
+      <option value="none">None — one suffix step only</option>
+      <option value="simulate">Simulate — replay model live, use original tool results</option>
+      <option value="live">Live — replay model + execute tools (Bash safe-list)</option>
+    </select>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <label style="font-size:12px;color:var(--fg-mute)">Max iterations
+        <input id="fork-max-iter" type="number" min="1" max="100" value="25" style="margin-top:4px">
+      </label>
+      <label style="font-size:12px;color:var(--fg-mute)">Live model (continuation)
+        <input id="fork-model" value="claude-opus-4-7" style="margin-top:4px;font-family:ui-monospace,Menlo,monospace">
+      </label>
+    </div>
+    <label style="margin-top:8px">Allowed tools for live continuation (comma-separated)</label>
+    <input id="fork-allow-tools" placeholder="Bash" style="font-family:ui-monospace,Menlo,monospace">
+
     <div class="actions">
       <button onclick="closeModal('fork-modal')">Cancel</button>
       <button class="primary" onclick="submitFork()">Fork</button>
@@ -1485,10 +1690,47 @@ function fleetEntryHtml(e: FleetEntry): string {
   </div>`;
 }
 
-export function renderRunList(runs: Run[]): string {
-  if (runs.length === 0) {
-    return `<div class="empty">No runs captured yet. Run <code>spool ingest claude-code</code> to import sessions.</div>`;
-  }
+export interface RunListOptions {
+  totalAvailable?: number;
+  filters?: { status?: string; tool?: string; project?: string };
+}
+
+export function renderRunList(
+  runs: Run[],
+  opts: RunListOptions = {},
+): string {
+  const filters = opts.filters ?? {};
+  const total = opts.totalAvailable ?? runs.length;
+  const isFiltered =
+    !!filters.status || !!filters.tool || !!filters.project;
+  const filterBar = `<form id="runs-filter" method="get" action="/runs"
+       style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+    <select name="status" onchange="this.form.submit()" style="font-family:ui-monospace,Menlo,monospace">
+      <option value="">All statuses</option>
+      ${["ok", "error", "in_progress", "abandoned"]
+        .map(
+          (s) =>
+            `<option value="${s}"${filters.status === s ? " selected" : ""}>${s}</option>`,
+        )
+        .join("")}
+    </select>
+    <input name="tool" value="${esc(filters.tool ?? "")}"
+      placeholder="filter by tool name (e.g. Bash)"
+      style="font-family:ui-monospace,Menlo,monospace;min-width:200px">
+    <input name="project" value="${esc(filters.project ?? "")}"
+      placeholder="filter by project path substring"
+      style="font-family:ui-monospace,Menlo,monospace;min-width:200px">
+    <button type="submit" class="primary">Apply</button>
+    ${isFiltered ? `<a href="/runs" style="font-size:12px">clear</a>` : ""}
+    <span style="margin-left:auto;font-size:12px;color:var(--fg-mute);font-family:ui-monospace,Menlo,monospace">
+      ${runs.length} of ${total} run(s)
+    </span>
+  </form>`;
+
+  const empty = isFiltered
+    ? `<div class="empty">No runs match the current filter. <a href="/runs">Clear filter</a>.</div>`
+    : `<div class="empty">No runs captured yet. Run <code>spool ingest claude-code</code> to import sessions, or open the <a href="/settings">Settings page</a>.</div>`;
+
   const rows = runs
     .map((r) => {
       const status = `<span class="pill ${esc(r.status)}">${esc(r.status)}</span>`;
@@ -1515,23 +1757,28 @@ export function renderRunList(runs: Run[]): string {
     .join("");
   return `<div style="margin-bottom:var(--space-5)">
       <div class="section-label">All runs</div>
-      <h2 style="margin:0">${runs.length} captured</h2>
+      <h2 style="margin:0">${total} captured</h2>
     </div>
-    <div class="table-scroll">
-      <table class="runs-table">
-        <thead><tr>
-          <th>Title</th>
-          <th>Status</th>
-          <th>Run</th>
-          <th>Steps</th>
-          <th>Cost</th>
-          <th>Started</th>
-          <th>Branch</th>
-          <th>Project</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
+    ${filterBar}
+    ${
+      runs.length === 0
+        ? empty
+        : `<div class="table-scroll">
+            <table class="runs-table">
+              <thead><tr>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Run</th>
+                <th>Steps</th>
+                <th>Cost</th>
+                <th>Started</th>
+                <th>Branch</th>
+                <th>Project</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`
+    }
     ${COST_FOOTNOTE_HTML}`;
 }
 
@@ -1583,6 +1830,12 @@ export function renderRun(
     }
     <div class="kv"><strong>Run ID</strong> <span class="val mono">${esc(run.run_id.slice(0, 16))}…</span>
       <button class="copy-btn" title="copy full run id" onclick="copyText('${esc(run.run_id)}', this)">copy</button>
+    </div>
+    <div class="kv"><strong>Export</strong>
+      <a class="val mono" href="/api/runs/${esc(run.run_id)}/export" download="${esc(run.run_id)}.spool.json"
+         title="Download as Spool Trace Format v0.2 JSON (with inlined blobs)">trace.json</a>
+      <a class="copy-btn" href="/api/runs/${esc(run.run_id)}/export?blobs=0" download="${esc(run.run_id)}.thin.json"
+         title="Trace without inlined blobs (smaller)">thin</a>
     </div>
     ${run.fork_origin_run_id ? `<div class="kv"><strong>Forked from</strong> <a href="/runs/${esc(run.fork_origin_run_id)}">${esc(run.fork_origin_run_id.slice(0, 12))}</a></div>` : ""}
   </div>`;
@@ -1735,7 +1988,18 @@ function prettyJson(maybeJson: string): string {
   }
 }
 
-export function renderDiff(a: Run, b: Run, d: DiffResult): string {
+export interface DiffRenderOptions {
+  showShared?: boolean;
+}
+
+export function renderDiff(
+  a: Run,
+  b: Run,
+  d: DiffResult,
+  opts: DiffRenderOptions = {},
+): string {
+  const showShared = opts.showShared === true;
+  const sharedHidden = d.rows.filter((r) => r.kind === "shared").length;
   const header = `<div style="margin-bottom:var(--space-5)">
       <div class="section-label">Trajectory diff</div>
       <h2 style="margin:0">${esc(a.title ?? a.run_id.slice(0, 12))} <span style="color:var(--text-tertiary);font-weight:400">vs</span> ${esc(b.title ?? b.run_id.slice(0, 12))}</h2>
@@ -1744,8 +2008,21 @@ export function renderDiff(a: Run, b: Run, d: DiffResult): string {
       <div class="kv"><strong>Shared prefix</strong> <span class="val">${d.shared_prefix_length} steps</span></div>
       <div class="kv"><strong>First divergence</strong> <span class="val">${d.first_divergence_sequence ?? "—"}</span></div>
       <div class="kv"><strong>Total A / B</strong> <span class="val">${d.total_steps_a} / ${d.total_steps_b}</span></div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <a href="/diff?a=${esc(a.run_id)}&b=${esc(b.run_id)}${showShared ? "" : "&shared=1"}"
+         class="${showShared ? "primary" : ""}"
+         style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;text-decoration:none;font-size:12px;${showShared ? "background:var(--accent);color:#0e1116;border-color:var(--accent)" : "color:var(--fg)"}">
+        ${showShared ? "✓ Showing shared rows" : `Show shared rows (${sharedHidden} hidden)`}
+      </a>
+      <a href="/api/diff?a=${esc(a.run_id)}&b=${esc(b.run_id)}"
+         download="diff-${esc(a.run_id.slice(0, 8))}-${esc(b.run_id.slice(0, 8))}.json"
+         style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;text-decoration:none;font-size:12px;color:var(--fg);font-family:ui-monospace,Menlo,monospace">
+        Download JSON
+      </a>
     </div>`;
   const rows = d.rows
+    .filter((r) => showShared || r.kind !== "shared")
     .map((row) => {
       const a = row.a
         ? `${row.a.action_kind}${row.a.tool_name ? "(" + esc(row.a.tool_name) + ")" : ""} · <span class="pill ${esc(row.a.outcome_status)}">${esc(row.a.outcome_status)}</span>`
@@ -2033,6 +2310,183 @@ function prettyJsonMaybe(s: string): string {
   } catch {
     return s;
   }
+}
+
+export interface SettingsPageData {
+  slackWebhook?: string;
+  slackWebhookFromEnv: boolean;
+  apiKey?: string;
+  apiKeyFromEnv: boolean;
+  postgresUrl?: string;
+  postgresUrlFromEnv: boolean;
+  watchedTools: string;
+  stallSeconds: number;
+  defaultModel: string;
+  defaultMaxIterations: number;
+}
+
+/**
+ * Settings page. Five sections — Ingest, Doctor, Slack, Postgres,
+ * Capture defaults. Each section is a card with inline forms that
+ * POST to /api/* endpoints. Settings persist in the SQLite settings
+ * table; secrets are stored in plaintext (web UI is local-only) with
+ * a clear disclosure.
+ */
+export function renderSettings(data: SettingsPageData): string {
+  const slackVal = data.slackWebhookFromEnv
+    ? "(from $SPOOL_SLACK_WEBHOOK)"
+    : data.slackWebhook ?? "";
+  const apiKeyDisplay = data.apiKeyFromEnv
+    ? "(from $ANTHROPIC_API_KEY)"
+    : data.apiKey
+      ? "•".repeat(48)
+      : "";
+  const pgVal = data.postgresUrlFromEnv
+    ? "(from $SPOOL_DB_URL)"
+    : data.postgresUrl ?? "";
+
+  return `<div style="margin-bottom:24px">
+    <div class="section-label">Configuration</div>
+    <h2 style="margin:0">Settings</h2>
+    <div style="font-size:12.5px;color:var(--fg-mute);margin-top:6px">
+      Stored in <code>$SPOOL_HOME/spool.db</code>. Environment variables override stored values.
+    </div>
+  </div>
+
+  ${/* ─── Ingest ──────────────────────────── */ ""}
+  <div class="step-card">
+    <div class="section-label">Ingest</div>
+    <h3 style="margin-bottom:8px">Capture sessions from disk</h3>
+    <p style="color:var(--fg-mute);font-size:12.5px;margin:0 0 12px">
+      Replaces <code>spool ingest claude-code/codex-cli/cursor</code> from the terminal.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--fg-mute)">
+        Limit
+        <input type="number" id="ingest-limit" value="5" min="1" max="500" style="width:70px">
+      </label>
+      <button class="primary" onclick="runIngest('claude-code')">Ingest Claude Code</button>
+      <button onclick="runIngest('codex-cli')">Ingest Codex</button>
+      <button onclick="runIngest('cursor')">Ingest Cursor</button>
+      <span id="ingest-status" style="margin-left:8px;font-size:12px;color:var(--fg-mute);font-family:ui-monospace,Menlo,monospace"></span>
+    </div>
+  </div>
+
+  ${/* ─── Doctor ──────────────────────────── */ ""}
+  <div class="step-card">
+    <div class="section-label">Health</div>
+    <h3 style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span>Doctor</span>
+      <span class="row-actions" style="margin-left:auto">
+        <button onclick="runDoctor()">Run checks</button>
+      </span>
+    </h3>
+    <p style="color:var(--fg-mute);font-size:12.5px;margin:0 0 12px">
+      Equivalent to <code>spool doctor</code>: Node version, capture surface, store integrity.
+    </p>
+    <div id="doctor-results" style="font-family:ui-monospace,Menlo,monospace;font-size:12px"></div>
+  </div>
+
+  ${/* ─── Slack ──────────────────────────── */ ""}
+  <div class="step-card">
+    <div class="section-label">Notifications</div>
+    <h3 style="margin-bottom:8px">Slack webhook</h3>
+    <p style="color:var(--fg-mute);font-size:12.5px;margin:0 0 12px">
+      Routes live alerts (loop / stall / context-threshold / tool-watched) to Slack.
+      Take an Incoming Webhook URL from your Slack workspace.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="slack-webhook" type="password"
+        placeholder="https://hooks.slack.com/services/..."
+        value="${esc(slackVal)}"
+        ${data.slackWebhookFromEnv ? "disabled" : ""}
+        style="flex:1;font-family:ui-monospace,Menlo,monospace">
+      ${
+        data.slackWebhookFromEnv
+          ? `<span class="badge" style="opacity:0.8">env</span>`
+          : `<button class="primary" onclick="saveSetting('slack.webhook', document.getElementById('slack-webhook').value, 'slack-status')">Save</button>
+             <button onclick="testSlack()">Test</button>`
+      }
+    </div>
+    <p id="slack-status" style="font-size:12px;color:var(--fg-mute);margin-top:8px;font-family:ui-monospace,Menlo,monospace"></p>
+  </div>
+
+  ${/* ─── Anthropic API key ──────────────── */ ""}
+  <div class="step-card">
+    <div class="section-label">Anthropic</div>
+    <h3 style="margin-bottom:8px">API key (for live fork suffix)</h3>
+    <p style="color:var(--fg-mute);font-size:12.5px;margin:0 0 12px">
+      Required when using <strong>Live</strong> mode in the Fork modal or <strong>Continue: live</strong> for multi-step replay.
+      Stored unencrypted in the local SQLite store.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="anthropic-key" type="password"
+        placeholder="sk-ant-..."
+        value="${esc(apiKeyDisplay)}"
+        ${data.apiKeyFromEnv ? "disabled" : ""}
+        style="flex:1;font-family:ui-monospace,Menlo,monospace">
+      ${
+        data.apiKeyFromEnv
+          ? `<span class="badge" style="opacity:0.8">env</span>`
+          : `<button class="primary" onclick="saveSetting('anthropic.api_key', document.getElementById('anthropic-key').value, 'apikey-status')">Save</button>`
+      }
+    </div>
+    <p id="apikey-status" style="font-size:12px;color:var(--fg-mute);margin-top:8px;font-family:ui-monospace,Menlo,monospace"></p>
+  </div>
+
+  ${/* ─── Postgres ──────────────────────── */ ""}
+  <div class="step-card">
+    <div class="section-label">Hosted backend (optional)</div>
+    <h3 style="margin-bottom:8px">Postgres</h3>
+    <p style="color:var(--fg-mute);font-size:12.5px;margin:0 0 12px">
+      Replicate captured runs to Postgres for the team tier (SPEC §15.3). One-way sync; local SQLite remains primary.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="pg-url" type="password"
+        placeholder="postgres://user:pass@host:5432/spool"
+        value="${esc(pgVal)}"
+        ${data.postgresUrlFromEnv ? "disabled" : ""}
+        style="flex:1;font-family:ui-monospace,Menlo,monospace">
+      ${
+        data.postgresUrlFromEnv
+          ? `<span class="badge" style="opacity:0.8">env</span>`
+          : `<button class="primary" onclick="saveSetting('postgres.url', document.getElementById('pg-url').value, 'pg-status')">Save</button>`
+      }
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button onclick="postgresInit()">Init schema</button>
+      <button onclick="postgresSync()">Sync now</button>
+    </div>
+    <p id="pg-status" style="font-size:12px;color:var(--fg-mute);margin-top:8px;font-family:ui-monospace,Menlo,monospace"></p>
+  </div>
+
+  ${/* ─── Capture defaults ──────────────── */ ""}
+  <div class="step-card">
+    <div class="section-label">Capture defaults</div>
+    <h3 style="margin-bottom:12px">Live + fork preferences</h3>
+    <div class="grid-2" style="gap:16px">
+      <label style="font-size:12px;color:var(--fg-mute);display:flex;flex-direction:column;gap:4px">
+        Watched tools (comma-separated, fires alerts when called)
+        <input id="watch-tools" value="${esc(data.watchedTools)}" placeholder="Bash, Write" style="font-family:ui-monospace,Menlo,monospace">
+      </label>
+      <label style="font-size:12px;color:var(--fg-mute);display:flex;flex-direction:column;gap:4px">
+        Stall threshold (seconds)
+        <input id="stall-seconds" type="number" min="10" max="3600" value="${data.stallSeconds}">
+      </label>
+      <label style="font-size:12px;color:var(--fg-mute);display:flex;flex-direction:column;gap:4px">
+        Default fork model
+        <input id="default-model" value="${esc(data.defaultModel)}" style="font-family:ui-monospace,Menlo,monospace">
+      </label>
+      <label style="font-size:12px;color:var(--fg-mute);display:flex;flex-direction:column;gap:4px">
+        Default max iterations (multi-step continuation)
+        <input id="default-max-iter" type="number" min="1" max="100" value="${data.defaultMaxIterations}">
+      </label>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:8px">
+      <button class="primary" onclick="saveDefaults()">Save defaults</button>
+    </div>
+    <p id="defaults-status" style="font-size:12px;color:var(--fg-mute);margin-top:8px;font-family:ui-monospace,Menlo,monospace"></p>
+  </div>`;
 }
 
 function esc(s: string): string {

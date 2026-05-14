@@ -10,7 +10,7 @@ import type Database from "better-sqlite3";
  * `runMigrations` below. Existing captures keep their stored cost; new
  * captures get the more accurate 5m vs 1h cache-write split.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function ensureSchema(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
@@ -142,6 +142,12 @@ export function ensureSchema(db: Database.Database): void {
       PRIMARY KEY (source_runtime, source_path)
     );
 
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS redaction_log (
       blob_ref TEXT NOT NULL,
       rule TEXT NOT NULL,
@@ -182,6 +188,10 @@ export function ensureSchema(db: Database.Database): void {
     "tokens_cache_creation_1h",
     "INTEGER NOT NULL DEFAULT 0",
   );
+
+  // v3: settings table for the web UI Settings page (Slack webhook,
+  // default fork model, watched tools, etc.). Created via the
+  // CREATE TABLE IF NOT EXISTS above; no ALTER needed.
 
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }

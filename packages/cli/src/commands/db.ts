@@ -1,6 +1,20 @@
 import { Command } from "commander";
 import pc from "picocolors";
+import { resolveSetting } from "@spool/collector";
 import { openStore } from "../util.ts";
+
+/**
+ * Resolve the Postgres URL: --url flag > SPOOL_DB_URL env > settings table.
+ * Returns undefined if nothing is configured (PostgresStore.open will then
+ * throw a clear error).
+ */
+function resolvePostgresUrl(
+  store: import("@spool/collector").Store,
+  flag?: string,
+): string | undefined {
+  if (flag) return flag;
+  return resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+}
 
 export function registerDbCommand(program: Command): void {
   const db = program
@@ -14,11 +28,19 @@ export function registerDbCommand(program: Command): void {
     )
     .option(
       "--url <conn>",
-      "Postgres connection URL (defaults to SPOOL_DB_URL)",
+      "Postgres connection URL (defaults to SPOOL_DB_URL or postgres.url setting)",
     )
     .action(async (opts: { url?: string }) => {
       const { PostgresStore } = await import("@spool/store-postgres");
-      const store = await PostgresStore.open({ url: opts.url });
+      const sqlite = openStore();
+      let store: Awaited<ReturnType<typeof PostgresStore.open>>;
+      try {
+        store = await PostgresStore.open({
+          url: resolvePostgresUrl(sqlite, opts.url),
+        });
+      } finally {
+        sqlite.close();
+      }
       try {
         const r = await store.client.query<{ value: string }>(
           "SELECT value FROM meta WHERE key='schema_version'",
@@ -36,7 +58,10 @@ export function registerDbCommand(program: Command): void {
     .description(
       "Copy local SQLite runs / steps / blobs into Postgres. Idempotent.",
     )
-    .option("--url <conn>", "Postgres URL (defaults to SPOOL_DB_URL)")
+    .option(
+      "--url <conn>",
+      "Postgres URL (defaults to SPOOL_DB_URL or postgres.url setting)",
+    )
     .option(
       "--limit <n>",
       "Cap runs synced (default 1000)",
@@ -47,7 +72,9 @@ export function registerDbCommand(program: Command): void {
         "@spool/store-postgres"
       );
       const sqlite = openStore();
-      const postgres = await PostgresStore.open({ url: opts.url });
+      const postgres = await PostgresStore.open({
+        url: resolvePostgresUrl(sqlite, opts.url),
+      });
       try {
         const t0 = Date.now();
         const r = await syncSqliteToPostgres(sqlite, postgres, {

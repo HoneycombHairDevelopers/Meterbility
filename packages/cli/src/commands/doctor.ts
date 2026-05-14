@@ -5,36 +5,31 @@ import pc from "picocolors";
 import { claudeHome, claudeProjectsRoot, dbPath, spoolHome } from "@spool/shared";
 import { discoverSessions } from "@spool/claude-code-adapter";
 
+type CheckStatus = "ok" | "warn" | "fail";
+interface CheckResult {
+  status: CheckStatus;
+  label: string;
+  detail: string;
+}
+
 /**
  * The kickoff gate, productized. Verifies the environment, the Claude
  * Code session surface, and the Spool data plane — the same checklist
  * SPEC §18 calls out as the must-pass before week one.
+ *
+ * --json emits a machine-readable summary so CI workflows / setup scripts
+ * can gate on `spool doctor --json | jq -e '.summary.fail == 0'` without
+ * scraping ANSI output.
  */
 export function registerDoctorCommand(program: Command): void {
   program
     .command("doctor")
     .description("Verify Spool can capture and store agent runs (Gate 2 check)")
-    .action(async () => {
-      let ok = 0;
-      let warn = 0;
-      let fail = 0;
-      const line = (
-        status: "ok" | "warn" | "fail",
-        label: string,
-        detail = "",
-      ) => {
-        const icon =
-          status === "ok" ? pc.green("✔") : status === "warn" ? pc.yellow("⚠") : pc.red("✖");
-        const tag =
-          status === "ok"
-            ? pc.green("PASS")
-            : status === "warn"
-              ? pc.yellow("WARN")
-              : pc.red("FAIL");
-        if (status === "ok") ok += 1;
-        else if (status === "warn") warn += 1;
-        else fail += 1;
-        console.log(`${icon} [${tag}] ${pc.bold(label)} ${pc.dim(detail)}`);
+    .option("--json", "Emit results as a single JSON object instead of pretty output")
+    .action(async (opts: { json?: boolean }) => {
+      const checks: CheckResult[] = [];
+      const record = (status: CheckStatus, label: string, detail = ""): void => {
+        checks.push({ status, label, detail });
       };
 
       // Node version — Spool uses `node --import tsx/esm` which requires
@@ -43,25 +38,25 @@ export function registerDoctorCommand(program: Command): void {
       const node = process.versions.node;
       const [major, minor] = node.split(".").map(Number) as [number, number];
       if (major > 20 || (major === 20 && minor >= 6) || major >= 22) {
-        line("ok", "Node", `v${node}`);
+        record("ok", "Node", `v${node}`);
       } else if (major >= 20) {
-        line(
+        record(
           "warn",
           "Node",
           `v${node} — upgrade to 20.6+ for full --import support`,
         );
       } else {
-        line("fail", "Node version >= 20.6", `found v${node}`);
+        record("fail", "Node version >= 20.6", `found v${node}`);
       }
 
       // Spool home
-      line("ok", "SPOOL_HOME", spoolHome());
+      record("ok", "SPOOL_HOME", spoolHome());
 
       // Claude home
       if (existsSync(claudeHome())) {
-        line("ok", "CLAUDE_HOME", claudeHome());
+        record("ok", "CLAUDE_HOME", claudeHome());
       } else {
-        line(
+        record(
           "fail",
           "CLAUDE_HOME",
           `not found at ${claudeHome()} — set CLAUDE_HOME or install Claude Code`,
@@ -70,9 +65,9 @@ export function registerDoctorCommand(program: Command): void {
 
       // Projects dir
       if (existsSync(claudeProjectsRoot())) {
-        line("ok", "Claude projects dir", claudeProjectsRoot());
+        record("ok", "Claude projects dir", claudeProjectsRoot());
       } else {
-        line(
+        record(
           "warn",
           "Claude projects dir",
           `no ${claudeProjectsRoot()} — nothing to ingest yet`,
@@ -83,17 +78,17 @@ export function registerDoctorCommand(program: Command): void {
       try {
         const sessions = await discoverSessions();
         if (sessions.length === 0) {
-          line("warn", "Session discovery", "no .jsonl session files found");
+          record("warn", "Session discovery", "no .jsonl session files found");
         } else {
           const newest = sessions[0]!;
-          line(
+          record(
             "ok",
             "Session discovery",
             `${sessions.length} session(s) — newest ${newest.session_id.slice(0, 8)} (${(newest.size_bytes / 1024).toFixed(0)}KB)`,
           );
         }
       } catch (err) {
-        line("fail", "Session discovery", (err as Error).message);
+        record("fail", "Session discovery", (err as Error).message);
       }
 
       // DB writable
@@ -102,17 +97,56 @@ export function registerDoctorCommand(program: Command): void {
         const store = Store.open();
         store.close();
         const s = await stat(dbPath());
-        line("ok", "SQLite store", `${dbPath()} (${s.size} bytes)`);
+        record("ok", "SQLite store", `${dbPath()} (${s.size} bytes)`);
       } catch (err) {
-        line("fail", "SQLite store", (err as Error).message);
+        record("fail", "SQLite store", (err as Error).message);
       }
 
+      const summary = checks.reduce(
+        (acc, c) => {
+          acc[c.status] += 1;
+          return acc;
+        },
+        { ok: 0, warn: 0, fail: 0 },
+      );
+
+      if (opts.json) {
+        const payload = {
+          spool_home: spoolHome(),
+          claude_home: claudeHome(),
+          claude_projects_root: claudeProjectsRoot(),
+          db_path: dbPath(),
+          node: process.versions.node,
+          checks,
+          summary,
+          ok: summary.fail === 0,
+        };
+        process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+        if (summary.fail > 0) process.exit(1);
+        return;
+      }
+
+      for (const c of checks) {
+        const icon =
+          c.status === "ok"
+            ? pc.green("✔")
+            : c.status === "warn"
+              ? pc.yellow("⚠")
+              : pc.red("✖");
+        const tag =
+          c.status === "ok"
+            ? pc.green("PASS")
+            : c.status === "warn"
+              ? pc.yellow("WARN")
+              : pc.red("FAIL");
+        console.log(`${icon} [${tag}] ${pc.bold(c.label)} ${pc.dim(c.detail)}`);
+      }
       console.log("");
       console.log(
         pc.bold(
-          `${pc.green(String(ok))} pass · ${pc.yellow(String(warn))} warn · ${pc.red(String(fail))} fail`,
+          `${pc.green(String(summary.ok))} pass · ${pc.yellow(String(summary.warn))} warn · ${pc.red(String(summary.fail))} fail`,
         ),
       );
-      if (fail > 0) process.exit(1);
+      if (summary.fail > 0) process.exit(1);
     });
 }

@@ -9,7 +9,7 @@ import {
   listSteps,
   resolveSnapshotBlobRef,
 } from "@spool/collector";
-import type { Step } from "@spool/shared";
+import type { ContextSnapshot, ConversationMessage, RetrievedDocument, Step } from "@spool/shared";
 import {
   actionLabel,
   fmtCents,
@@ -166,12 +166,7 @@ async function printStep(
     }
   }
   if (showAll || show === "context") {
-    const ref = resolveSnapshotBlobRef(store, step.context_snapshot_id);
-    const ctx = await store.blobs.tryGetString(ref);
-    if (ctx) {
-      console.log(pc.bold("\n  context (snapshot)"));
-      console.log(indent(truncate(prettyJson(ctx), 4000)));
-    }
+    await printResolvedContext(store, step);
   }
   if (showAll || show === "cost") {
     console.log(pc.bold("\n  cost"));
@@ -189,6 +184,180 @@ async function printStep(
         ),
       ),
     );
+  }
+}
+
+async function printResolvedContext(
+  store: import("@spool/collector").Store,
+  step: Step,
+): Promise<void> {
+  const ref = resolveSnapshotBlobRef(store, step.context_snapshot_id);
+  const raw = await store.blobs.tryGetString(ref);
+  if (!raw) {
+    console.log(pc.bold("\n  context"));
+    console.log(indent(pc.dim("(no snapshot blob found)")));
+    return;
+  }
+  let snapshot: ContextSnapshot;
+  try {
+    snapshot = JSON.parse(raw) as ContextSnapshot;
+  } catch {
+    console.log(pc.bold("\n  context (raw)"));
+    console.log(indent(truncate(raw, 4000)));
+    return;
+  }
+
+  // First pass: resolve every content_ref so we can compute totals.
+  let totalChars = 0;
+  const fetchText = async (r: string): Promise<string> => {
+    const text = (await store.blobs.tryGetString(r)) ?? "(missing blob)";
+    totalChars += text.length;
+    return text;
+  };
+
+  type Resolved =
+    | { type: "system_prompt"; ref: string; text: string }
+    | { type: "tool_definitions"; ref: string; text: string }
+    | {
+        type: "conversation_history";
+        messages: Array<{
+          role: "user" | "assistant" | "tool";
+          ref: string;
+          text: string;
+          step_ref?: string;
+        }>;
+      }
+    | {
+        type: "retrieved_documents";
+        docs: Array<{ source: string; ref: string; text: string }>;
+      }
+    | {
+        type: "compaction_summary";
+        ref: string;
+        text: string;
+        replaces_steps: string[];
+      };
+
+  const resolved: Resolved[] = [];
+  for (const c of snapshot.components) {
+    if (c.type === "system_prompt") {
+      resolved.push({
+        type: "system_prompt",
+        ref: c.content_ref,
+        text: await fetchText(c.content_ref),
+      });
+    } else if (c.type === "tool_definitions") {
+      resolved.push({
+        type: "tool_definitions",
+        ref: c.content_ref,
+        text: await fetchText(c.content_ref),
+      });
+    } else if (c.type === "conversation_history") {
+      const messages: Array<{
+        role: "user" | "assistant" | "tool";
+        ref: string;
+        text: string;
+        step_ref?: string;
+      }> = [];
+      for (const m of (c.messages as ConversationMessage[]) ?? []) {
+        messages.push({
+          role: m.role,
+          ref: m.content_ref,
+          text: await fetchText(m.content_ref),
+          step_ref: m.step_ref,
+        });
+      }
+      resolved.push({ type: "conversation_history", messages });
+    } else if (c.type === "retrieved_documents") {
+      const docs: Array<{ source: string; ref: string; text: string }> = [];
+      for (const d of (c.docs as RetrievedDocument[]) ?? []) {
+        docs.push({
+          source: d.source,
+          ref: d.content_ref,
+          text: await fetchText(d.content_ref),
+        });
+      }
+      resolved.push({ type: "retrieved_documents", docs });
+    } else if (c.type === "compaction_summary") {
+      resolved.push({
+        type: "compaction_summary",
+        ref: c.content_ref,
+        text: await fetchText(c.content_ref),
+        replaces_steps: c.replaces_steps,
+      });
+    }
+  }
+
+  console.log(
+    pc.bold(
+      `\n  context (snapshot · ${resolved.length} component${resolved.length === 1 ? "" : "s"} · ${totalChars.toLocaleString()} chars)`,
+    ),
+  );
+
+  for (const c of resolved) {
+    if (c.type === "system_prompt") {
+      console.log(
+        pc.bold(`\n  system_prompt`) +
+          pc.dim(` · ${c.text.length.toLocaleString()} chars · ${c.ref.slice(0, 12)}`),
+      );
+      console.log(indent(truncate(c.text, 2000)));
+    } else if (c.type === "tool_definitions") {
+      console.log(
+        pc.bold(`\n  tool_definitions`) +
+          pc.dim(` · ${c.text.length.toLocaleString()} chars · ${c.ref.slice(0, 12)}`),
+      );
+      console.log(indent(truncate(prettyJson(c.text), 2000)));
+    } else if (c.type === "conversation_history") {
+      console.log(
+        pc.bold(`\n  conversation_history`) +
+          pc.dim(
+            ` · ${c.messages.length} turn${c.messages.length === 1 ? "" : "s"}`,
+          ),
+      );
+      for (const m of c.messages) {
+        const roleColor =
+          m.role === "user"
+            ? pc.cyan
+            : m.role === "assistant"
+              ? pc.green
+              : pc.yellow;
+        const tag = roleColor(`[${m.role.toUpperCase()}]`);
+        const meta = pc.dim(
+          ` · ${m.text.length.toLocaleString()} chars · ${m.ref.slice(0, 12)}${m.step_ref ? ` · step ${m.step_ref.slice(0, 12)}` : ""}`,
+        );
+        console.log(`    ${tag}${meta}`);
+        console.log(indent(truncate(m.text, 1200), "      "));
+      }
+    } else if (c.type === "retrieved_documents") {
+      console.log(
+        pc.bold(`\n  retrieved_documents`) +
+          pc.dim(` · ${c.docs.length} doc${c.docs.length === 1 ? "" : "s"}`),
+      );
+      for (const d of c.docs) {
+        console.log(
+          `    ${pc.magenta(d.source)}${pc.dim(` · ${d.text.length.toLocaleString()} chars · ${d.ref.slice(0, 12)}`)}`,
+        );
+        console.log(indent(truncate(d.text, 1000), "      "));
+      }
+    } else if (c.type === "compaction_summary") {
+      console.log(
+        pc.bold(`\n  compaction_summary`) +
+          pc.dim(
+            ` · replaces ${c.replaces_steps.length} step${c.replaces_steps.length === 1 ? "" : "s"} · ${c.ref.slice(0, 12)}`,
+          ),
+      );
+      console.log(indent(truncate(c.text, 2000)));
+      if (c.replaces_steps.length) {
+        console.log(
+          indent(
+            pc.dim(
+              "replaced: " +
+                c.replaces_steps.map((s) => s.slice(0, 12)).join(", "),
+            ),
+          ),
+        );
+      }
+    }
   }
 }
 

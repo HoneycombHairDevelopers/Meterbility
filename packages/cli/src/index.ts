@@ -13,6 +13,9 @@ import { registerExportCommand } from "./commands/export.ts";
 import { registerTestCommand } from "./commands/test.ts";
 import { registerDbCommand } from "./commands/db.ts";
 import { registerSlackCommand } from "./commands/slack.ts";
+import { registerConfigCommand } from "./commands/config.ts";
+import { registerWatchCommand } from "./commands/watch.ts";
+import { registerOpenCommand } from "./commands/open.ts";
 
 const program = new Command();
 program
@@ -32,6 +35,9 @@ registerExportCommand(program);
 registerTestCommand(program);
 registerDbCommand(program);
 registerSlackCommand(program);
+registerConfigCommand(program);
+registerWatchCommand(program);
+registerOpenCommand(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red("error: ") + (err as Error).message);

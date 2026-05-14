@@ -11,6 +11,13 @@ import {
   listSteps,
   insertAnnotation,
   resolveSnapshotBlobRef,
+  getSetting,
+  setSetting,
+  deleteSetting,
+  resolveSetting,
+  isSecret,
+  maskSecret,
+  type SettingKey,
 } from "@spool/collector";
 import type { Store } from "@spool/collector";
 import { diffRuns } from "./diff.ts";
@@ -36,6 +43,13 @@ import {
   type LiveEvent,
 } from "./live.ts";
 import { forkRun, fakeResponder, anthropicResponder } from "./fork.ts";
+import {
+  continueFork,
+  type ContinuationMode,
+  type ContinuationModelCaller,
+  type ToolExecutor,
+} from "./continuation.ts";
+import { SlackNotifier } from "./slack.ts";
 import {
   addAssertion,
   createTest,
@@ -78,8 +92,37 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   });
 
   app.get("/runs", (c) => {
-    const runs = listRuns(store, { limit: 200 });
-    return c.html(renderShell("Runs", renderRunList(runs), shellOpts));
+    const status = c.req.query("status");
+    const tool = c.req.query("tool");
+    const project = c.req.query("project")?.toLowerCase();
+    let runs = listRuns(store, {
+      limit: 500,
+      status:
+        status === "ok" ||
+        status === "error" ||
+        status === "in_progress" ||
+        status === "abandoned"
+          ? status
+          : undefined,
+      containsTool: tool || undefined,
+    });
+    // Project filter is a substring match on cwd; do it client-side
+    // since the SQL store doesn't index by it and counts stay small.
+    if (project) {
+      runs = runs.filter((r) =>
+        (r.cwd ?? "").toLowerCase().includes(project),
+      );
+    }
+    return c.html(
+      renderShell(
+        "Runs",
+        renderRunList(runs, {
+          totalAvailable: listRuns(store, { limit: 1000 }).length,
+          filters: { status, tool, project },
+        }),
+        shellOpts,
+      ),
+    );
   });
 
   // Server-Sent Events for the live fleet view.
@@ -130,12 +173,19 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.get("/diff", (c) => {
     const a = c.req.query("a");
     const b = c.req.query("b");
+    const showShared = c.req.query("shared") === "1";
     if (!a || !b) return c.text("usage: /diff?a=<run-id>&b=<run-id>", 400);
     const runA = getRun(store, a);
     const runB = getRun(store, b);
     if (!runA || !runB) return c.notFound();
     const result = diffRuns(store, runA.run_id, runB.run_id);
-    return c.html(renderShell("Diff", renderDiff(runA, runB, result), shellOpts));
+    return c.html(
+      renderShell(
+        "Diff",
+        renderDiff(runA, runB, result, { showShared }),
+        shellOpts,
+      ),
+    );
   });
 
   app.get("/api/runs", (c) => c.json(listRuns(store, { limit: 200 })));
@@ -263,17 +313,27 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       edit_payload?: unknown;
       fake?: string;
       live?: boolean;
+      model?: string;
+      continue?: ContinuationMode | "none";
+      max_iterations?: number;
+      allow_tools?: string[];
     };
     if (!body.origin_run_id || body.at === undefined || !body.edit_type) {
       return c.json({ error: "missing origin_run_id / at / edit_type" }, 400);
     }
+    const apiKey = resolveSetting(
+      store,
+      "anthropic.api_key",
+      "ANTHROPIC_API_KEY",
+    );
+    const model =
+      body.model ??
+      getSetting(store, "fork.default_model") ??
+      "claude-opus-4-7";
     const responder = body.fake
       ? fakeResponder(body.fake)
-      : body.live && process.env.ANTHROPIC_API_KEY
-        ? anthropicResponder(store, {
-            apiKey: process.env.ANTHROPIC_API_KEY,
-            model: "claude-opus-4-7",
-          })
+      : body.live && apiKey
+        ? anthropicResponder(store, { apiKey, model })
         : undefined;
     try {
       const result = await forkRun(
@@ -288,7 +348,141 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         },
         responder,
       );
-      return c.json(result);
+
+      // Optional multi-step continuation
+      let continuation:
+        | {
+            mode: ContinuationMode;
+            iterations: number;
+            steps_added: number;
+            terminal_reason: string;
+          }
+        | undefined;
+      if (body.continue && body.continue !== "none") {
+        if (body.continue !== "simulate" && body.continue !== "live") {
+          return c.json({ error: `invalid continue mode: ${body.continue}` }, 400);
+        }
+        if (body.continue === "live" && !apiKey) {
+          return c.json(
+            { error: "live continuation requires ANTHROPIC_API_KEY" },
+            400,
+          );
+        }
+        const modelCaller: ContinuationModelCaller = async (args) => {
+          const { default: Anthropic } = await import("@anthropic-ai/sdk");
+          const client = new Anthropic({ apiKey });
+          const messages: Array<{
+            role: "user" | "assistant";
+            content: string;
+          }> = [];
+          for (const m of args.history) {
+            if (m.role === "tool") continue;
+            const text = await store.blobs.tryGetString(m.content_ref);
+            if (text) messages.push({ role: m.role, content: text });
+          }
+          const t0 = Date.now();
+          const resp = await client.messages.create({
+            model,
+            max_tokens: 4096,
+            system: args.system_prompt,
+            messages: messages.length
+              ? messages
+              : [{ role: "user", content: "(no history)" }],
+          });
+          const t1 = Date.now();
+          const blocks = resp.content ?? [];
+          const toolUse = blocks.find(
+            (
+              b,
+            ): b is {
+              type: "tool_use";
+              id: string;
+              name: string;
+              input: Record<string, unknown>;
+            } => b.type === "tool_use",
+          );
+          const text = blocks
+            .filter((b): b is { type: "text"; text: string } => b.type === "text")
+            .map((b) => b.text)
+            .join("\n");
+          const cc = (resp.usage as { cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } } | undefined)?.cache_creation;
+          return {
+            model: resp.model,
+            decision_content: resp.content,
+            action: toolUse
+              ? {
+                  kind: "tool_call",
+                  tool_name: toolUse.name,
+                  tool_use_id: toolUse.id,
+                  tool_input: toolUse.input,
+                }
+              : { kind: "message", text },
+            tokens: {
+              input: resp.usage?.input_tokens ?? 0,
+              output: resp.usage?.output_tokens ?? 0,
+              cached_read: resp.usage?.cache_read_input_tokens ?? 0,
+              cache_creation:
+                cc?.ephemeral_5m_input_tokens ??
+                resp.usage?.cache_creation_input_tokens ??
+                0,
+              cache_creation_1h: cc?.ephemeral_1h_input_tokens ?? 0,
+            },
+            latency_ms: t1 - t0,
+          };
+        };
+        const allowSet = new Set(body.allow_tools ?? []);
+        const toolExecutor: ToolExecutor =
+          body.continue === "live"
+            ? async (call) => {
+                if (!allowSet.has(call.tool_name)) {
+                  return {
+                    output: { spool_note: `tool '${call.tool_name}' not allowed` },
+                    is_error: false,
+                    summary: `skipped: ${call.tool_name}`,
+                  };
+                }
+                if (call.tool_name === "Bash") {
+                  const cmd = (call.tool_input as { command?: string } | undefined)?.command;
+                  if (!cmd) {
+                    return { output: { error: "missing command" }, is_error: true, summary: "missing command" };
+                  }
+                  if (/\brm\s+-[rRfF]|sudo\b|--no-verify/.test(cmd)) {
+                    return { output: { error: "destructive command rejected" }, is_error: true, summary: "rejected" };
+                  }
+                  const { spawnSync } = await import("node:child_process");
+                  const r = spawnSync("bash", ["-lc", cmd], {
+                    encoding: "utf-8",
+                    timeout: 30_000,
+                  });
+                  return {
+                    output: { stdout: r.stdout?.slice(0, 8_000) ?? "", stderr: r.stderr?.slice(0, 2_000) ?? "", exit_code: r.status },
+                    is_error: (r.status ?? 0) !== 0,
+                    summary: (r.stdout?.split("\n")[0] ?? "").slice(0, 200),
+                  };
+                }
+                return {
+                  output: { spool_note: `tool '${call.tool_name}' has no executor; no-op` },
+                  is_error: false,
+                  summary: `no-op: ${call.tool_name}`,
+                };
+              }
+            : (async () => ({ output: {}, is_error: false }));
+        const cont = await continueFork(store, result.fork_run_id, {
+          mode: body.continue,
+          modelCaller,
+          toolExecutor,
+          maxIterations: body.max_iterations ?? 25,
+          originRunId: body.origin_run_id,
+        });
+        continuation = {
+          mode: body.continue,
+          iterations: cont.iterations_run,
+          steps_added: cont.steps_added,
+          terminal_reason: cont.terminal_reason,
+        };
+      }
+
+      return c.json({ ...result, continuation });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);
     }
@@ -377,6 +571,294 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const tests = listTests(store);
     const recent = listResults(store, undefined, 20);
     return c.html(renderShell("Tests", renderTests(tests, recent), shellOpts));
+  });
+
+  // ─── Settings page + supporting APIs ─────────────────────────────
+  app.get("/settings", async (c) => {
+    const { renderSettings } = await import("./html.ts");
+    const slackWebhook = resolveSetting(store, "slack.webhook", "SPOOL_SLACK_WEBHOOK");
+    const apiKey = resolveSetting(store, "anthropic.api_key", "ANTHROPIC_API_KEY");
+    const pgUrl = resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+    return c.html(
+      renderShell(
+        "Settings",
+        renderSettings({
+          slackWebhook,
+          slackWebhookFromEnv: !!process.env.SPOOL_SLACK_WEBHOOK,
+          apiKey,
+          apiKeyFromEnv: !!process.env.ANTHROPIC_API_KEY,
+          postgresUrl: pgUrl,
+          postgresUrlFromEnv: !!process.env.SPOOL_DB_URL,
+          watchedTools: getSetting(store, "live.watch_tools") ?? "",
+          stallSeconds: Number(getSetting(store, "live.stall_seconds") ?? 120),
+          defaultModel: getSetting(store, "fork.default_model") ?? "claude-opus-4-7",
+          defaultMaxIterations: Number(
+            getSetting(store, "fork.default_max_iterations") ?? 25,
+          ),
+        }),
+        shellOpts,
+      ),
+    );
+  });
+
+  // Settings: persist a key/value
+  app.post("/api/settings", async (c) => {
+    const body = (await c.req.json()) as { key?: string; value?: string };
+    if (!body.key) return c.json({ error: "missing key" }, 400);
+    if (body.value === undefined || body.value === "") {
+      deleteSetting(store, body.key as SettingKey);
+    } else {
+      setSetting(store, body.key as SettingKey, body.value);
+    }
+    return c.json({ ok: true });
+  });
+
+  // Doctor: returns the same checks as `spool doctor`, as JSON
+  app.get("/api/doctor", async (c) => {
+    const { existsSync } = await import("node:fs");
+    const { stat } = await import("node:fs/promises");
+    const { claudeHome, claudeProjectsRoot, dbPath, spoolHome } = await import(
+      "@spool/shared"
+    );
+    const { discoverSessions } = await import("@spool/claude-code-adapter");
+    const checks: Array<{
+      name: string;
+      status: "ok" | "warn" | "fail";
+      detail: string;
+    }> = [];
+    const node = process.versions.node;
+    const [major, minor] = node.split(".").map(Number) as [number, number];
+    checks.push({
+      name: "Node",
+      status:
+        major > 20 || (major === 20 && minor >= 6) || major >= 22
+          ? "ok"
+          : major >= 20
+            ? "warn"
+            : "fail",
+      detail: `v${node}`,
+    });
+    checks.push({ name: "SPOOL_HOME", status: "ok", detail: spoolHome() });
+    checks.push({
+      name: "CLAUDE_HOME",
+      status: existsSync(claudeHome()) ? "ok" : "fail",
+      detail: claudeHome(),
+    });
+    checks.push({
+      name: "Claude projects dir",
+      status: existsSync(claudeProjectsRoot()) ? "ok" : "warn",
+      detail: claudeProjectsRoot(),
+    });
+    try {
+      const sessions = await discoverSessions();
+      checks.push({
+        name: "Session discovery",
+        status: sessions.length > 0 ? "ok" : "warn",
+        detail:
+          sessions.length === 0
+            ? "no .jsonl session files found"
+            : `${sessions.length} session(s)`,
+      });
+    } catch (err) {
+      checks.push({
+        name: "Session discovery",
+        status: "fail",
+        detail: (err as Error).message,
+      });
+    }
+    try {
+      const s = await stat(dbPath());
+      checks.push({
+        name: "SQLite store",
+        status: "ok",
+        detail: `${dbPath()} (${s.size} bytes)`,
+      });
+    } catch (err) {
+      checks.push({
+        name: "SQLite store",
+        status: "fail",
+        detail: (err as Error).message,
+      });
+    }
+    return c.json({ checks });
+  });
+
+  // Ingest trigger
+  app.post("/api/ingest", async (c) => {
+    const body = (await c.req.json()) as {
+      runtime?: "claude-code" | "codex-cli" | "cursor";
+      limit?: number;
+      path?: string;
+    };
+    if (!body.runtime) return c.json({ error: "missing runtime" }, 400);
+    try {
+      let runs = 0;
+      let steps = 0;
+      let bytes = 0;
+      let composers = 0;
+      if (body.runtime === "claude-code") {
+        const { discoverSessions, ingestSession } = await import(
+          "@spool/claude-code-adapter"
+        );
+        let paths: string[] = [];
+        if (body.path) paths = [body.path];
+        else {
+          const sessions = await discoverSessions();
+          paths = sessions.map((s) => s.path);
+          if (body.limit) paths = paths.slice(0, body.limit);
+        }
+        for (const p of paths) {
+          const r = await ingestSession(store, p);
+          if (r.status === "ok") {
+            runs += 1;
+            steps += r.steps_added;
+            bytes += r.bytes_read;
+          }
+        }
+      } else if (body.runtime === "codex-cli") {
+        const { discoverCodexSessions, ingestCodexSession } = await import(
+          "@spool/codex-cli-adapter"
+        );
+        let paths: string[] = [];
+        if (body.path) paths = [body.path];
+        else {
+          const sessions = await discoverCodexSessions();
+          paths = sessions.map((s) => s.path);
+          if (body.limit) paths = paths.slice(0, body.limit);
+        }
+        for (const p of paths) {
+          const r = await ingestCodexSession(store, p);
+          if (r.status === "ok") {
+            runs += 1;
+            steps += r.steps_added;
+            bytes += r.bytes_read;
+          }
+        }
+      } else if (body.runtime === "cursor") {
+        const { ingestCursorGlobal } = await import("@spool/cursor-adapter");
+        const r = await ingestCursorGlobal(store, { limit: body.limit });
+        if (r.status === "ok") {
+          composers = r.composers_ingested;
+          steps = r.steps_added;
+        } else {
+          return c.json({ error: r.reason ?? "ingest failed" }, 400);
+        }
+      } else {
+        return c.json({ error: "unknown runtime" }, 400);
+      }
+      return c.json({
+        ok: true,
+        runtime: body.runtime,
+        runs,
+        composers,
+        steps,
+        bytes,
+      });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // Slack: send a test message
+  app.post("/api/slack/test", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      webhook?: string;
+    };
+    const url =
+      body.webhook ??
+      resolveSetting(store, "slack.webhook", "SPOOL_SLACK_WEBHOOK");
+    if (!url) return c.json({ error: "missing webhook" }, 400);
+    try {
+      const n = new SlackNotifier({ webhookUrl: url });
+      await n.sendTest();
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  // Postgres: init + sync
+  app.post("/api/db/postgres-init", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { url?: string };
+    const url =
+      body.url ?? resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+    if (!url) return c.json({ error: "missing url" }, 400);
+    try {
+      const { PostgresStore } = await import("@spool/store-postgres");
+      const pg = await PostgresStore.open({ url });
+      try {
+        const r = await pg.client.query<{ value: string }>(
+          "SELECT value FROM meta WHERE key='schema_version'",
+        );
+        return c.json({
+          ok: true,
+          schema_version: r.rows[0]?.value ?? null,
+        });
+      } finally {
+        await pg.close();
+      }
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+  app.post("/api/db/postgres-sync", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      url?: string;
+      limit?: number;
+    };
+    const url =
+      body.url ?? resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+    if (!url) return c.json({ error: "missing url" }, 400);
+    try {
+      const { PostgresStore, syncSqliteToPostgres } = await import(
+        "@spool/store-postgres"
+      );
+      const pg = await PostgresStore.open({ url });
+      try {
+        const r = await syncSqliteToPostgres(store, pg, {
+          limitRuns: body.limit,
+        });
+        return c.json({ ok: true, ...r });
+      } finally {
+        await pg.close();
+      }
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  // Run trace export
+  app.get("/api/runs/:id/export", async (c) => {
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    const includeBlobs = c.req.query("blobs") !== "0";
+    const steps = listSteps(store, run.run_id);
+    const trace: Record<string, unknown> = {
+      spool_trace_version: "0.2.0",
+      run,
+      steps,
+    };
+    if (includeBlobs) {
+      const blobs: Record<string, string> = {};
+      const refs = new Set<string>();
+      for (const s of steps) {
+        refs.add(resolveSnapshotBlobRef(store, s.context_snapshot_id));
+        refs.add(s.decision_ref);
+        if (s.outcome.tool_result_ref) refs.add(s.outcome.tool_result_ref);
+      }
+      for (const r of refs) {
+        const text = await store.blobs.tryGetString(r);
+        if (text !== undefined) {
+          blobs[r] = Buffer.from(text, "utf-8").toString("base64");
+        }
+      }
+      trace.blobs = blobs;
+    }
+    c.header(
+      "Content-Disposition",
+      `attachment; filename="${run.run_id}.spool.json"`,
+    );
+    return c.json(trace);
   });
 
   return app;

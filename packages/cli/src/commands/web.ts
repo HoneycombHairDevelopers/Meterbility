@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import pc from "picocolors";
 import { serveApp, SlackNotifier, type SlackEventKind } from "@spool/server";
+import { resolveSetting, getSetting } from "@spool/collector";
 import { openStore } from "../util.ts";
 
 export function registerWebCommand(program: Command): void {
@@ -47,28 +48,57 @@ export function registerWebCommand(program: Command): void {
       slackEvent: string[];
     }) => {
       const store = openStore();
+      // Settings table fallback: if a CLI flag wasn't given, look up the
+      // persisted value from the `settings` table (same source the web UI's
+      // Settings page writes to). Env vars still win over both.
+      const watchToolsEffective =
+        opts.watchTool.length > 0
+          ? opts.watchTool
+          : (getSetting(store, "live.watch_tools") ?? "")
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean);
+      const stallFromSetting = getSetting(store, "live.stall_seconds");
+      const stallSecondsEffective =
+        opts.stallSeconds !== 120
+          ? opts.stallSeconds
+          : stallFromSetting
+            ? parseInt(stallFromSetting, 10) || opts.stallSeconds
+            : opts.stallSeconds;
       const { url, live } = serveApp(store, {
         port: opts.port,
         host: opts.host,
         live: opts.live === true,
         liveOptions: {
-          watchTools: opts.watchTool,
-          stallSeconds: opts.stallSeconds,
+          watchTools: watchToolsEffective,
+          stallSeconds: stallSecondsEffective,
         },
       });
       console.log(pc.green("Spool running at ") + pc.cyan(url));
       if (live) {
         console.log(
           pc.dim(
-            `live mode on — watching Claude Code sessions every ${1500}ms. Watching tools: ${opts.watchTool.join(", ") || "(none)"}.`,
+            `live mode on — watching Claude Code sessions every ${1500}ms. Watching tools: ${watchToolsEffective.join(", ") || "(none)"}.`,
           ),
         );
         const webhook =
-          opts.slackWebhook ?? process.env.SPOOL_SLACK_WEBHOOK ?? "";
+          opts.slackWebhook ??
+          resolveSetting(store, "slack.webhook", "SPOOL_SLACK_WEBHOOK") ??
+          "";
+        const slackEventsFromSetting = getSetting(
+          store,
+          "slack.default_events",
+        );
         if (webhook) {
           try {
+            const fallbackEvents = slackEventsFromSetting
+              ? slackEventsFromSetting
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+              : ["alert"];
             const events = (
-              opts.slackEvent.length > 0 ? opts.slackEvent : ["alert"]
+              opts.slackEvent.length > 0 ? opts.slackEvent : fallbackEvents
             ) as SlackEventKind[];
             const slack = new SlackNotifier({
               webhookUrl: webhook,

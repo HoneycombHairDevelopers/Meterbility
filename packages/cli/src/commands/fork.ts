@@ -10,6 +10,7 @@ import {
   type ContinuationModelCaller,
   type ToolExecutor,
 } from "@spool/server";
+import { getSetting } from "@spool/collector";
 import { openStore } from "../util.ts";
 
 const EDIT_TYPES: ForkEditType[] = [
@@ -87,12 +88,32 @@ export function registerForkCommand(program: Command): void {
         type: opts.edit as ForkEditType,
         payload: await resolvePayload(opts),
       };
+      const store = openStore();
+      // Settings fallback: --live-model and --max-iterations both fall back
+      // to the settings table when the user didn't explicitly pass them.
+      const flagModel =
+        opts.liveModel && opts.liveModel !== "claude-opus-4-7"
+          ? opts.liveModel
+          : undefined;
+      const liveModelEffective =
+        flagModel ??
+        getSetting(store, "fork.default_model") ??
+        "claude-opus-4-7";
+      const maxIterFromSetting = getSetting(
+        store,
+        "fork.default_max_iterations",
+      );
+      const maxIterationsEffective =
+        opts.maxIterations !== 25
+          ? opts.maxIterations
+          : maxIterFromSetting
+            ? parseInt(maxIterFromSetting, 10) || opts.maxIterations
+            : opts.maxIterations;
       const responder = opts.fake
         ? fakeResponder(opts.fake)
         : opts.live
-          ? buildAnthropicResponder(opts.liveModel ?? "claude-opus-4-7")
+          ? buildAnthropicResponder(liveModelEffective)
           : undefined;
-      const store = openStore();
       try {
         const at = Number.isFinite(Number(opts.at))
           ? Number(opts.at)
@@ -126,9 +147,7 @@ export function registerForkCommand(program: Command): void {
               "--continue=live requires ANTHROPIC_API_KEY for the model loop",
             );
           }
-          const modelCaller = buildContinuationCaller(
-            opts.liveModel ?? "claude-opus-4-7",
-          );
+          const modelCaller = buildContinuationCaller(liveModelEffective);
           const cont = await continueFork(store, result.fork_run_id, {
             mode: opts.continue,
             modelCaller,
@@ -136,7 +155,7 @@ export function registerForkCommand(program: Command): void {
               opts.continue === "live"
                 ? buildBashOnlyExecutor(opts.allowTool)
                 : undefined,
-            maxIterations: opts.maxIterations,
+            maxIterations: maxIterationsEffective,
             originRunId: runId,
           });
           console.log(pc.bold("\ncontinuation"));
