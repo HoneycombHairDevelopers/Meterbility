@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spool-agent"
+version = "0.1.0"
+description = "Spool SDK for Python — trace LLM agent runs into the local Spool store"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Spool" }]
+keywords = ["llm", "agent", "tracing", "anthropic", "observability", "debugger"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Debuggers",
+]
+# Core has zero runtime deps — everything is stdlib (sqlite3, hashlib,
+# json, pathlib, os, uuid). The Anthropic wrapper imports `anthropic`
+# lazily, only when the user actually calls trace_anthropic().
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/spool/spool"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spool_agent = ["py.typed"]

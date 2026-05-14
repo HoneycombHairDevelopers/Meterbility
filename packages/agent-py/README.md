@@ -1,0 +1,129 @@
+# spool-agent (Python SDK)
+
+The Python counterpart to `@spool/agent`. Wire any Python LLM agent into
+Spool by capturing one **Step** per model call. Runs land in the same
+`~/.spool/spool.db` store the TypeScript SDK, the CLI, and the web UI
+read from — so a Python agent shows up in `spool list` and `spool web`
+immediately, with no separate ingest step.
+
+## Install
+
+```bash
+pip install -e packages/agent-py        # core only (stdlib)
+pip install -e 'packages/agent-py[anthropic]'  # add the Anthropic helper
+```
+
+Requires Python 3.9+. Core has zero runtime dependencies (it uses
+`sqlite3`, `hashlib`, `json`, `pathlib` from the standard library).
+
+## Minimal usage
+
+```python
+from spool_agent import SpoolTracer
+
+with SpoolTracer(project="my-app", agent="support") as tracer:
+    step = tracer.start_step(
+        model="claude-opus-4-7",
+        system_prompt="you are helpful",
+        history=[{"role": "user", "content": "hello"}],
+    )
+    # ... call your model, then record what it did ...
+    step.record_message("hi back!").record_tokens(
+        input=10, output=2, cached_read=0, cache_creation=0
+    )
+    step.end()
+```
+
+Then in another terminal:
+
+```bash
+spool list
+spool inspect <run-id>
+spool web   # see it live alongside any Claude Code / Codex runs
+```
+
+## Anthropic shortcut
+
+If you already use the official `anthropic` Python SDK, wrap the client
+once and every `messages.create()` call is captured automatically:
+
+```python
+from anthropic import Anthropic
+from spool_agent import SpoolTracer, trace_anthropic
+
+with SpoolTracer(project="my-app", agent="support") as tracer:
+    client = trace_anthropic(tracer, Anthropic())  # API-compatible wrapper
+
+    resp = client.messages.create(
+        model="claude-opus-4-7",
+        max_tokens=512,
+        system="you are helpful",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+    # one Spool Step captured per call — including tool_use, tokens, latency.
+```
+
+The wrapped client behaves identically to the underlying `Anthropic`
+client — it returns the same `Message` object, exposes the same
+attributes, and re-raises the same exceptions (recording them as
+`error` outcomes before the throw bubbles).
+
+## Multi-step agent loop
+
+For multi-step agents that call tools, drive each step manually:
+
+```python
+from spool_agent import SpoolTracer, tool_call_action
+
+with SpoolTracer(project="my-app", agent="rag") as tracer:
+    history = [{"role": "user", "content": "what's the weather in NYC?"}]
+
+    # turn 1: model picks a tool
+    step1 = tracer.start_step(model="claude-opus-4-7", history=history)
+    step1.record_action(tool_call_action("weather", {"city": "NYC"}, "tu_1"))
+    step1.record_tokens(input=120, output=20)
+    step1.end()
+
+    # run the tool yourself ...
+    tool_result = {"temp_f": 68, "conditions": "clear"}
+
+    # turn 2: feed the tool result back, model produces a message
+    history += [
+        {"role": "assistant", "content": "[tool_call weather]"},
+        {"role": "tool", "content": str(tool_result)},
+    ]
+    step2 = tracer.start_step(model="claude-opus-4-7", history=history)
+    step2.record_message("It's 68°F and clear in NYC.")
+    step2.record_tokens(input=150, output=15)
+    step2.end()
+```
+
+## What's captured per step
+
+| Field | Source |
+|-------|--------|
+| `model` | required arg to `start_step()` |
+| `system_prompt`, `tool_definitions`, `history`, `retrieved_docs` | optional context components (blob-stored, content-addressed) |
+| `action` | `record_message()` / `record_tool_call()` / `record_action()` |
+| `outcome` | `record_tool_result()` / `record_outcome()` |
+| `tokens` (input / output / cached_read / cache_creation [5m] / cache_creation_1h) | `record_tokens()` |
+| `cost_cents` | computed from tokens via the same pricing table the TS side uses |
+| `latency_ms` | wall-clock since `start_step()`, or explicit via `record_tokens(latency_ms=...)` |
+| `tags` | `step.tag("x")` — `cost:approx` auto-applied for unknown models |
+
+## Configuration
+
+| Env var | Effect |
+|---------|--------|
+| `SPOOL_HOME` | Override the data directory (default `~/.spool`) |
+| `SPOOL_REDACT=off` | Disable regex redaction of API keys / bearer tokens / private keys |
+
+## Run the tests
+
+```bash
+cd packages/agent-py
+python -m unittest discover -s tests -v
+```
+
+Tests redirect `SPOOL_HOME` to a tempdir per test, so they never touch
+your real `~/.spool` store.

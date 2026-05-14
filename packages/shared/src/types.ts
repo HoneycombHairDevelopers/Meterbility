@@ -64,7 +64,13 @@ export interface Run {
   agent_id: string;
   project_id: string;
   source_session_id?: string;
-  source_runtime: "claude-code" | "codex-cli" | "cursor" | "sdk-ts" | "fork";
+  source_runtime:
+    | "claude-code"
+    | "codex-cli"
+    | "cursor"
+    | "sdk-ts"
+    | "sdk-py"
+    | "fork";
   title?: string;
   status: StepStatus;
   started_at: string;

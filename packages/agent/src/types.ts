@@ -23,7 +23,13 @@ export interface TracerOptions {
   /** Override SPOOL_HOME for this tracer. */
   spoolHome?: string;
   /** Override the source_runtime label. Defaults to "sdk-ts". */
-  sourceRuntime?: "sdk-ts" | "claude-code" | "codex-cli" | "cursor" | "fork";
+  sourceRuntime?:
+    | "sdk-ts"
+    | "sdk-py"
+    | "claude-code"
+    | "codex-cli"
+    | "cursor"
+    | "fork";
   /** Source session id (e.g. the host runtime's session uuid). */
   sourceSessionId?: string;
   /** Working directory associated with the run. */
