@@ -1,5 +1,13 @@
 # Spool — Product Specification
 
+> **Looking for the current product?** This document is the **pre-build
+> vision** as drafted before any code was written. For an accurate
+> description of the product as it actually exists today (every CLI command,
+> every web page, the proxy, the design system, the data model as
+> implemented), read **[`SPEC-V0.2.md`](./SPEC-V0.2.md)**. This file is
+> preserved unchanged so original intent stays auditable against shipped
+> reality.
+>
 > **Working title.** "Spool" is a placeholder evoking capture, rewind, and threading runs together. Verify availability and trademark before any public surface. Other candidates: Spindle, Replay (taken — replay.io), Cassette, Stagecraft. Name is a v0-launch blocker, not a build blocker.
 >
 > **Status.** Pre-build. Spec written before code. Two kickoff gates (§18) must clear before week 1 of implementation.
