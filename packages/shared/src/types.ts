@@ -70,6 +70,7 @@ export interface Run {
     | "cursor"
     | "sdk-ts"
     | "sdk-py"
+    | "proxy"
     | "fork";
   title?: string;
   status: StepStatus;

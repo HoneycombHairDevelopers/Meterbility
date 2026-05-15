@@ -367,6 +367,112 @@ const STYLES = `
     border-color: transparent;
   }
 
+  /* ─── Seal-run control (split button: status picker + action) ──────
+     Used in the run detail header for in_progress runs. The whole thing
+     reads as one rounded segmented control: a status picker on the left,
+     a primary action on the right, joined visually by a hairline divider.
+     Status color tints the picker so the visual matches what'll be
+     written. */
+  .seal-control {
+    display: inline-flex;
+    align-items: stretch;
+    height: 30px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    overflow: hidden;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow var(--duration-fast) var(--ease-out);
+  }
+  .seal-control:hover { border-color: var(--border-strong); }
+  .seal-control:focus-within {
+    border-color: var(--cerulean-400);
+    box-shadow: var(--focus-ring);
+  }
+  .seal-status-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0 24px 0 12px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    line-height: 28px;
+    cursor: pointer;
+    /* Custom chevron — keeps the control compact without a browser caret. */
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 13px) 13px, calc(100% - 9px) 13px;
+    background-size: 4px 4px, 4px 4px;
+    background-repeat: no-repeat;
+    transition: color var(--duration-fast) var(--ease-out),
+                background-color var(--duration-fast) var(--ease-out);
+  }
+  .seal-status-select:focus { outline: none; box-shadow: none; }
+  .seal-status-select:hover { background-color: var(--surface-2); color: var(--text-primary); }
+  .seal-status-select[data-status="ok"]        { color: var(--mint-400); }
+  .seal-status-select[data-status="error"]     { color: var(--coral-400); }
+  .seal-status-select[data-status="abandoned"] { color: var(--amber-400); }
+  .seal-control > button.seal-action {
+    border: 0;
+    border-left: 1px solid var(--border-default);
+    border-radius: 0;
+    height: 100%;
+    padding: 0 14px;
+    background: transparent;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+  }
+  .seal-control > button.seal-action:hover {
+    background: var(--surface-2);
+    color: var(--cerulean-300);
+  }
+  .seal-control > button.seal-action svg { display: block; }
+
+  /* ─── Row-level seal (runs list) ─────────────────────────────────
+     Ghost button that fades in on row hover. Avoids visual noise on
+     long tables where most rows aren't actionable. */
+  .runs-table tbody tr .row-seal {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-tertiary);
+    padding: 4px 10px;
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    letter-spacing: 0.04em;
+    border-radius: var(--radius-sm);
+    opacity: 0.55;
+    transition: opacity var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out);
+  }
+  .runs-table tbody tr:hover .row-seal { opacity: 1; }
+  .runs-table tbody tr .row-seal:hover {
+    color: var(--mint-400);
+    border-color: var(--mint-400);
+    background: rgba(52, 211, 153, 0.08);
+  }
+  .runs-table tbody tr .row-seal::before {
+    content: "✓";
+    margin-right: 5px;
+    opacity: 0.7;
+  }
+
   /* ─── Inputs ────────────────────────────────────────────────────── */
   input, textarea, select {
     background: var(--surface-1);
@@ -1215,6 +1321,47 @@ async function submitAnnotation() {
   }
 }
 
+/* --- Run close (manual seal for in_progress runs) --- */
+async function closeRun(runId, status) {
+  const finalStatus = status || 'ok';
+  const label = runId.slice(0, 12);
+  if (!confirm('Close run ' + label + ' as "' + finalStatus + '"?\\n\\nProxy-captured runs stay in_progress until you close them — this is the manual seal.')) return;
+  try {
+    const res = await fetch('/api/runs/' + encodeURIComponent(runId) + '/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: finalStatus }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || ('HTTP ' + res.status));
+    }
+    location.reload();
+  } catch (err) {
+    alert('close failed: ' + err.message);
+  }
+}
+
+async function closeStaleRuns() {
+  const minStr = prompt('Close every in_progress run older than how many minutes?\\n\\n(Empty = 60. Use 0 to close all.)', '60');
+  if (minStr === null) return;
+  const minutes = minStr.trim() === '' ? 60 : parseInt(minStr, 10);
+  if (!Number.isFinite(minutes) || minutes < 0) { alert('not a number'); return; }
+  try {
+    const res = await fetch('/api/runs/close-stale', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ older_than_minutes: minutes, status: 'ok' }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const out = await res.json();
+    alert('closed ' + out.closed + ' run(s)');
+    location.reload();
+  } catch (err) {
+    alert('bulk close failed: ' + err.message);
+  }
+}
+
 /* --- Test editor --- */
 let currentTest = null;
 
@@ -1703,6 +1850,16 @@ export function renderRunList(
   const total = opts.totalAvailable ?? runs.length;
   const isFiltered =
     !!filters.status || !!filters.tool || !!filters.project;
+  // Bulk-seal action lives inside the filter bar's right-edge cluster —
+  // discoverable when needed but not claiming a row of its own. Only
+  // rendered when there's at least one in_progress run on the page.
+  const hasInProgress = runs.some((r) => r.status === "in_progress");
+  const bulkSeal = hasInProgress
+    ? `<button type="button" class="tertiary"
+        style="margin-left:8px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace"
+        title="Seal every in_progress run older than N minutes"
+        onclick="closeStaleRuns()">Seal stale…</button>`
+    : "";
   const filterBar = `<form id="runs-filter" method="get" action="/runs"
        style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
     <select name="status" onchange="this.form.submit()" style="font-family:ui-monospace,Menlo,monospace">
@@ -1722,8 +1879,8 @@ export function renderRunList(
       style="font-family:ui-monospace,Menlo,monospace;min-width:200px">
     <button type="submit" class="primary">Apply</button>
     ${isFiltered ? `<a href="/runs" style="font-size:12px">clear</a>` : ""}
-    <span style="margin-left:auto;font-size:12px;color:var(--fg-mute);font-family:ui-monospace,Menlo,monospace">
-      ${runs.length} of ${total} run(s)
+    <span style="margin-left:auto;display:inline-flex;align-items:center;font-size:12px;color:var(--fg-mute);font-family:ui-monospace,Menlo,monospace">
+      ${runs.length} of ${total} run(s)${bulkSeal}
     </span>
   </form>`;
 
@@ -1741,6 +1898,15 @@ export function renderRunList(
       const title = r.title ?? r.run_id;
       const project = projectLabel(r.cwd);
       const projectFull = r.cwd ?? "";
+      // Row-level seal — ghost button, fades in on row hover. Defaults
+      // to "ok"; the less-common error/abandoned cases are handled on
+      // the run detail page where the picker lives.
+      const actions =
+        r.status === "in_progress"
+          ? `<button class="row-seal" type="button"
+              title="Seal this run as ok (mostly for proxy-captured runs)"
+              onclick="closeRun('${esc(r.run_id)}', 'ok')">Seal</button>`
+          : "";
       return `<tr>
         <td>
           <a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}
@@ -1752,6 +1918,7 @@ export function renderRunList(
         <td class="mono">${esc(r.started_at)}</td>
         <td class="mono">${esc(r.git_branch ?? "")}</td>
         <td class="mono" title="${esc(projectFull)}">${esc(project)}</td>
+        <td>${actions}</td>
       </tr>`;
     })
     .join("");
@@ -1774,6 +1941,7 @@ export function renderRunList(
                 <th>Started</th>
                 <th>Branch</th>
                 <th>Project</th>
+                <th></th>
               </tr></thead>
               <tbody>${rows}</tbody>
             </table>
@@ -1908,9 +2076,38 @@ export function renderRun(
 
   const runtimeLabel =
     run.source_runtime === "fork" ? "Fork" : run.source_runtime;
+  // Seal control — only when the run is still in_progress. Status picker
+  // tints itself by selection (mint/coral/amber) so the visual matches
+  // what'll be written. The whole thing reads as one rounded segmented
+  // control instead of two unrelated form elements.
+  const closeButton =
+    run.status === "in_progress"
+      ? `<div class="seal-control" style="margin-left:auto"
+            title="Seal this run — sets ended_at + final status. Useful for proxy-captured runs that have no upstream end signal.">
+          <select class="seal-status-select"
+            id="close-status-${esc(run.run_id)}"
+            data-status="ok"
+            onchange="this.dataset.status=this.value"
+            aria-label="final status">
+            <option value="ok">ok</option>
+            <option value="error">error</option>
+            <option value="abandoned">abandoned</option>
+          </select>
+          <button class="seal-action" type="button"
+            onclick="closeRun('${esc(run.run_id)}', document.getElementById('close-status-${esc(run.run_id)}').value)">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M2.5 6.5l2.5 2.5 4.5-5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Seal run
+          </button>
+        </div>`
+      : "";
   return `<div style="margin-bottom:var(--space-6)">
       <div class="section-label">${esc(runtimeLabel)} · Run</div>
-      <h2 style="margin-top:0">${esc(run.title ?? run.run_id)}</h2>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">${esc(run.title ?? run.run_id)}</h2>
+        ${closeButton}
+      </div>
     </div>
     ${meta}
     ${timeline}

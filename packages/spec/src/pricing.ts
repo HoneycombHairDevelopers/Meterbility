@@ -62,6 +62,74 @@ export const PRICING: ModelPricing[] = [
     cache_creation_per_million_cents: 100,
     cache_creation_1h_per_million_cents: 160,
   },
+  // ── OpenAI ────────────────────────────────────────────────────────────
+  // OpenAI prompt caching exposes only one tier (no 5m/1h split), so the
+  // cache_creation rate matches input (writes are free), and cached_read
+  // gets the discounted rate. cache_creation_1h is N/A — left as 2× input
+  // by the costCents() fallback so the math doesn't break.
+  {
+    model: "gpt-5",
+    input_per_million_cents: 125,
+    output_per_million_cents: 1000,
+    cached_read_per_million_cents: 12,
+    cache_creation_per_million_cents: 125,
+  },
+  {
+    model: "gpt-5-mini",
+    input_per_million_cents: 25,
+    output_per_million_cents: 200,
+    cached_read_per_million_cents: 2,
+    cache_creation_per_million_cents: 25,
+  },
+  {
+    model: "gpt-4o",
+    input_per_million_cents: 250,
+    output_per_million_cents: 1000,
+    cached_read_per_million_cents: 125,
+    cache_creation_per_million_cents: 250,
+  },
+  {
+    model: "gpt-4o-mini",
+    input_per_million_cents: 15,
+    output_per_million_cents: 60,
+    cached_read_per_million_cents: 7,
+    cache_creation_per_million_cents: 15,
+  },
+  {
+    model: "gpt-4-turbo",
+    input_per_million_cents: 1000,
+    output_per_million_cents: 3000,
+    cached_read_per_million_cents: 500,
+    cache_creation_per_million_cents: 1000,
+  },
+  {
+    model: "o1",
+    input_per_million_cents: 1500,
+    output_per_million_cents: 6000,
+    cached_read_per_million_cents: 750,
+    cache_creation_per_million_cents: 1500,
+  },
+  {
+    model: "o1-mini",
+    input_per_million_cents: 110,
+    output_per_million_cents: 440,
+    cached_read_per_million_cents: 55,
+    cache_creation_per_million_cents: 110,
+  },
+  {
+    model: "o3",
+    input_per_million_cents: 1000,
+    output_per_million_cents: 4000,
+    cached_read_per_million_cents: 250,
+    cache_creation_per_million_cents: 1000,
+  },
+  {
+    model: "o3-mini",
+    input_per_million_cents: 110,
+    output_per_million_cents: 440,
+    cached_read_per_million_cents: 55,
+    cache_creation_per_million_cents: 110,
+  },
 ];
 
 export const PRICING_FALLBACK: ModelPricing = {

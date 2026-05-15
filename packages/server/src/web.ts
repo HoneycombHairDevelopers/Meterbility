@@ -11,6 +11,8 @@ import {
   listSteps,
   insertAnnotation,
   resolveSnapshotBlobRef,
+  setRunStatus,
+  updateRunTotals,
   getSetting,
   setSetting,
   deleteSetting,
@@ -261,6 +263,70 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const rb = getRun(store, b);
     if (!ra || !rb) return c.json({ error: "run not found" }, 404);
     return c.json(diffRuns(store, ra.run_id, rb.run_id));
+  });
+
+  // POST /api/runs/:id/close — manually seal an in_progress run.
+  // Used by the run detail page's "Close" button and by callers who
+  // want to finalize a proxy-captured run that has no upstream "end"
+  // signal. Body is optional: { status: "ok" | "error" | "abandoned" }
+  // (defaults to "ok"). Returns the updated Run row.
+  app.post("/api/runs/:id/close", async (c) => {
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.json({ error: "run not found" }, 404);
+    let status: Run["status"] = "ok";
+    try {
+      const body = (await c.req.json()) as { status?: string } | null;
+      if (body?.status) {
+        if (body.status !== "ok" && body.status !== "error" && body.status !== "abandoned") {
+          return c.json(
+            { error: `invalid status: ${body.status}. allowed: ok | error | abandoned` },
+            400,
+          );
+        }
+        status = body.status;
+      }
+    } catch {
+      // empty body / non-JSON body is fine — fall through with default status.
+    }
+    setRunStatus(store, run.run_id, status, new Date().toISOString());
+    updateRunTotals(store, run.run_id);
+    const updated = getRun(store, run.run_id);
+    return c.json(updated);
+  });
+
+  // POST /api/runs/close-stale — bulk-close every in_progress run whose
+  // last activity is older than `older_than_minutes` (default 60). Optional
+  // `source` filters to one source_runtime (e.g. "proxy"). Returns the
+  // count and the list of closed run ids. Idempotent.
+  app.post("/api/runs/close-stale", async (c) => {
+    let body: { older_than_minutes?: number; source?: string; status?: string } = {};
+    try {
+      body = ((await c.req.json()) as typeof body) ?? {};
+    } catch {
+      // empty body OK
+    }
+    const olderThanMin = body.older_than_minutes ?? 60;
+    const source = body.source;
+    const status: Run["status"] =
+      body.status === "error" || body.status === "abandoned" ? body.status : "ok";
+    const cutoffMs = Date.now() - olderThanMin * 60_000;
+    const all = listRuns(store, { limit: 1000 });
+    const targets = all.filter((r) => {
+      if (r.status !== "in_progress") return false;
+      if (source && r.source_runtime !== source) return false;
+      const startedMs = Date.parse(r.started_at);
+      return Number.isFinite(startedMs) && startedMs <= cutoffMs;
+    });
+    const now = new Date().toISOString();
+    for (const r of targets) {
+      setRunStatus(store, r.run_id, status, now);
+      updateRunTotals(store, r.run_id);
+    }
+    return c.json({
+      closed: targets.length,
+      run_ids: targets.map((r) => r.run_id),
+      status,
+    });
   });
 
   app.post("/api/annotate", async (c) => {
