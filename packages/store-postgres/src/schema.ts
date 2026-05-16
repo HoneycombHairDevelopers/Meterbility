@@ -12,7 +12,15 @@ import type { Client } from "pg";
  * the SQLite store as default; this exists for the deployments where
  * multiple operators share a project's run history.
  */
-export const POSTGRES_SCHEMA_VERSION = 3;
+/**
+ * Version history (mirrors `@spool/collector` SCHEMA_VERSION):
+ *   v3 → v4 — file_change + baseline_tree tables, runs.baseline_tree_id,
+ *             runs.probe_state. Per v0.3 §3.3, full enum coverage in
+ *             CHECK constraints up front so v0.4 / v0.5 don't need
+ *             migrations as new derived_from / op values come online.
+ *             Additive-only per v0.2 §17.
+ */
+export const POSTGRES_SCHEMA_VERSION = 4;
 
 export async function ensurePostgresSchema(client: Client): Promise<void> {
   await client.query(`
@@ -156,12 +164,86 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_regression_results_test
       ON regression_results(test_id, created_at DESC);
+
+    -- ─── v0.3 Track A: per-step file change capture (mirror) ──────────
+    -- See packages/collector/src/schema.ts for the design rationale.
+    CREATE TABLE IF NOT EXISTS file_change (
+      file_change_id      TEXT PRIMARY KEY,
+      run_id              TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+      step_id             TEXT NOT NULL REFERENCES steps(step_id) ON DELETE CASCADE,
+      sequence            INTEGER NOT NULL,
+      tool_call_id        TEXT,
+      derived_from        TEXT NOT NULL
+        CHECK (derived_from IN ('tool_call','filesystem_watch','git_diff')),
+      path                TEXT NOT NULL,
+      old_path            TEXT,
+      op                  TEXT NOT NULL
+        CHECK (op IN ('create','modify','delete','rename','chmod')),
+      before_blob_ref     TEXT,
+      after_blob_ref      TEXT,
+      partial_diff        BOOLEAN NOT NULL DEFAULT FALSE,
+      gitignored          BOOLEAN NOT NULL DEFAULT FALSE,
+      patch_text          TEXT,
+      patch_format        TEXT
+        CHECK (patch_format IN ('unified','binary','notebook_cell')
+               OR patch_format IS NULL),
+      encoding            TEXT,
+      bom                 BOOLEAN NOT NULL DEFAULT FALSE,
+      line_endings        TEXT,
+      mime                TEXT,
+      language            TEXT,
+      size_before         BIGINT,
+      size_after          BIGINT,
+      line_count_before   INTEGER,
+      line_count_after    INTEGER,
+      lines_added         INTEGER NOT NULL DEFAULT 0,
+      lines_removed       INTEGER NOT NULL DEFAULT 0,
+      mode_before         INTEGER,
+      mode_after          INTEGER,
+      source_tool_name    TEXT,
+      source_tool_input   JSONB,
+      redacted            BOOLEAN NOT NULL DEFAULT FALSE,
+      normalizer_notes    JSONB,
+      created_at          TIMESTAMPTZ NOT NULL,
+      UNIQUE(step_id, sequence)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fc_run_step
+      ON file_change(run_id, step_id);
+    CREATE INDEX IF NOT EXISTS idx_fc_run_path
+      ON file_change(run_id, path);
+    CREATE INDEX IF NOT EXISTS idx_fc_step
+      ON file_change(step_id);
+    CREATE INDEX IF NOT EXISTS idx_fc_path_seq
+      ON file_change(run_id, path, step_id);
+
+    -- ─── v0.3 Track A: baseline working tree (mirror) ─────────────────
+    CREATE TABLE IF NOT EXISTS baseline_tree (
+      baseline_tree_id    TEXT PRIMARY KEY,
+      project_id          TEXT NOT NULL REFERENCES projects(project_id),
+      manifest_blob_ref   TEXT NOT NULL,
+      git_head            TEXT,
+      git_dirty           BOOLEAN NOT NULL DEFAULT FALSE,
+      captured_at         TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_bt_project
+      ON baseline_tree(project_id);
+    CREATE INDEX IF NOT EXISTS idx_bt_git
+      ON baseline_tree(project_id, git_head);
   `);
 
   // Migrations from v2 → v3. ALTER TABLE ADD COLUMN IF NOT EXISTS is
   // standard Postgres, so this is naturally idempotent.
   await client.query(
     "ALTER TABLE steps ADD COLUMN IF NOT EXISTS tokens_cache_creation_1h BIGINT NOT NULL DEFAULT 0",
+  );
+
+  // v4 — Track A: link a run to its baseline working tree (nullable).
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS baseline_tree_id TEXT",
+  );
+  // v4 — Track B: Live Probe state (NULL = never probed).
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS probe_state TEXT",
   );
 
   const versionRow = await client.query(
