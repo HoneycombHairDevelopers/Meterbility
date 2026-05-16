@@ -3,8 +3,16 @@ import type {
   Action,
   Annotation,
   AnnotationVerdict,
+  BaselineTree,
+  FileChange,
+  FileChangeSource,
+  FileEncoding,
+  FileOp,
   ForkEdit,
+  LineEndings,
   Outcome,
+  PatchFormat,
+  ProbeState,
   Project,
   Run,
   Step,
@@ -33,6 +41,9 @@ interface RunRow {
   cost_cents: number;
   step_count: number;
   tags: string;
+  // v0.3 — Track A + Track B. Both nullable: most runs have neither.
+  baseline_tree_id: string | null;
+  probe_state: string | null;
 }
 
 interface StepRow {
@@ -80,6 +91,11 @@ function rowToRun(row: RunRow): Run {
     cost_cents: row.cost_cents,
     step_count: row.step_count,
     tags: JSON.parse(row.tags) as string[],
+    baseline_tree_id: row.baseline_tree_id ?? undefined,
+    probe_state:
+      row.probe_state === "paused" || row.probe_state === "resumed"
+        ? row.probe_state
+        : undefined,
   };
 }
 
@@ -165,8 +181,9 @@ export function insertRun(store: Store, run: Run): void {
         title, status, started_at, ended_at, git_branch, cwd,
         fork_origin_run_id, fork_origin_step_id,
         tokens_total_input, tokens_total_output, tokens_total_cached,
-        cost_cents, step_count, tags
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        cost_cents, step_count, tags,
+        baseline_tree_id, probe_state
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       run.run_id,
@@ -188,6 +205,8 @@ export function insertRun(store: Store, run: Run): void {
       run.cost_cents,
       run.step_count,
       JSON.stringify(run.tags ?? []),
+      run.baseline_tree_id ?? null,
+      run.probe_state ?? null,
     );
 }
 
@@ -544,4 +563,404 @@ export function aggregateTokens(steps: Step[]): TokenUsage {
       cache_creation_1h: 0,
     },
   );
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * v0.3 — file_change CRUD (Track A)
+ *
+ * Vendor-neutral row-level access. The Claude Code adapter, Codex
+ * adapter (v0.4), SDK helpers (v0.4), and proxy partials (v0.4) all
+ * funnel through `insertFileChange` so they share idempotency
+ * (UNIQUE(step_id, sequence)) and JSON-encoding semantics.
+ * ──────────────────────────────────────────────────────────────────── */
+
+interface FileChangeRow {
+  file_change_id: string;
+  run_id: string;
+  step_id: string;
+  sequence: number;
+  tool_call_id: string | null;
+  derived_from: string;
+  path: string;
+  old_path: string | null;
+  op: string;
+  before_blob_ref: string | null;
+  after_blob_ref: string | null;
+  partial_diff: number;
+  gitignored: number;
+  patch_text: string | null;
+  patch_format: string | null;
+  encoding: string | null;
+  bom: number;
+  line_endings: string | null;
+  mime: string | null;
+  language: string | null;
+  size_before: number | null;
+  size_after: number | null;
+  line_count_before: number | null;
+  line_count_after: number | null;
+  lines_added: number;
+  lines_removed: number;
+  mode_before: number | null;
+  mode_after: number | null;
+  source_tool_name: string | null;
+  source_tool_input: string | null;
+  redacted: number;
+  normalizer_notes: string | null;
+  created_at: string;
+}
+
+function rowToFileChange(row: FileChangeRow): FileChange {
+  return {
+    file_change_id: row.file_change_id,
+    run_id: row.run_id,
+    step_id: row.step_id,
+    sequence: row.sequence,
+    tool_call_id: row.tool_call_id ?? undefined,
+    derived_from: row.derived_from as FileChangeSource,
+    path: row.path,
+    old_path: row.old_path ?? undefined,
+    op: row.op as FileOp,
+    before_blob_ref: row.before_blob_ref ?? undefined,
+    after_blob_ref: row.after_blob_ref ?? undefined,
+    partial_diff: row.partial_diff === 1,
+    gitignored: row.gitignored === 1,
+    patch_text: row.patch_text ?? undefined,
+    patch_format: (row.patch_format as PatchFormat | null) ?? undefined,
+    encoding: (row.encoding as FileEncoding | null) ?? undefined,
+    bom: row.bom === 1,
+    line_endings: (row.line_endings as LineEndings | null) ?? undefined,
+    mime: row.mime ?? undefined,
+    language: row.language ?? undefined,
+    size_before: row.size_before ?? undefined,
+    size_after: row.size_after ?? undefined,
+    line_count_before: row.line_count_before ?? undefined,
+    line_count_after: row.line_count_after ?? undefined,
+    lines_added: row.lines_added,
+    lines_removed: row.lines_removed,
+    mode_before: row.mode_before ?? undefined,
+    mode_after: row.mode_after ?? undefined,
+    source_tool_name: row.source_tool_name ?? undefined,
+    source_tool_input: row.source_tool_input
+      ? safeJsonParse(row.source_tool_input)
+      : undefined,
+    redacted: row.redacted === 1,
+    normalizer_notes: row.normalizer_notes
+      ? safeJsonParse(row.normalizer_notes)
+      : undefined,
+    created_at: row.created_at,
+  };
+}
+
+function safeJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return s; // pass through raw if it isn't JSON
+  }
+}
+
+/**
+ * Insert a FileChange row. ID auto-generated if not provided.
+ *
+ * Idempotency: the schema's `UNIQUE(step_id, sequence)` constraint
+ * means writing the same logical FileChange twice will fail loudly.
+ * Adapters should compute deterministic `(step_id, sequence)` so a
+ * re-ingest of the same JSONL session doesn't duplicate rows.
+ *
+ * `created_at` defaults to "now" if omitted — adapters usually want
+ * this since they don't have a per-FileChange wall-clock from the
+ * source.
+ */
+export function insertFileChange(
+  store: Store,
+  fc: Omit<FileChange, "file_change_id" | "created_at"> & {
+    file_change_id?: string;
+    created_at?: string;
+  },
+): FileChange {
+  const id = fc.file_change_id ?? `fc_${randomUUID()}`;
+  const created = fc.created_at ?? new Date().toISOString();
+  store.db
+    .prepare(
+      `INSERT INTO file_change(
+        file_change_id, run_id, step_id, sequence,
+        tool_call_id, derived_from, path, old_path, op,
+        before_blob_ref, after_blob_ref,
+        partial_diff, gitignored,
+        patch_text, patch_format,
+        encoding, bom, line_endings, mime, language,
+        size_before, size_after, line_count_before, line_count_after,
+        lines_added, lines_removed,
+        mode_before, mode_after,
+        source_tool_name, source_tool_input,
+        redacted, normalizer_notes, created_at
+       ) VALUES (
+         ?, ?, ?, ?,
+         ?, ?, ?, ?, ?,
+         ?, ?,
+         ?, ?,
+         ?, ?,
+         ?, ?, ?, ?, ?,
+         ?, ?, ?, ?,
+         ?, ?,
+         ?, ?,
+         ?, ?,
+         ?, ?, ?
+       )`,
+    )
+    .run(
+      id,
+      fc.run_id,
+      fc.step_id,
+      fc.sequence,
+      fc.tool_call_id ?? null,
+      fc.derived_from,
+      fc.path,
+      fc.old_path ?? null,
+      fc.op,
+      fc.before_blob_ref ?? null,
+      fc.after_blob_ref ?? null,
+      fc.partial_diff ? 1 : 0,
+      fc.gitignored ? 1 : 0,
+      fc.patch_text ?? null,
+      fc.patch_format ?? null,
+      fc.encoding ?? null,
+      fc.bom ? 1 : 0,
+      fc.line_endings ?? null,
+      fc.mime ?? null,
+      fc.language ?? null,
+      fc.size_before ?? null,
+      fc.size_after ?? null,
+      fc.line_count_before ?? null,
+      fc.line_count_after ?? null,
+      fc.lines_added,
+      fc.lines_removed,
+      fc.mode_before ?? null,
+      fc.mode_after ?? null,
+      fc.source_tool_name ?? null,
+      fc.source_tool_input !== undefined
+        ? JSON.stringify(fc.source_tool_input)
+        : null,
+      fc.redacted ? 1 : 0,
+      fc.normalizer_notes !== undefined
+        ? JSON.stringify(fc.normalizer_notes)
+        : null,
+      created,
+    );
+  return {
+    file_change_id: id,
+    run_id: fc.run_id,
+    step_id: fc.step_id,
+    sequence: fc.sequence,
+    tool_call_id: fc.tool_call_id,
+    derived_from: fc.derived_from,
+    path: fc.path,
+    old_path: fc.old_path,
+    op: fc.op,
+    before_blob_ref: fc.before_blob_ref,
+    after_blob_ref: fc.after_blob_ref,
+    partial_diff: fc.partial_diff,
+    gitignored: fc.gitignored,
+    patch_text: fc.patch_text,
+    patch_format: fc.patch_format,
+    encoding: fc.encoding,
+    bom: fc.bom,
+    line_endings: fc.line_endings,
+    mime: fc.mime,
+    language: fc.language,
+    size_before: fc.size_before,
+    size_after: fc.size_after,
+    line_count_before: fc.line_count_before,
+    line_count_after: fc.line_count_after,
+    lines_added: fc.lines_added,
+    lines_removed: fc.lines_removed,
+    mode_before: fc.mode_before,
+    mode_after: fc.mode_after,
+    source_tool_name: fc.source_tool_name,
+    source_tool_input: fc.source_tool_input,
+    redacted: fc.redacted,
+    normalizer_notes: fc.normalizer_notes,
+    created_at: created,
+  };
+}
+
+export interface ListFileChangesOpts {
+  runId?: string;
+  stepId?: string;
+  path?: string;
+  /**
+   * Used by the replay algorithm: include only FileChanges for steps
+   * with sequence < this value. Implemented via a join on `steps`. If
+   * `runId` is also given, the join is scoped to that run.
+   */
+  maxStepSeqExclusive?: number;
+}
+
+/**
+ * Sort order is `(step.sequence ASC, file_change.sequence ASC)` which
+ * matches the replay algorithm's contract (v0.3 §3.6): later steps win
+ * over earlier ones, and within a step, the intra-step `sequence` field
+ * preserves atomic-batch ordering (MultiEdit fans out N rows in order).
+ */
+export function listFileChanges(
+  store: Store,
+  opts: ListFileChangesOpts = {},
+): FileChange[] {
+  const params: unknown[] = [];
+  let where = "1=1";
+  if (opts.runId) {
+    where += " AND fc.run_id = ?";
+    params.push(opts.runId);
+  }
+  if (opts.stepId) {
+    where += " AND fc.step_id = ?";
+    params.push(opts.stepId);
+  }
+  if (opts.path) {
+    where += " AND (fc.path = ? OR fc.old_path = ?)";
+    params.push(opts.path, opts.path);
+  }
+  if (opts.maxStepSeqExclusive !== undefined) {
+    where += " AND s.sequence < ?";
+    params.push(opts.maxStepSeqExclusive);
+  }
+  const rows = store.db
+    .prepare(
+      `SELECT fc.*
+         FROM file_change fc
+         JOIN steps s ON s.step_id = fc.step_id
+        WHERE ${where}
+        ORDER BY s.sequence ASC, fc.sequence ASC`,
+    )
+    .all(...params) as FileChangeRow[];
+  return rows.map(rowToFileChange);
+}
+
+export function getFileChange(
+  store: Store,
+  fileChangeId: string,
+): FileChange | undefined {
+  const row = store.db
+    .prepare("SELECT * FROM file_change WHERE file_change_id = ?")
+    .get(fileChangeId) as FileChangeRow | undefined;
+  return row ? rowToFileChange(row) : undefined;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * v0.3 — baseline_tree CRUD + run-state setters
+ * ──────────────────────────────────────────────────────────────────── */
+
+interface BaselineTreeRow {
+  baseline_tree_id: string;
+  project_id: string;
+  manifest_blob_ref: string;
+  git_head: string | null;
+  git_dirty: number;
+  captured_at: string;
+}
+
+function rowToBaselineTree(row: BaselineTreeRow): BaselineTree {
+  return {
+    baseline_tree_id: row.baseline_tree_id,
+    project_id: row.project_id,
+    manifest_blob_ref: row.manifest_blob_ref,
+    git_head: row.git_head ?? undefined,
+    git_dirty: row.git_dirty === 1,
+    captured_at: row.captured_at,
+  };
+}
+
+export function insertBaselineTree(
+  store: Store,
+  bt: Omit<BaselineTree, "baseline_tree_id" | "captured_at"> & {
+    baseline_tree_id?: string;
+    captured_at?: string;
+  },
+): BaselineTree {
+  const id = bt.baseline_tree_id ?? `bt_${randomUUID()}`;
+  const captured = bt.captured_at ?? new Date().toISOString();
+  store.db
+    .prepare(
+      `INSERT INTO baseline_tree(
+         baseline_tree_id, project_id, manifest_blob_ref,
+         git_head, git_dirty, captured_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      bt.project_id,
+      bt.manifest_blob_ref,
+      bt.git_head ?? null,
+      bt.git_dirty ? 1 : 0,
+      captured,
+    );
+  return {
+    baseline_tree_id: id,
+    project_id: bt.project_id,
+    manifest_blob_ref: bt.manifest_blob_ref,
+    git_head: bt.git_head,
+    git_dirty: bt.git_dirty,
+    captured_at: captured,
+  };
+}
+
+export function getBaselineTree(
+  store: Store,
+  baselineTreeId: string,
+): BaselineTree | undefined {
+  const row = store.db
+    .prepare("SELECT * FROM baseline_tree WHERE baseline_tree_id = ?")
+    .get(baselineTreeId) as BaselineTreeRow | undefined;
+  return row ? rowToBaselineTree(row) : undefined;
+}
+
+/**
+ * Find an existing baseline_tree row by its manifest blob ref — useful
+ * during baseline capture so two runs against the same git HEAD don't
+ * create two rows pointing at the same content. v0.3 §3.5 calls this
+ * out as the dominant dedup win.
+ */
+export function findBaselineByManifest(
+  store: Store,
+  projectId: string,
+  manifestBlobRef: string,
+): BaselineTree | undefined {
+  const row = store.db
+    .prepare(
+      "SELECT * FROM baseline_tree WHERE project_id = ? AND manifest_blob_ref = ? LIMIT 1",
+    )
+    .get(projectId, manifestBlobRef) as BaselineTreeRow | undefined;
+  return row ? rowToBaselineTree(row) : undefined;
+}
+
+/**
+ * Attach a baseline tree to a run. Idempotent: passing the same id
+ * twice is a no-op. Passing a different id overwrites (the assumption
+ * being that the adapter re-walked the cwd and produced a new
+ * manifest — rare but legal).
+ */
+export function setRunBaselineTree(
+  store: Store,
+  runId: string,
+  baselineTreeId: string,
+): void {
+  store.db
+    .prepare("UPDATE runs SET baseline_tree_id = ? WHERE run_id = ?")
+    .run(baselineTreeId, runId);
+}
+
+/**
+ * Set the Live Probe state on a run. Pass `null` to clear. v0.3 §4 —
+ * only meaningful for source_runtime in (sdk-ts, sdk-py); callers are
+ * responsible for that guard.
+ */
+export function setRunProbeState(
+  store: Store,
+  runId: string,
+  state: ProbeState | null,
+): void {
+  store.db
+    .prepare("UPDATE runs SET probe_state = ? WHERE run_id = ?")
+    .run(state, runId);
 }
