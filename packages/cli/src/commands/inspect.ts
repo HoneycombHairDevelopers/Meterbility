@@ -5,11 +5,18 @@ import {
   getStep,
   getStepBySequence,
   listAnnotations,
+  listFileChanges,
   listForks,
   listSteps,
   resolveSnapshotBlobRef,
 } from "@spool/collector";
-import type { ContextSnapshot, ConversationMessage, RetrievedDocument, Step } from "@spool/shared";
+import type {
+  ContextSnapshot,
+  ConversationMessage,
+  FileOp,
+  RetrievedDocument,
+  Step,
+} from "@spool/shared";
 import {
   actionLabel,
   fmtCents,
@@ -25,12 +32,16 @@ export function registerInspectCommand(program: Command): void {
     .option("--at <seq-or-step-id>", "Open a specific step")
     .option(
       "--show <tab>",
-      "Tab to print (context|decision|action|outcome|cost|all)",
+      "Tab to print (context|decision|action|outcome|cost|files|all)",
       "all",
+    )
+    .option(
+      "--diff",
+      "When `--show files`, print the unified diff for each captured file",
     )
     .action(async (
       runId: string,
-      opts: { at?: string; show: string },
+      opts: { at?: string; show: string; diff?: boolean },
     ) => {
       const store = openStore();
       try {
@@ -66,7 +77,7 @@ export function registerInspectCommand(program: Command): void {
             ? getStepBySequence(store, run.run_id, seq)
             : getStep(store, opts.at);
           if (!step) throw new Error(`step not found: ${opts.at}`);
-          await printStep(store, step, opts.show);
+          await printStep(store, step, opts.show, opts.diff === true);
         } else {
           console.log("");
           for (const s of steps) await printStepSummary(s);
@@ -136,6 +147,7 @@ async function printStep(
   store: import("@spool/collector").Store,
   step: Step,
   show: string,
+  withDiff = false,
 ): Promise<void> {
   console.log(pc.bold(`\nStep #${step.sequence}  ${pc.dim(step.step_id)}`));
   console.log(`  ${pc.dim("model")} ${step.model}`);
@@ -184,6 +196,75 @@ async function printStep(
         ),
       ),
     );
+  }
+  if (showAll || show === "files") {
+    await printStepFiles(store, step, withDiff);
+  }
+}
+
+/**
+ * v0.3 — render the FileChange rows attached to a step. Skipped when
+ * the step produced no captures (the common case for read-only steps
+ * like Read/Glob/Grep). When `withDiff` is true, also colorize and
+ * print the unified diff body for each captured row — same colorizer
+ * the `spool files --diff` view uses, so the muscle memory transfers.
+ */
+async function printStepFiles(
+  store: import("@spool/collector").Store,
+  step: Step,
+  withDiff: boolean,
+): Promise<void> {
+  const fcs = listFileChanges(store, { stepId: step.step_id });
+  if (fcs.length === 0) {
+    if (withDiff) {
+      console.log(pc.bold("\n  files"));
+      console.log(indent(pc.dim("(no file changes captured for this step)")));
+    }
+    return;
+  }
+  console.log(
+    pc.bold("\n  files") +
+      pc.dim(`  · ${fcs.length} change${fcs.length === 1 ? "" : "s"}`),
+  );
+  for (const fc of fcs) {
+    const renderedPath =
+      fc.op === "rename" && fc.old_path ? `${fc.old_path} → ${fc.path}` : fc.path;
+    const flags: string[] = [];
+    if (fc.partial_diff) flags.push(pc.yellow("partial"));
+    if (fc.patch_format === "binary") flags.push(pc.dim("binary"));
+    const stats = `${fc.lines_added === 0 ? "+0" : pc.green(`+${fc.lines_added}`)} ${fc.lines_removed === 0 ? "−0" : pc.red(`−${fc.lines_removed}`)}`;
+    console.log(
+      `    ${opTagInline(fc.op)}  ${renderedPath.padEnd(30)}  ${stats}${flags.length ? "  " + flags.join(" ") : ""}`,
+    );
+    if (withDiff && fc.patch_text) {
+      for (const line of fc.patch_text.split("\n")) {
+        if (line.startsWith("@@")) console.log(indent(pc.cyan(line), "      "));
+        else if (line.startsWith("+") && !line.startsWith("+++"))
+          console.log(indent(pc.green(line), "      "));
+        else if (line.startsWith("-") && !line.startsWith("---"))
+          console.log(indent(pc.red(line), "      "));
+        else console.log(indent(line, "      "));
+      }
+    } else if (withDiff && fc.partial_diff) {
+      console.log(
+        indent(
+          pc.yellow(
+            "(partial — ran outside captured tools; enable `spool watch --files` in v0.4 for full fidelity)",
+          ),
+          "      ",
+        ),
+      );
+    }
+  }
+}
+
+function opTagInline(op: FileOp): string {
+  switch (op) {
+    case "create": return pc.green("A");
+    case "modify": return pc.yellow("M");
+    case "delete": return pc.red("D");
+    case "rename": return pc.magenta("R");
+    case "chmod":  return pc.dim("X");
   }
 }
 
