@@ -70,10 +70,31 @@ export interface ClaudeSystemRecord extends ClaudeRecordBase {
   messageCount?: number;
 }
 
+/**
+ * v0.3 file-history-snapshot record (SPEC §3.4). Claude Code writes
+ * one of these immediately before each modifying assistant turn — the
+ * `trackedFileBackups` map names a backup blob per file the turn is
+ * about to touch.
+ *
+ * `messageId` points at the assistant message that will follow. We use
+ * it to attribute the captured pre-edit bytes to a specific Step.
+ *
+ * `backupFileName: null` means "this file did not previously exist"
+ * (i.e., the upcoming `op` is `create`). Non-null is the SHA Claude
+ * chose at backup time; the file lives at
+ * `<claudeFileHistoryDir>/<backupFileName>`.
+ */
+export interface ClaudeFileHistorySnapshotRecord extends ClaudeRecordBase {
+  type: "file-history-snapshot";
+  messageId: string;
+  trackedFileBackups: Record<string, { backupFileName: string | null }>;
+}
+
 export type ClaudeRecord =
   | ClaudeUserRecord
   | ClaudeAssistantRecord
   | ClaudeSystemRecord
+  | ClaudeFileHistorySnapshotRecord
   | (ClaudeRecordBase & { type: string });
 
 export function isAssistant(r: ClaudeRecord): r is ClaudeAssistantRecord {
@@ -82,4 +103,17 @@ export function isAssistant(r: ClaudeRecord): r is ClaudeAssistantRecord {
 
 export function isUser(r: ClaudeRecord): r is ClaudeUserRecord {
   return r.type === "user";
+}
+
+/**
+ * Discriminator-first guard. The spec calls out that
+ * `file-history-snapshot.messageId` occasionally collides with a real
+ * message `uuid` — so we check `type` BEFORE we read any other field,
+ * and never key off `messageId` without first confirming the record is
+ * a snapshot.
+ */
+export function isFileHistorySnapshot(
+  r: ClaudeRecord,
+): r is ClaudeFileHistorySnapshotRecord {
+  return r.type === "file-history-snapshot";
 }

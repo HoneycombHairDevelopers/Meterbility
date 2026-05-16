@@ -16,6 +16,7 @@ import { costCents } from "@spool/spec";
 import {
   getIngestOffset,
   getRunBySessionId,
+  insertFileChange,
   insertRun,
   insertStep,
   recordContextSnapshot,
@@ -36,14 +37,26 @@ import {
   type ClaudeRecord,
   type ClaudeUserRecord,
 } from "./types.ts";
+import { extractFileChanges, type BackupReader } from "./file_changes.ts";
 
 const SOURCE_RUNTIME = "claude-code" as const;
 
 export interface IngestResult {
   run_id: string;
   steps_added: number;
+  /** v0.3 — count of FileChange rows captured this ingest. */
+  file_changes_added: number;
   bytes_read: number;
   status: "ok" | "empty";
+}
+
+export interface IngestOptions {
+  /**
+   * v0.3 — override the file-history backup reader. Production code
+   * uses the default (`fsBackupReader`); tests inject an in-memory
+   * map so they don't need to touch ~/.claude.
+   */
+  readBackup?: BackupReader;
 }
 
 /**
@@ -60,11 +73,18 @@ export interface IngestResult {
 export async function ingestSession(
   store: Store,
   path: string,
+  opts: IngestOptions = {},
 ): Promise<IngestResult> {
   const offset = getIngestOffset(store, SOURCE_RUNTIME, path);
   const records = await readSessionFromOffset(path, offset);
   if (records.length === 0) {
-    return { run_id: "", steps_added: 0, bytes_read: 0, status: "empty" };
+    return {
+      run_id: "",
+      steps_added: 0,
+      file_changes_added: 0,
+      bytes_read: 0,
+      status: "empty",
+    };
   }
   const fileStat = await stat(path);
   const fullSize = fileStat.size;
@@ -109,6 +129,15 @@ export async function ingestSession(
     insertRun(store, run);
   }
 
+  // Populated as steps yield: maps every assistant-record uuid in a
+  // grouped Step to that step's id + sequence. The file-change
+  // extractor needs this to attribute FileChanges to the right Step
+  // via the file-history-snapshot.messageId linkage (SPEC §3.4).
+  const stepByAssistantUuid = new Map<
+    string,
+    { step_id: string; sequence: number }
+  >();
+
   let stepsAdded = 0;
   const result = buildSteps({
     records: allRecords,
@@ -119,11 +148,53 @@ export async function ingestSession(
     },
     onDecisionContent: async (content) => store.blobs.putJson(content),
     onToolResult: async (content) => store.blobs.putJson(content),
+    onStepBuilt: (step, assistantUuids) => {
+      for (const uuid of assistantUuids) {
+        stepByAssistantUuid.set(uuid, {
+          step_id: step.step_id,
+          sequence: step.sequence,
+        });
+      }
+    },
   });
 
   for await (const step of result) {
     insertStep(store, step);
     stepsAdded += 1;
+  }
+
+  // v0.3 — extract FileChanges per modifying step. Idempotent: the
+  // schema's UNIQUE(step_id, sequence) prevents double-insertion if the
+  // session gets re-ingested. We catch & log per-row errors so one
+  // malformed tool_input can't sink the whole ingest.
+  let fileChangesAdded = 0;
+  if (stepByAssistantUuid.size > 0) {
+    const fileChanges = await extractFileChanges({
+      records: allRecords,
+      stepByAssistantUuid,
+      runId,
+      cwd: meta.cwd ?? "",
+      sessionId: sessionId ?? "",
+      blobs: store.blobs,
+      readBackup: opts.readBackup,
+    });
+    for (const fc of fileChanges) {
+      try {
+        insertFileChange(store, fc);
+        fileChangesAdded += 1;
+      } catch (err) {
+        // UNIQUE constraint failures on idempotent re-ingest are
+        // expected and silent; anything else gets logged but does not
+        // abort the run.
+        const msg = (err as Error).message ?? "";
+        if (!msg.includes("UNIQUE constraint failed")) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[spool] file_change insert failed for step ${fc.step_id}: ${msg}`,
+          );
+        }
+      }
+    }
   }
 
   // Detect terminal status. If the final record is an assistant message
@@ -139,6 +210,7 @@ export async function ingestSession(
   return {
     run_id: runId,
     steps_added: stepsAdded,
+    file_changes_added: fileChangesAdded,
     bytes_read: fullSize - offset,
     status: "ok",
   };
@@ -275,6 +347,13 @@ interface BuildArgs {
   onToolResult: (
     content: string | ClaudeContentBlock[],
   ) => Promise<string>;
+  /**
+   * v0.3 — fires for each yielded Step with the list of assistant-record
+   * uuids that contributed to it. The grouping logic collapses multiple
+   * assistant records (per-content-block emissions sharing a requestId)
+   * into one Step, so this is a 1-to-N relationship.
+   */
+  onStepBuilt?: (step: Step, assistantUuids: string[]) => void;
 }
 
 /**
@@ -287,7 +366,14 @@ interface BuildArgs {
  * which is what's most actionable to a debugging operator.
  */
 async function* buildSteps(args: BuildArgs): AsyncGenerator<Step> {
-  const { records, runId, onSnapshot, onDecisionContent, onToolResult } = args;
+  const {
+    records,
+    runId,
+    onSnapshot,
+    onDecisionContent,
+    onToolResult,
+    onStepBuilt,
+  } = args;
 
   // Index records by uuid so parentUuid lookups are O(1).
   const byUuid = new Map<string, ParsedRecord>();
@@ -415,6 +501,12 @@ async function* buildSteps(args: BuildArgs): AsyncGenerator<Step> {
     };
     prevStepId = stepId;
     sequence += 1;
+    if (onStepBuilt) {
+      const uuids = group.recs
+        .map((r) => r.uuid)
+        .filter((u): u is string => typeof u === "string");
+      onStepBuilt(step, uuids);
+    }
     yield step;
   }
 }
