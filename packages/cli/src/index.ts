@@ -19,6 +19,7 @@ import { registerOpenCommand } from "./commands/open.ts";
 import { registerProxyCommand } from "./commands/proxy.ts";
 import { registerRunCommand } from "./commands/run.ts";
 import { registerRunsCommand } from "./commands/runs.ts";
+import { registerInitCommand } from "./commands/init.ts";
 
 const program = new Command();
 program
@@ -44,6 +45,7 @@ registerOpenCommand(program);
 registerProxyCommand(program);
 registerRunCommand(program);
 registerRunsCommand(program);
+registerInitCommand(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red("error: ") + (err as Error).message);

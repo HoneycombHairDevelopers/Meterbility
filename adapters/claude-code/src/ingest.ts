@@ -14,13 +14,16 @@ import type {
 import { hashJson } from "@spool/shared";
 import { costCents } from "@spool/spec";
 import {
+  captureBaseline,
   getIngestOffset,
+  getRun,
   getRunBySessionId,
   insertFileChange,
   insertRun,
   insertStep,
   recordContextSnapshot,
   setIngestOffset,
+  setRunBaselineTree,
   setRunStatus,
   updateRunTotals,
   upsertAgent,
@@ -57,6 +60,15 @@ export interface IngestOptions {
    * map so they don't need to touch ~/.claude.
    */
   readBackup?: BackupReader;
+  /**
+   * v0.3 — when true (the default), the first FileChange-producing
+   * step in a run with no `baseline_tree_id` triggers a baseline walk
+   * of `cwd`. Tests that don't want the walk (e.g. specs that use a
+   * fictitious cwd like `/tmp/proj`) can pass `false` and the run
+   * proceeds without a baseline. `workingTreeAt` will return just the
+   * FileChange delta in that case.
+   */
+  captureBaseline?: boolean;
 }
 
 /**
@@ -178,6 +190,38 @@ export async function ingestSession(
       blobs: store.blobs,
       readBackup: opts.readBackup,
     });
+    // v0.3 §3.5 — lazy baseline capture. Trigger when we have at least
+    // one FileChange to write AND the run doesn't already have a
+    // baseline_tree_id. The walk happens once per run (subsequent
+    // re-ingests see the existing id and skip). Failure is non-fatal:
+    // a missing cwd or unreadable repo just leaves baseline_tree_id
+    // unset, and `workingTreeAt` falls back to the delta-only view.
+    if (
+      fileChanges.length > 0 &&
+      opts.captureBaseline !== false &&
+      meta.cwd
+    ) {
+      const runRow = getRun(store, runId);
+      if (!runRow?.baseline_tree_id) {
+        try {
+          const baseline = await captureBaseline(
+            store,
+            project.project_id,
+            meta.cwd,
+          );
+          if (baseline) {
+            setRunBaselineTree(store, runId, baseline.baseline_tree_id);
+          }
+        } catch (err) {
+          // Walking the cwd is best-effort. Log and continue — losing
+          // the baseline only weakens replay, never breaks ingest.
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[spool] baseline capture failed for cwd ${meta.cwd}: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
     for (const fc of fileChanges) {
       try {
         insertFileChange(store, fc);

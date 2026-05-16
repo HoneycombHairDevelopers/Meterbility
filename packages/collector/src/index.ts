@@ -4,3 +4,4 @@ export * from "./schema.ts";
 export * from "./queries.ts";
 export * from "./settings.ts";
 export * from "./replay.ts";
+export * from "./baseline.ts";
