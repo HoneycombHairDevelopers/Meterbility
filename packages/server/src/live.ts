@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
 import { claudeProjectsRoot } from "@spool/shared";
 import { ingestSession, discoverSessions } from "@spool/claude-code-adapter";
 import {
@@ -136,14 +135,6 @@ export class LiveInspector extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    if (!existsSync(this.opts.projectsRoot)) {
-      // Nothing to watch — emit empty fleet snapshot and bail; the loop
-      // can still tick in case the directory appears later.
-      this.emit("data", {
-        type: "fleet:snapshot",
-        entries: [],
-      } satisfies LiveEvent);
-    }
     // First tick = silent backfill. Populate every internal map (knownPaths,
     // lastSizes, lastStepCounts, lastStatus, firedAlerts) without firing
     // run:created / run:completed / alert events. Otherwise startup floods
