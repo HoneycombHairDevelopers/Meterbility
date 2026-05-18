@@ -48,7 +48,7 @@ from .actions import (
 from .paths import spool_home, db_path, blob_root, blob_path
 from .probe import (
     ProbeRecord,
-    ProbeState,
+    ProbeFsmState,
     clear_probe,
     confirm_paused,
     consume_inject,
@@ -75,7 +75,7 @@ __all__ = [
     "blob_path",
     # Probe protocol (cross-language file format).
     "ProbeRecord",
-    "ProbeState",
+    "ProbeFsmState",
     "clear_probe",
     "confirm_paused",
     "consume_inject",

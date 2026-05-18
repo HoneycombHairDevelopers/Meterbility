@@ -1,8 +1,15 @@
 import { EventEmitter } from "node:events";
-import { claudeProjectsRoot } from "@spool/shared";
+import { existsSync } from "node:fs";
+import {
+  claudeProjectsRoot,
+  probeFilePath,
+  readState as readProbeState,
+} from "@spool/shared";
+import type { ProbeFsmState } from "@spool/shared";
 import { ingestSession, discoverSessions } from "@spool/claude-code-adapter";
 import {
   getRun,
+  listFileChanges,
   listRuns,
   listSteps,
 } from "@spool/collector";
@@ -36,6 +43,44 @@ export type LiveEvent =
       kind: "loop" | "stall" | "context_threshold" | "tool_called";
       message: string;
       meta?: Record<string, unknown>;
+    }
+  /**
+   * v0.3 §8.5 — fired once per step whose ingest produced one or more
+   * file_change rows. `paths` is the unique path set (deduped across
+   * old/new for renames); `partial` is true iff any row in the batch
+   * has `partial_diff = true` (e.g. Bash stubs).
+   */
+  | {
+      type: "files:changed";
+      run_id: string;
+      step_id: string;
+      paths: string[];
+      partial: boolean;
+    }
+  /**
+   * v0.3 §4.9 — fired on the `pause_requested → paused` transition,
+   * i.e. the moment the SDK actually blocked. `step_id` is the last
+   * step the inspector observed before the pause acknowledgment, the
+   * closest signal we have for "the step that would have started next."
+   */
+  | {
+      type: "run:paused";
+      run_id: string;
+      step_id: string | null;
+      paused_at: string;
+    }
+  /**
+   * v0.3 §4.9 — fired on the `paused | pause_requested → running`
+   * transition. `edits` counts distinct non-null inject values the
+   * inspector observed during the paused window. Best-effort: an
+   * inject queued and consumed entirely between two ticks won't be
+   * counted. Document, don't gold-plate.
+   */
+  | {
+      type: "run:resumed";
+      run_id: string;
+      edits: number;
+      resumed_at: string;
     };
 
 export interface FleetEntry {
@@ -114,6 +159,38 @@ export function buildFleetEntries(
   });
 }
 
+/**
+ * Per-run probe bookkeeping for `run:paused` / `run:resumed` emission.
+ * We poll the probe file once per tick. Detection is timestamp-based
+ * rather than state-edge-based, because a full pause→ack→resume cycle
+ * can complete within a single 1500ms tick — observing only
+ * `state → state` would silently drop those cycles. Comparing the
+ * record's `paused_at_ms` / `resumed_at_ms` against what we saw last
+ * tick lets us still emit both events even when the state column
+ * lands back at `running`.
+ */
+interface ProbeTrack {
+  state: ProbeFsmState;
+  /** Distinct non-null inject values observed during the current paused
+   *  window. Reset on window entry (running → pause_requested or
+   *  pause_requested → paused for the first time) and on `run:resumed`
+   *  emission. */
+  edits: number;
+  /** The last inject value we saw, used to dedupe sticky values across
+   *  ticks (a queued inject that hasn't been consumed yet shouldn't
+   *  count twice just because we re-read it). */
+  lastInject: string | null;
+  /** The most recent `paused_at_ms` we've already emitted on. A new
+   *  pause is detected by `record.paused_at_ms !== lastPausedAtMs`. */
+  lastPausedAtMs: number | null;
+  /** Same idea for resume — separate field because resume's timestamp
+   *  advances independently. */
+  lastResumedAtMs: number | null;
+  /** True when the current FSM state is `pause_requested | paused`.
+   *  Inject counting only accrues while this is true. */
+  inPauseWindow: boolean;
+}
+
 export class LiveInspector extends EventEmitter {
   private store: Store;
   private opts: Required<LiveOptions>;
@@ -122,6 +199,7 @@ export class LiveInspector extends EventEmitter {
   private lastSizes = new Map<string, number>(); // path → size at last poll
   private lastStepCounts = new Map<string, number>(); // run_id → step count
   private lastStatus = new Map<string, Run["status"]>(); // run_id → last seen status
+  private probeTracks = new Map<string, ProbeTrack>(); // run_id → probe poll state
   private timer?: NodeJS.Timeout;
   private stopped = false;
   /** Set on the first scan so we can backfill state silently — historical
@@ -205,6 +283,13 @@ export class LiveInspector extends EventEmitter {
               new_steps: newSteps,
             } satisfies LiveEvent);
           }
+          // v0.3 §8.5 — emit `files:changed` for every freshly-ingested
+          // step that produced file_change rows. One event per step
+          // (rather than one per row) matches the UI consumer: the
+          // step card refreshes once with the full row set.
+          for (const s of newSteps) {
+            this.emitFilesChangedIfAny(run, s);
+          }
         }
 
         // Maybe-alert always runs so firedAlerts gets seeded; pass `silent`
@@ -229,6 +314,12 @@ export class LiveInspector extends EventEmitter {
       }
     }
 
+    // v0.3 §4.9 — probe state transitions. Polled once per tick across
+    // every in_progress run we know about; cheap (single JSON file read
+    // per run, ENOENT is the steady state). Catches both web- and
+    // CLI-driven pause/resume since both mutate the same on-disk file.
+    if (!silent) this.pollProbeStates();
+
     // Fleet snapshot every tick, regardless of whether anything changed
     // — the UI uses it to compute "time since last activity" countdowns.
     // We DO emit this during silent boot so SSE subscribers connecting
@@ -237,6 +328,145 @@ export class LiveInspector extends EventEmitter {
       type: "fleet:snapshot",
       entries: this.fleetEntries(),
     } satisfies LiveEvent);
+  }
+
+  /**
+   * Emit `files:changed` if the given step has any file_change rows.
+   * Pulled into its own method so tests can exercise the dedup-paths
+   * shape without going through a full tick.
+   */
+  private emitFilesChangedIfAny(run: Run, step: Step): void {
+    const fcs = listFileChanges(this.store, { stepId: step.step_id });
+    if (fcs.length === 0) return;
+    const paths = new Set<string>();
+    let partial = false;
+    for (const fc of fcs) {
+      paths.add(fc.path);
+      if (fc.old_path) paths.add(fc.old_path);
+      if (fc.partial_diff) partial = true;
+    }
+    this.emit("data", {
+      type: "files:changed",
+      run_id: run.run_id,
+      step_id: step.step_id,
+      paths: Array.from(paths),
+      partial,
+    } satisfies LiveEvent);
+  }
+
+  /**
+   * Poll probe state for every run with an active probe file. Two-axis
+   * detection: the FSM `state` drives inject-window accounting; the
+   * `paused_at_ms` / `resumed_at_ms` timestamps drive `run:paused` /
+   * `run:resumed` emission. The timestamp axis matters because a full
+   * pause→ack→resume cycle can complete inside one 1500ms tick — a
+   * pure `state → state` comparison would silently swallow those
+   * events (the bug Codex flagged at this site).
+   *
+   * Runs without a probe file are skipped entirely: probe files only
+   * exist while a run is under operator control (created lazily by
+   * `requestPause` / `setInject`, removed by `clearProbe` on terminal
+   * cleanup), so the file's presence is the cleanest natural gate.
+   * Per-run reads are guarded — a single EACCES or corrupt file on
+   * one probe shouldn't degrade `/api/live` for every other run.
+   */
+  private pollProbeStates(): void {
+    for (const runId of this.lastStepCounts.keys()) {
+      // Probe file absent → run isn't being probed (or operator cleaned
+      // up). Drop any prior tracking so we don't carry stale state for
+      // a run that may re-enter the probe protocol later.
+      if (!existsSync(probeFilePath(runId))) {
+        this.probeTracks.delete(runId);
+        continue;
+      }
+
+      let record;
+      try {
+        record = readProbeState(runId);
+      } catch (err) {
+        // readState re-throws non-ENOENT filesystem errors (EACCES, EIO,
+        // corrupt JSON it couldn't auto-recover). Log and skip this one
+        // run — never let one bad probe file abort polling for every
+        // other in-flight probe.
+        // eslint-disable-next-line no-console
+        console.error(`[spool/live] probe read failed for ${runId}:`, err);
+        continue;
+      }
+
+      // Plant a baseline on first sighting with null sentinels, then
+      // fall through to the uniform transition logic — that way any
+      // timestamps already set on the probe file get emitted exactly
+      // once (covers the "operator did everything before we polled" /
+      // "server restart mid-pause" cases the SSE clients need to
+      // resync on).
+      let tracked = this.probeTracks.get(runId);
+      if (!tracked) {
+        tracked = {
+          state: record.state,
+          edits: 0,
+          lastInject: null,
+          lastPausedAtMs: null,
+          lastResumedAtMs: null,
+          inPauseWindow: false,
+        };
+        this.probeTracks.set(runId, tracked);
+      }
+
+      // Window-entry detection — inject counting accrues only inside
+      // `pause_requested | paused`. Entering the window resets the
+      // counter; we set it from the current inject (1 if pending, 0
+      // otherwise) so a pre-pause inject still counts toward the
+      // window it was visible during.
+      const nowInWindow =
+        record.state === "pause_requested" || record.state === "paused";
+      if (nowInWindow && !tracked.inPauseWindow) {
+        tracked.edits =
+          record.inject !== null && record.inject !== "" ? 1 : 0;
+      } else if (
+        nowInWindow &&
+        record.inject !== null &&
+        record.inject !== "" &&
+        record.inject !== tracked.lastInject
+      ) {
+        tracked.edits += 1;
+      }
+      tracked.lastInject = record.inject;
+      tracked.inPauseWindow = nowInWindow;
+
+      // Emit on timestamp advancement, not on state-edge. Pause first
+      // (logically precedes resume in any cycle). A fast cycle with
+      // both timestamps freshly set fires both events in this tick.
+      const newPause =
+        record.paused_at_ms !== null &&
+        record.paused_at_ms !== tracked.lastPausedAtMs;
+      if (newPause) {
+        const steps = listSteps(this.store, runId);
+        const lastStep = steps[steps.length - 1];
+        this.emit("data", {
+          type: "run:paused",
+          run_id: runId,
+          step_id: lastStep?.step_id ?? null,
+          paused_at: new Date(record.paused_at_ms!).toISOString(),
+        } satisfies LiveEvent);
+        tracked.lastPausedAtMs = record.paused_at_ms;
+      }
+
+      const newResume =
+        record.resumed_at_ms !== null &&
+        record.resumed_at_ms !== tracked.lastResumedAtMs;
+      if (newResume) {
+        this.emit("data", {
+          type: "run:resumed",
+          run_id: runId,
+          edits: tracked.edits,
+          resumed_at: new Date(record.resumed_at_ms!).toISOString(),
+        } satisfies LiveEvent);
+        tracked.edits = 0;
+        tracked.lastResumedAtMs = record.resumed_at_ms;
+      }
+
+      tracked.state = record.state;
+    }
   }
 
   /** Compute the current fleet view (active + recently-completed runs). */

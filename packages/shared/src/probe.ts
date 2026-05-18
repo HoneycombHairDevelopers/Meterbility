@@ -65,11 +65,21 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { spoolHome } from "./paths.ts";
 
-export type ProbeState = "running" | "pause_requested" | "paused";
+/**
+ * Runtime probe FSM state. Lives in the on-disk JSON record at
+ * `~/.spool/probe/<run_id>.json` and drives the live pause/inject/
+ * resume protocol between operator and SDK.
+ *
+ * Not to be confused with `ProbeState` on `Run` (see types.ts), which
+ * is the persisted historical marker (`paused | resumed | null`) the
+ * trace format carries forward. Different semantics: this is the
+ * current FSM state; that is "did this run ever get probed."
+ */
+export type ProbeFsmState = "running" | "pause_requested" | "paused";
 
 export interface ProbeRecord {
   run_id: string;
-  state: ProbeState;
+  state: ProbeFsmState;
   /** Pending inject message. Null when nothing is queued. */
   inject: string | null;
   /** Wall-clock ms when an operator requested the pause. */
@@ -138,9 +148,9 @@ export function readState(runId: string, now: () => number = Date.now): ProbeRec
  */
 function normalize(parsed: unknown, runId: string, nowMs: number): ProbeRecord {
   const o = (parsed ?? {}) as Partial<ProbeRecord>;
-  const validStates: ProbeState[] = ["running", "pause_requested", "paused"];
+  const validStates: ProbeFsmState[] = ["running", "pause_requested", "paused"];
   const state = (validStates as string[]).includes(o.state as string)
-    ? (o.state as ProbeState)
+    ? (o.state as ProbeFsmState)
     : "running";
   return {
     run_id: typeof o.run_id === "string" ? o.run_id : runId,

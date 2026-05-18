@@ -46,7 +46,17 @@ from typing import Callable, Literal, Optional
 from .paths import spool_home
 
 
-ProbeState = Literal["running", "pause_requested", "paused"]
+#: Runtime probe FSM state. Lives in the on-disk JSON record at
+#: ``~/.spool/probe/<run_id>.json`` and drives the live
+#: pause/inject/resume protocol between operator and SDK.
+#:
+#: Distinct from the persisted ``Run.probe_state`` column in the TS
+#: collector (``"paused" | "resumed" | None``), which is the
+#: historical marker the trace format carries forward. Same name on
+#: that side was a collision; the Python SDK never owned the column
+#: type, so renaming here is purely a clarity pass for parity with
+#: ``ProbeFsmState`` in the TS shared package.
+ProbeFsmState = Literal["running", "pause_requested", "paused"]
 _VALID_STATES = ("running", "pause_requested", "paused")
 
 
@@ -55,7 +65,7 @@ class ProbeRecord:
     """Mirror of the TS ``ProbeRecord`` interface."""
 
     run_id: str
-    state: ProbeState
+    state: ProbeFsmState
     inject: Optional[str]
     requested_at_ms: Optional[int]
     paused_at_ms: Optional[int]
@@ -132,7 +142,7 @@ def _normalize(parsed: object, run_id: str, now_ms: int) -> ProbeRecord:
     if not isinstance(parsed, dict):
         return _default_record(run_id, now_ms)
     state_raw = parsed.get("state")
-    state: ProbeState = (
+    state: ProbeFsmState = (
         state_raw if state_raw in _VALID_STATES else "running"  # type: ignore[assignment]
     )
     inject_raw = parsed.get("inject")

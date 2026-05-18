@@ -60,11 +60,16 @@ export interface Agent {
 }
 
 /**
- * v0.3 Live Probe state. `paused` means the next `tracer.startStep()`
- * call on an SDK-instrumented run will block. `resumed` is a transient
- * state set when the resume endpoint fires, cleared once the next step
- * actually proceeds. `null` (the dominant case) means the run was never
- * probed.
+ * v0.3 Live Probe state on `Run.probe_state`. Persisted on the run row;
+ * `paused` means the next `tracer.startStep()` call on an SDK-instrumented
+ * run will block. `resumed` is a transient state set when the resume
+ * endpoint fires, cleared once the next step actually proceeds. `null`
+ * (the dominant case) means the run was never probed.
+ *
+ * Distinct from `ProbeFsmState` in probe.ts, which is the runtime FSM
+ * value on the on-disk JSON record (`running | pause_requested | paused`).
+ * That one drives the live operator↔SDK protocol; this one is the
+ * historical marker the trace format carries forward.
  */
 export type ProbeState = "paused" | "resumed";
 
