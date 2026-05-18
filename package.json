@@ -2,6 +2,7 @@
   "name": "spool",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "The debugger for AI agents",
   "type": "module",
   "workspaces": [
