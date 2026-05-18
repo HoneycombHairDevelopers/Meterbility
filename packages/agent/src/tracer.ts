@@ -7,9 +7,10 @@ import {
   upsertAgent,
   upsertProjectByCwd,
 } from "@spool/collector";
-import type { Run } from "@spool/shared";
+import { clearProbe, type Run } from "@spool/shared";
 import { SpoolStep } from "./step.ts";
 import type { StartStepOptions, TracerOptions } from "./types.ts";
+import { DEFAULT_PROBE_RUNTIME, type ProbeRuntime } from "./probe.ts";
 
 /**
  * Public SDK entry point.
@@ -31,6 +32,19 @@ export class SpoolTracer {
   readonly project_id: string;
   readonly agent_id: string;
   readonly store: Store;
+  /**
+   * Whether `traceAnthropic` (or any other model-call wrapper) should
+   * run the Live Probe hook before each model call. Mirrors
+   * `TracerOptions.probeEnabled`; kept readonly so call sites can
+   * branch on `tracer.probeEnabled` without a getter.
+   */
+  readonly probeEnabled: boolean;
+  /**
+   * Runtime used by the probe hook — poll interval + injectable
+   * sleep/now seams for tests. Defaults to {@link DEFAULT_PROBE_RUNTIME}.
+   * Tests construct a custom one and assign it post-construction.
+   */
+  probeRuntime: ProbeRuntime;
   private stepCount = 0;
   private prevStepId?: string;
   private ended = false;
@@ -68,6 +82,13 @@ export class SpoolTracer {
       tags: opts.tags ?? [],
     };
     insertRun(this.store, run);
+
+    this.probeEnabled = opts.probeEnabled ?? false;
+    this.probeRuntime = {
+      ...DEFAULT_PROBE_RUNTIME,
+      pollIntervalMs:
+        opts.probePollIntervalMs ?? DEFAULT_PROBE_RUNTIME.pollIntervalMs,
+    };
   }
 
   /**
@@ -101,6 +122,9 @@ export class SpoolTracer {
     const status = overrides?.status ?? this.status;
     setRunStatus(this.store, this.run_id, status, new Date().toISOString());
     updateRunTotals(this.store, this.run_id);
+    // Terminal cleanup for the probe surface. Safe (and a no-op) when
+    // probe was never enabled or no operator interacted with this run.
+    clearProbe(this.run_id);
     this.store.close();
   }
 

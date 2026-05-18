@@ -1,5 +1,6 @@
 import type { Action } from "@spool/shared";
 import type { SpoolTracer } from "./tracer.ts";
+import { applyProbeToRequest } from "./probe.ts";
 
 /**
  * Convenience wrapper for the common "I'm calling the Anthropic SDK"
@@ -29,7 +30,17 @@ export function traceAnthropic<
   tracer: SpoolTracer,
   call: (req: Req) => Promise<Resp>,
 ): (req: Req) => Promise<Resp> {
-  return async (req: Req) => {
+  return async (reqIn: Req) => {
+    // Live Probe hook (gated on tracer.probeEnabled). If the operator
+    // has requested a pause, this blocks until they resume. If they've
+    // queued an inject message, it gets appended to req.messages before
+    // we capture history or call the model — so the Step's recorded
+    // context reflects what the model ACTUALLY saw, including the
+    // inject. No-op (one boolean check) when probeEnabled is false.
+    const req: Req = tracer.probeEnabled
+      ? await applyProbeToRequest(tracer.run_id, reqIn, tracer.probeRuntime)
+      : reqIn;
+
     const history: Array<{
       role: "user" | "assistant" | "tool";
       content: string;

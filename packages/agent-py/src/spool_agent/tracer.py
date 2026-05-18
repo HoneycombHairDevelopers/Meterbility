@@ -24,6 +24,8 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 from .blobs import BlobStore
 from .hashing import hash_json
 from .pricing import cost_cents
+from .probe import clear_probe
+from .probe_hook import DEFAULT_PROBE_RUNTIME, ProbeRuntime
 from .queries import (
     insert_run,
     insert_step,
@@ -68,6 +70,8 @@ class SpoolTracer:
         source_session_id: Optional[str] = None,
         cwd: Optional[str] = None,
         git_branch: Optional[str] = None,
+        probe_enabled: bool = False,
+        probe_poll_interval_ms: int = 250,
     ) -> None:
         if spool_home_override:
             os.environ["SPOOL_HOME"] = spool_home_override
@@ -99,6 +103,17 @@ class SpoolTracer:
                 "cwd": cwd_eff,
                 "tags": list(tags or []),
             },
+        )
+
+        # Live Probe config. ``probe_enabled`` defaults to False so
+        # there's zero overhead when the operator isn't using the
+        # probe; toggling it on lets ``spool probe`` and the web probe
+        # panel pause/inject/resume against this run.
+        self.probe_enabled: bool = probe_enabled
+        self.probe_runtime: ProbeRuntime = ProbeRuntime(
+            poll_interval_ms=probe_poll_interval_ms,
+            sleep=DEFAULT_PROBE_RUNTIME.sleep,
+            now=DEFAULT_PROBE_RUNTIME.now,
         )
 
     def start_step(
@@ -140,6 +155,10 @@ class SpoolTracer:
         final_status = status or self._status
         set_run_status(self.store.db, self.run_id, final_status, now_iso())
         update_run_totals(self.store.db, self.run_id)
+        # Terminal cleanup for the probe surface. Safe (and a no-op)
+        # when probe was never enabled or no operator interacted with
+        # this run.
+        clear_probe(self.run_id)
         self.store.close()
 
     # ---- context-manager sugar ----

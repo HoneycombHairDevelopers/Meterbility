@@ -46,6 +46,20 @@ from .actions import (
     sub_agent_action,
 )
 from .paths import spool_home, db_path, blob_root, blob_path
+from .probe import (
+    ProbeRecord,
+    ProbeState,
+    clear_probe,
+    confirm_paused,
+    consume_inject,
+    probe_dir,
+    probe_file_path,
+    read_state,
+    request_pause,
+    request_resume,
+    set_inject,
+)
+from .probe_hook import DEFAULT_PROBE_RUNTIME, ProbeRuntime, apply_probe_to_request
 
 __all__ = [
     "SpoolTracer",
@@ -59,6 +73,22 @@ __all__ = [
     "db_path",
     "blob_root",
     "blob_path",
+    # Probe protocol (cross-language file format).
+    "ProbeRecord",
+    "ProbeState",
+    "clear_probe",
+    "confirm_paused",
+    "consume_inject",
+    "probe_dir",
+    "probe_file_path",
+    "read_state",
+    "request_pause",
+    "request_resume",
+    "set_inject",
+    # Probe SDK hook.
+    "ProbeRuntime",
+    "DEFAULT_PROBE_RUNTIME",
+    "apply_probe_to_request",
 ]
 
 __version__ = "0.1.0"

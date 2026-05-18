@@ -1,4 +1,4 @@
-import type { Annotation, FileChange, FileOp, Run, Step } from "@spool/shared";
+import type { Annotation, FileChange, FileOp, ProbeRecord, Run, Step } from "@spool/shared";
 import type { DiffResult } from "./diff.ts";
 import type { FleetEntry } from "./live.ts";
 import type { RegressionResult, RegressionTest } from "./regression.ts";
@@ -748,6 +748,48 @@ const STYLES = `
     background: var(--surface-2);
   }
   .copy-btn.copied { color: var(--mint-400); border-color: rgba(52,211,153,0.3); }
+
+  /* ─── Live Probe panel (Turn 8 chunk 5) ─────────────────────────── */
+  .probe-timestamps {
+    display: flex; gap: var(--space-4); flex-wrap: wrap;
+    font-size: 11.5px; color: var(--text-tertiary);
+    margin-bottom: var(--space-3);
+  }
+  .probe-timestamps code {
+    font-family: var(--font-mono); color: var(--text-secondary);
+  }
+  .probe-inject-empty, .probe-inject-queued {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+  .probe-inject-textarea {
+    width: 100%; box-sizing: border-box;
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--text-primary);
+    resize: vertical;
+  }
+  .probe-inject-textarea:focus {
+    outline: none; border-color: var(--cerulean-400);
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+  }
+  .probe-inject-preview {
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--text-secondary);
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    max-height: 160px; overflow: auto;
+  }
+  .probe-inject-actions, .probe-actions {
+    display: flex; gap: var(--space-2); align-items: center;
+  }
+  .probe-resume-btn { /* visually distinct from Pause */ }
 
   /* ─── Keyboard help ─────────────────────────────────────────────── */
   .kbd-help {
@@ -1753,6 +1795,97 @@ async function closeStaleRuns() {
   }
 }
 
+/* --- Live Probe panel (Turn 8 chunk 5) ---
+ * The panel is server-rendered (via renderProbePanel) and lives at
+ * #probe-panel-<run-id>. These handlers fire the corresponding REST
+ * call then refresh the panel HTML in place. A polling loop also runs
+ * every 1.5s while the panel is in the DOM to pick up SDK-side state
+ * changes (e.g. confirmPaused() happened in the agent process).
+ */
+async function probePause(runId) {
+  await probeCall(runId, 'pause', 'POST');
+}
+async function probeResume(runId) {
+  await probeCall(runId, 'resume', 'POST');
+}
+async function probeClear(runId) {
+  if (!confirm('Remove the probe file for ' + runId.slice(0, 12) + '?\\n\\nUse this to recover from a stale paused state after the SDK has exited.')) return;
+  await probeCall(runId, 'clear', 'POST');
+}
+async function probeClearInject(runId) {
+  if (!confirm('Discard the pending inject?')) return;
+  // Empty message + force = clear. The route accepts an empty string
+  // only as part of an explicit clear request.
+  await probeCall(runId, 'inject', 'POST', { clear: true });
+}
+async function probeOverwriteInject(runId) {
+  // Reset the queued inject to empty so the textarea is shown, then
+  // let the user type the replacement. The discard call refreshes the
+  // panel; the empty-textarea state is now visible.
+  if (!confirm('Replace the pending inject with a new message?')) return;
+  await probeCall(runId, 'inject', 'POST', { clear: true });
+  // After the panel refreshes, focus the textarea.
+  setTimeout(function () {
+    const ta = document.getElementById('probe-inject-' + runId);
+    if (ta) ta.focus();
+  }, 100);
+}
+async function probeSendInject(runId) {
+  const ta = document.getElementById('probe-inject-' + runId);
+  if (!ta) return;
+  const msg = (ta.value || '').trim();
+  if (!msg) { alert('inject message is empty'); return; }
+  await probeCall(runId, 'inject', 'POST', { message: msg });
+}
+async function probeCall(runId, action, method, body) {
+  try {
+    const opts = { method: method };
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch('/api/probe/' + encodeURIComponent(runId) + '/' + action, opts);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || ('HTTP ' + res.status));
+    }
+    await refreshProbePanel(runId);
+  } catch (err) {
+    alert('probe ' + action + ' failed: ' + err.message);
+  }
+}
+async function refreshProbePanel(runId) {
+  try {
+    const res = await fetch('/api/probe/' + encodeURIComponent(runId) + '/panel');
+    if (!res.ok) return;
+    const html = await res.text();
+    const existing = document.getElementById('probe-panel-' + runId);
+    if (!existing) return;
+    // Cheap diff: only swap if the markup changed, so the panel
+    // doesn't visually flicker on every poll tick when state is steady.
+    if (existing.outerHTML === html) return;
+    existing.outerHTML = html;
+  } catch (_err) {
+    // Polling failures are silent — the next tick will retry.
+  }
+}
+function startProbePolling() {
+  const panels = document.querySelectorAll('[data-probe-panel]');
+  if (panels.length === 0) return;
+  // One interval per page; the handler iterates whatever panels are
+  // currently in the DOM (panel refresh re-creates the node so we have
+  // to re-query each tick).
+  setInterval(function () {
+    const cur = document.querySelectorAll('[data-probe-panel]');
+    cur.forEach(function (p) { refreshProbePanel(p.dataset.runId); });
+  }, 1500);
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startProbePolling);
+} else {
+  startProbePolling();
+}
+
 /* --- Test editor --- */
 let currentTest = null;
 
@@ -2383,6 +2516,12 @@ export function renderRun(
    * changed in this run" summary appears below the timeline.
    */
   fileChangesByStep: Map<string, FileChange[]> = new Map(),
+  /**
+   * Pre-rendered Live Probe panel HTML for this run. Empty string when
+   * the run is sealed (no longer pause-able) — the route is responsible
+   * for that gating. Turn 8 chunk 5.
+   */
+  probePanelHtml = "",
 ): string {
   const meta = `<div class="meta-row">
     <div class="kv"><strong>Status</strong> <span class="pill ${esc(run.status)}">${esc(run.status)}</span></div>
@@ -2543,6 +2682,7 @@ export function renderRun(
     ${meta}
     ${timeline}
     ${filesSection}
+    ${probePanelHtml}
     ${filterBar}
     ${runAnnotations}
     ${forksBlock}
@@ -2562,6 +2702,101 @@ export function renderRun(
  * source of truth — server-side templates. The client JS stays a
  * thin appender.
  */
+/**
+ * Live Probe panel — Track B / Turn 8 chunk 5.
+ *
+ * Renders as a step-card-styled block on the run detail page when the
+ * run is still ``in_progress``. The SDK side has to enable probing
+ * (``tracer.probeEnabled = true``) for the operator's actions here to
+ * actually pause the agent; if the SDK isn't checking, the panel will
+ * still write the probe file but the run won't observe it. The hint
+ * text below states that explicitly so an operator who pauses and
+ * sees nothing happen knows why.
+ *
+ * Client behavior: a small inline script polls
+ * ``GET /api/probe/:run_id/panel`` every 1.5s while the panel is on
+ * screen and swaps the inner HTML if it changed. That picks up BOTH
+ * operator-driven changes (POST routes here) AND SDK-driven changes
+ * (e.g. ``confirmPaused`` fires in the agent's process, the next poll
+ * sees the new state). One uniform mechanism, no cross-process SSE.
+ */
+export function renderProbePanel(runId: string, r: ProbeRecord): string {
+  // Map state → color class. Re-uses the same `pill` styling the
+  // run status badge uses so the visual vocabulary stays consistent.
+  const stateClass =
+    r.state === "running"
+      ? "ok"
+      : r.state === "pause_requested"
+        ? "in_progress"
+        : "error";
+  const stateLabel =
+    r.state === "running"
+      ? "running"
+      : r.state === "pause_requested"
+        ? "pause requested"
+        : "paused";
+
+  const fmt = (ms: number | null): string =>
+    ms === null ? "—" : new Date(ms).toISOString().slice(11, 19);
+
+  // Inject preview. We render the textarea pre-populated only when
+  // the operator has nothing queued yet — once a message is queued we
+  // show it as a read-only preview to make clobber risk visible.
+  const injectQueued = r.inject !== null && r.inject !== undefined;
+  const injectBlock = injectQueued
+    ? `<div class="probe-inject-queued">
+        <div class="section-label">Pending inject</div>
+        <pre class="probe-inject-preview">${esc(r.inject ?? "")}</pre>
+        <div class="probe-inject-actions">
+          <button type="button" class="seal-action"
+                  onclick="probeOverwriteInject('${esc(runId)}')">Replace…</button>
+          <button type="button" class="copy-btn"
+                  onclick="probeClearInject('${esc(runId)}')">Discard</button>
+        </div>
+       </div>`
+    : `<div class="probe-inject-empty">
+        <label for="probe-inject-${esc(runId)}" class="section-label">Inject a message (visible to model on next call)</label>
+        <textarea id="probe-inject-${esc(runId)}" class="probe-inject-textarea"
+                  rows="2" placeholder="e.g. the failing test is a stale fixture — reset with npm run reset:fixtures"></textarea>
+        <button type="button" class="seal-action"
+                onclick="probeSendInject('${esc(runId)}')">Queue inject</button>
+       </div>`;
+
+  // Action buttons depend on state. Pause is offered when running;
+  // Resume is offered when pause_requested or paused. Always show a
+  // small Clear button to recover from stale state.
+  const actionButtons = `<div class="probe-actions">
+    ${
+      r.state === "running"
+        ? `<button type="button" class="seal-action"
+                   onclick="probePause('${esc(runId)}')">Pause</button>`
+        : `<button type="button" class="seal-action probe-resume-btn"
+                   onclick="probeResume('${esc(runId)}')">Resume</button>`
+    }
+    <button type="button" class="copy-btn"
+            onclick="probeClear('${esc(runId)}')"
+            title="Remove the probe file. Use this to recover from a stale paused state after the SDK has exited.">Clear</button>
+  </div>`;
+
+  return `<div class="step-card" id="probe-panel-${esc(runId)}" data-probe-panel="1" data-run-id="${esc(runId)}">
+    <div class="section-label">Live Probe</div>
+    <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>Pause · Inject · Resume</span>
+      <span class="pill ${stateClass}" data-probe-state>${stateLabel}</span>
+      <span class="row-actions" style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">
+        SDK must run with <code>probeEnabled: true</code>
+      </span>
+    </h3>
+    <div class="probe-timestamps">
+      <span><strong>requested</strong> <code>${fmt(r.requested_at_ms)}</code></span>
+      <span><strong>paused</strong> <code>${fmt(r.paused_at_ms)}</code></span>
+      <span><strong>resumed</strong> <code>${fmt(r.resumed_at_ms)}</code></span>
+    </div>
+    ${injectBlock}
+    ${actionButtons}
+  </div>`;
+}
+
 export function renderStepCardFragment(
   s: Step,
   decision: string,

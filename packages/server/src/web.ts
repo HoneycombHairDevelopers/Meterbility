@@ -3,6 +3,14 @@ import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import type { Annotation, Run, Step } from "@spool/shared";
 import {
+  clearProbe,
+  consumeInject as consumeProbeInject,
+  readState as readProbeState,
+  requestPause as probeRequestPause,
+  requestResume as probeRequestResume,
+  setInject as probeSetInject,
+} from "@spool/shared";
+import {
   getFileChange,
   getRun,
   getStep,
@@ -34,6 +42,7 @@ import {
   renderFleet,
   renderTests,
   renderContext,
+  renderProbePanel,
   renderStepCardFragment,
   type RenderedComponent,
   type RenderedContext,
@@ -243,10 +252,17 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       list.push(fc);
       fcByStep.set(fc.step_id, list);
     }
+    // Turn 8 chunk 5 — Live Probe panel. Render only for in_progress
+    // runs (the only ones that can be paused) so sealed runs don't
+    // get a meaningless panel + polling loop.
+    const probePanel =
+      run.status === "in_progress"
+        ? renderProbePanel(run.run_id, readProbeState(run.run_id))
+        : "";
     return c.html(
       renderShell(
         run.title ?? run.run_id,
-        renderRun(run, steps, annotations, forks, stepDecisions, fcByStep),
+        renderRun(run, steps, annotations, forks, stepDecisions, fcByStep, probePanel),
         shellOpts(),
       ),
     );
@@ -276,6 +292,99 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.get("/api/file_change/:id", (c) => {
     const fc = getFileChange(store, c.req.param("id"));
     return fc ? c.json(fc) : c.notFound();
+  });
+
+  // ── Live Probe routes (Turn 8 chunk 5) ──────────────────────────
+  // Operator surface for pause / inject / resume / clear on a running
+  // run. The SDK side must have `tracer.probeEnabled = true` for these
+  // operations to actually pause the agent; the panel surfaces that
+  // requirement so a confused operator knows why their pause did
+  // nothing. The CLI (`spool probe ...`) goes through the same probe
+  // protocol (`@spool/shared/probe`), so both the web panel and the
+  // terminal see the same state.
+
+  /** GET /api/probe/:run_id — read current probe state as JSON. */
+  app.get("/api/probe/:run_id", (c) => {
+    const run = getRun(store, c.req.param("run_id"));
+    if (!run) return c.json({ error: "run not found" }, 404);
+    return c.json(readProbeState(run.run_id));
+  });
+
+  /** GET /api/probe/:run_id/panel — pre-rendered HTML fragment for
+   * the panel. The client polls this every 1.5s and replaces the panel
+   * node in place when the markup changes. Returns 404 (so the client
+   * skips the swap) if the run has been sealed. */
+  app.get("/api/probe/:run_id/panel", (c) => {
+    const run = getRun(store, c.req.param("run_id"));
+    if (!run) return c.json({ error: "run not found" }, 404);
+    if (run.status !== "in_progress") return c.json({ error: "run sealed" }, 404);
+    c.header("Content-Type", "text/html; charset=utf-8");
+    return c.body(renderProbePanel(run.run_id, readProbeState(run.run_id)));
+  });
+
+  /** POST /api/probe/:run_id/pause — request a graceful pause. */
+  app.post("/api/probe/:run_id/pause", (c) => {
+    const run = getRun(store, c.req.param("run_id"));
+    if (!run) return c.json({ error: "run not found" }, 404);
+    return c.json(probeRequestPause(run.run_id));
+  });
+
+  /** POST /api/probe/:run_id/resume — release a pause. */
+  app.post("/api/probe/:run_id/resume", (c) => {
+    const run = getRun(store, c.req.param("run_id"));
+    if (!run) return c.json({ error: "run not found" }, 404);
+    return c.json(probeRequestResume(run.run_id));
+  });
+
+  /** POST /api/probe/:run_id/inject — queue an inject message OR clear
+   * the pending one. Body: { message: string, force?: boolean } to
+   * queue; { clear: true } to discard a queued message without
+   * setting a new one. Refuses to clobber a queued message unless
+   * `force` is true (mirrors `spool probe inject --force`). */
+  app.post("/api/probe/:run_id/inject", async (c) => {
+    const run = getRun(store, c.req.param("run_id"));
+    if (!run) return c.json({ error: "run not found" }, 404);
+    let body: { message?: string; force?: boolean; clear?: boolean };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    if (body.clear) {
+      // Operator-driven discard. Use consumeInject (the SDK-side
+      // primitive) to atomically null the inject field — works in any
+      // probe state and preserves pause/resume timestamps. Returning
+      // the post-clear record so the panel re-renders without a stale
+      // "queued" preview.
+      consumeProbeInject(run.run_id);
+      return c.json(readProbeState(run.run_id));
+    }
+    if (typeof body.message !== "string" || body.message.length === 0) {
+      return c.json({ error: "message is required (use { clear: true } to discard)" }, 400);
+    }
+    const current = readProbeState(run.run_id);
+    if (current.inject !== null && !body.force) {
+      return c.json(
+        {
+          error: "a pending inject is already queued (pass { force: true } to overwrite)",
+          current_inject: current.inject,
+        },
+        409,
+      );
+    }
+    return c.json(probeSetInject(run.run_id, body.message));
+  });
+
+  /** POST /api/probe/:run_id/clear — remove the probe file (stale
+   * recovery). Pure file cleanup; does NOT require the run to exist
+   * because an orphan probe file may outlive its run row deletion. */
+  app.post("/api/probe/:run_id/clear", (c) => {
+    // We DO still try to resolve the id (typo defense), but accept it
+    // raw if the run isn't found — clear is meant for recovery.
+    const run = getRun(store, c.req.param("run_id"));
+    const target = run?.run_id ?? c.req.param("run_id");
+    clearProbe(target);
+    return c.json({ cleared: target });
   });
 
   // v0.3 — pre-rendered step-card HTML fragment. The live-update JS on

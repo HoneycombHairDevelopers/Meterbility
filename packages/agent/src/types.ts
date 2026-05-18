@@ -36,6 +36,23 @@ export interface TracerOptions {
   cwd?: string;
   /** Git branch associated with the run. */
   gitBranch?: string;
+  /**
+   * Enable the Live Probe hook. When true, the SDK checks
+   * `$SPOOL_HOME/probe/<run_id>.json` before each model call and:
+   *   - blocks until an operator-initiated pause is released
+   *   - prepends any queued inject message to the next user turn
+   *
+   * Defaults to false — zero overhead when the operator isn't using
+   * the probe. Turn this on when you want `spool probe` / the web
+   * probe panel to be able to graceful-pause this run.
+   */
+  probeEnabled?: boolean;
+  /**
+   * How often (ms) to poll the probe file while paused. Defaults to
+   * 250ms — fast enough to feel responsive in the operator UI, slow
+   * enough that idle pauses don't churn the filesystem.
+   */
+  probePollIntervalMs?: number;
 }
 
 export interface StartStepOptions {

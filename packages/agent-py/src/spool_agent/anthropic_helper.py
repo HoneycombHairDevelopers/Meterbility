@@ -30,6 +30,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional
 
+from .probe_hook import apply_probe_to_request
 from .tracer import SpoolTracer
 
 
@@ -58,6 +59,17 @@ class _TracedMessages:
         self._messages = messages
 
     def create(self, **req: Any) -> Any:  # noqa: ANN401
+        # Live Probe hook (gated on tracer.probe_enabled). If the
+        # operator has requested a pause, this blocks until they
+        # resume. If they've queued an inject message, it's appended
+        # to req["messages"] before we capture history or call the
+        # model — so the Step's recorded context reflects what the
+        # model ACTUALLY saw, including the inject. One boolean check
+        # of overhead when probe_enabled is False.
+        if self._tracer.probe_enabled:
+            req = apply_probe_to_request(
+                self._tracer.run_id, req, self._tracer.probe_runtime
+            )
         history = _flatten_history(req.get("messages") or [])
         system_prompt = _flatten_system(req.get("system"))
         step = self._tracer.start_step(
