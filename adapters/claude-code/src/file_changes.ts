@@ -196,23 +196,24 @@ async function extractForToolUse(
   const { toolUse, runId, stepId } = args;
   const tool = toolUse.name;
 
-  // Bash: stub with partial_diff = true. We have no per-command file
-  // resolution from the tool_input (the command could `touch`, `rm`,
-  // `mv`, `npm install`, ...), so we emit ONE stub per Bash call so
-  // the Files tab can surface "this step ran shell, contents not
-  // captured" without faking a path.
+  // Bash: most commands are opaque to us (the command could `touch`,
+  // `mv`, `npm install`, ...), so by default we emit ONE stub per Bash
+  // call so the Files tab can surface "this step ran shell, contents
+  // not captured" without faking a path.
+  //
+  // Narrow exception: pure `rm <path>` invocations. These are the most
+  // common way an agent deletes a file via Bash, and the user-visible
+  // win is high — without this, the Files tab silently swallows the
+  // delete (just a generic shell stub) and never shows `-N` lines
+  // removed even when we have the pre-delete bytes in a backup.
+  //
+  // Detection is conservative: `parseRmCommand` returns non-null ONLY
+  // when the entire command is a pure `rm` with literal paths (no
+  // chaining, no globs, no var expansion). Any uncertainty → fall back
+  // to the (shell) stub. False negatives are silent + safe; false
+  // positives would invent delete rows.
   if (tool === "Bash") {
-    return [
-      makeStub({
-        runId,
-        stepId,
-        sequence: args.startingSequence,
-        toolCallId: toolUse.id,
-        path: "(shell)",
-        sourceToolName: "Bash",
-        sourceToolInput: toolUse.input,
-      }),
-    ];
+    return await extractBash(args);
   }
 
   // NotebookEdit: v0.3 doesn't ship cell-structural diffs (spec open
@@ -372,6 +373,163 @@ async function extractMultiEdit(
   ];
 }
 
+async function extractBash(args: PerToolArgs): Promise<FileChangeInsert[]> {
+  const input = args.toolUse.input as { command?: string };
+  const cmd = typeof input.command === "string" ? input.command : "";
+  const targets = parseRmCommand(cmd);
+
+  // Not a pure `rm` — fall back to the historic single (shell) stub.
+  if (targets === null) {
+    return [
+      makeStub({
+        runId: args.runId,
+        stepId: args.stepId,
+        sequence: args.startingSequence,
+        toolCallId: args.toolUse.id,
+        path: "(shell)",
+        sourceToolName: "Bash",
+        sourceToolInput: args.toolUse.input,
+      }),
+    ];
+  }
+
+  // Pure `rm` with N path arguments. One row per target, in argument
+  // order. If the path was previously tracked in a file-history-snapshot
+  // we can recover bytes and emit a real -N delete row; otherwise we
+  // emit a path-aware delete stub (the intent is captured even if the
+  // contents aren't).
+  //
+  // We deliberately do NOT also emit the generic (shell) stub here —
+  // for a pure `rm`, the per-target rows fully describe the side
+  // effects, so adding a (shell) row would just be duplicate noise.
+  const rows: FileChangeInsert[] = [];
+  let seq = args.startingSequence;
+  for (const target of targets) {
+    const absPath = resolveBashTarget(target, args.cwd);
+    const path = toRepoRelative(absPath, args.cwd);
+    const backup = await readBackupForPath(args, absPath);
+    if (backup === undefined) {
+      // No backup → can't recover bytes. Emit a delete-op stub so the
+      // intent shows up in the Files tab; lines_removed stays 0 because
+      // we genuinely don't know N.
+      rows.push(
+        makeStub({
+          runId: args.runId,
+          stepId: args.stepId,
+          sequence: seq,
+          toolCallId: args.toolUse.id,
+          path,
+          sourceToolName: "Bash",
+          sourceToolInput: args.toolUse.input,
+          op: "delete",
+        }),
+      );
+    } else {
+      rows.push(
+        await materialize({
+          args,
+          path,
+          op: "delete",
+          beforeBuf: backup,
+          afterBuf: undefined,
+          tool: "Bash",
+        }),
+      );
+    }
+    seq++;
+  }
+  return rows;
+}
+
+/**
+ * Parse a Bash command string. Returns the list of file path arguments
+ * iff the command is a pure `rm` invocation with literal paths. Returns
+ * `null` for anything else — compound commands, globs, variable
+ * expansion, command substitution, or non-`rm` commands. The caller
+ * treats `null` as "fall back to the generic shell stub."
+ *
+ * Conservative on purpose: false positives would invent delete rows for
+ * files that weren't actually deleted. False negatives just degrade to
+ * the existing (shell) stub — safe.
+ *
+ * Exported for direct unit testing.
+ */
+export function parseRmCommand(cmd: string): string[] | null {
+  const trimmed = cmd.trim();
+  if (trimmed === "") return null;
+
+  // Reject anything with shell metacharacters that could mean "more
+  // than one command" or "expand into something we can't see." We err
+  // on the side of rejecting — even inside quotes, since a string like
+  // `rm "foo;bar"` is rare in agent traffic and not worth the risk of
+  // mis-parsing related patterns like `rm foo; rm bar`.
+  if (/[;&|<>`$()*?[\]{}~\n\r]/.test(trimmed)) return null;
+
+  // Tokenize on whitespace, honoring single + double quotes. No escape
+  // processing beyond removing the quote characters — the metachar
+  // guard above already rejected anything that would need it.
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < trimmed.length) {
+    while (i < trimmed.length && /\s/.test(trimmed[i]!)) i++;
+    if (i >= trimmed.length) break;
+    let tok = "";
+    while (i < trimmed.length && !/\s/.test(trimmed[i]!)) {
+      const ch = trimmed[i]!;
+      if (ch === '"' || ch === "'") {
+        const quote = ch;
+        i++;
+        while (i < trimmed.length && trimmed[i] !== quote) {
+          tok += trimmed[i]!;
+          i++;
+        }
+        if (i >= trimmed.length) return null; // unterminated quote
+        i++; // skip closing quote
+      } else {
+        tok += ch;
+        i++;
+      }
+    }
+    tokens.push(tok);
+  }
+
+  if (tokens.length === 0) return null;
+  if (tokens[0] !== "rm") return null;
+
+  // Split flags from path operands. `--` terminates flag parsing.
+  const paths: string[] = [];
+  let endOfFlags = false;
+  for (let k = 1; k < tokens.length; k++) {
+    const t = tokens[k]!;
+    if (!endOfFlags && t === "--") {
+      endOfFlags = true;
+      continue;
+    }
+    if (!endOfFlags && t.startsWith("-") && t.length > 1) {
+      // Flag token. We don't validate which flags — `rm -rf`, `rm -f`,
+      // `rm -R`, etc. all work. We only care about the path operands.
+      continue;
+    }
+    paths.push(t);
+  }
+
+  if (paths.length === 0) return null;
+  return paths;
+}
+
+/**
+ * Resolve a `rm` argument to an absolute path. Absolute inputs are
+ * kept as-is (minus any trailing slash, so directory-form lookups in
+ * trackedFileBackups still hit a file-keyed entry). Relative inputs
+ * are resolved against the session's cwd.
+ */
+function resolveBashTarget(arg: string, cwd: string): string {
+  const stripped = arg.replace(/\/+$/, "") || "/";
+  if (stripped.startsWith("/")) return stripped;
+  const base = cwd.replace(/\/+$/, "");
+  return `${base}/${stripped}`;
+}
+
 // ─── Materialization helpers ─────────────────────────────────────────
 
 interface MaterializeArgs {
@@ -385,11 +543,24 @@ interface MaterializeArgs {
 
 async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
   const { args, path, op, beforeBuf, afterBuf, tool } = m;
-  // Detect binary on the bytes (PR 1's heuristic). The before/after
-  // sides are diffed only when both are text.
-  const beforeText = beforeBuf && isProbablyText(beforeBuf);
-  const afterText = afterBuf && isProbablyText(afterBuf);
-  const bothText = beforeText && afterText;
+  // A side counts as "text" if it doesn't exist (we treat the missing
+  // side as an empty file for diff purposes) OR if it passes the
+  // null-byte heuristic from PR 1. We can run a text diff iff at
+  // least one side actually has bytes AND every present side is text.
+  //
+  // This is the key fix vs the original Turn 4 code: that version
+  // gated on `bothText` (both sides present + text), which meant
+  // creates (no beforeBuf) and deletes (no afterBuf) always reported
+  // +0 −0 instead of +N or −N. The user noticed when a new file
+  // captured via Write showed up in the Files tab with zero counts.
+  const beforeIsText =
+    beforeBuf === undefined || isProbablyText(beforeBuf);
+  const afterIsText =
+    afterBuf === undefined || isProbablyText(afterBuf);
+  const canTextDiff =
+    (beforeBuf !== undefined || afterBuf !== undefined) &&
+    beforeIsText &&
+    afterIsText;
 
   // Write blobs. `skipRedact: false` is the default — text blobs
   // route through the redaction pass; binary auto-skips per PR 1.
@@ -404,19 +575,27 @@ async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
   let lines_added = 0;
   let lines_removed = 0;
   let patch_format: FileChangeInsert["patch_format"];
-  if (bothText) {
-    const diff = diffLines(
-      beforeBuf!.toString("utf-8"),
-      afterBuf!.toString("utf-8"),
-    );
+  if (canTextDiff) {
+    // Missing-side → "" gives correct +N/-0 (create) and +0/-N
+    // (delete). diffLines short-circuits when either side is empty,
+    // so this is the same hot path for modify-both-text.
+    const beforeStr = beforeBuf ? beforeBuf.toString("utf-8") : "";
+    const afterStr = afterBuf ? afterBuf.toString("utf-8") : "";
+    const diff = diffLines(beforeStr, afterStr);
     patch_text = diff.unified || undefined;
     lines_added = diff.stats.added;
     lines_removed = diff.stats.removed;
     patch_format = patch_text ? "unified" : undefined;
   } else if (beforeBuf || afterBuf) {
+    // At least one side exists and is binary — no patch text but the
+    // row still records the op, blob refs, and size delta.
     patch_format = "binary";
   }
 
+  // For line-endings, sniff whichever side has bytes (after wins
+  // when both exist — the agent just wrote it). For line counts and
+  // encoding, prefer the side that's present and text.
+  const lineEndingsBuf = afterBuf ?? beforeBuf;
   return {
     run_id: args.runId,
     step_id: args.stepId,
@@ -431,17 +610,22 @@ async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
     gitignored: false,
     patch_text,
     patch_format,
-    encoding: bothText ? "utf-8" : "binary",
+    encoding: canTextDiff ? "utf-8" : "binary",
     bom: false,
-    line_endings: bothText ? detectLineEndings(afterBuf!) : undefined,
+    line_endings:
+      canTextDiff && lineEndingsBuf
+        ? detectLineEndings(lineEndingsBuf)
+        : undefined,
     size_before: beforeBuf?.length,
     size_after: afterBuf?.length,
-    line_count_before: beforeBuf && bothText
-      ? countLines(beforeBuf.toString("utf-8"))
-      : undefined,
-    line_count_after: afterBuf && bothText
-      ? countLines(afterBuf.toString("utf-8"))
-      : undefined,
+    line_count_before:
+      beforeBuf && beforeIsText
+        ? countLines(beforeBuf.toString("utf-8"))
+        : undefined,
+    line_count_after:
+      afterBuf && afterIsText
+        ? countLines(afterBuf.toString("utf-8"))
+        : undefined,
     lines_added,
     lines_removed,
     source_tool_name: tool,
@@ -459,6 +643,13 @@ interface StubArgs {
   sourceToolName: string;
   sourceToolInput: unknown;
   patchFormat?: FileChangeInsert["patch_format"];
+  /**
+   * Override the row's `op`. Defaults to "modify" — the historic stub
+   * shape for "something changed, contents unknown." Pass "delete" for
+   * a `rm <untracked-path>` Bash stub so the row honestly reflects
+   * intent (we know it was a delete, we just don't have the bytes).
+   */
+  op?: FileOp;
 }
 
 function makeStub(s: StubArgs): FileChangeInsert {
@@ -469,7 +660,7 @@ function makeStub(s: StubArgs): FileChangeInsert {
     tool_call_id: s.toolCallId,
     derived_from: "tool_call",
     path: s.path,
-    op: "modify", // honest-ish default: we know there was an edit, just not what
+    op: s.op ?? "modify", // honest-ish default: we know there was an edit, just not what
     before_blob_ref: undefined,
     after_blob_ref: undefined,
     partial_diff: true,

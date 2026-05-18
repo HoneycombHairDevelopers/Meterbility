@@ -3,9 +3,12 @@ import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import type { Annotation, Run, Step } from "@spool/shared";
 import {
+  getFileChange,
   getRun,
   getStep,
+  getStepBySequence,
   listAnnotations,
+  listFileChanges,
   listForks,
   listRuns,
   listSteps,
@@ -31,6 +34,7 @@ import {
   renderFleet,
   renderTests,
   renderContext,
+  renderStepCardFragment,
   type RenderedComponent,
   type RenderedContext,
 } from "./html.ts";
@@ -40,9 +44,11 @@ import type {
   RetrievedDocument,
 } from "@spool/shared";
 import {
+  LiveController,
   LiveInspector,
   buildFleetEntries,
   type LiveEvent,
+  type LiveOptions,
 } from "./live.ts";
 import { forkRun, fakeResponder, anthropicResponder } from "./fork.ts";
 import {
@@ -71,26 +77,65 @@ import {
  *    `spool web` opens by default.
  */
 export interface BuildAppOptions {
-  /** When provided, the live inspector is mounted and SSE streams its events. */
+  /**
+   * v0.3 — runtime-toggleable live controller. Always present; the
+   * caller (serveApp) is responsible for starting it if --live was
+   * passed at boot. Routes dispatch through the controller so the
+   * web UI's Live button can start/stop without rebuilding the app.
+   */
+  controller?: LiveController;
+  /**
+   * v0.2 back-compat: tests that built an inspector manually can pass
+   * it via `live`. `buildApp` wraps it into a fresh controller and
+   * adopts the inspector's events. Prefer `controller` for new code.
+   */
   live?: LiveInspector;
 }
 
 export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   const app = new Hono();
-  const liveMode = opts.live !== undefined;
-  const shellOpts = { liveMode };
+  const controller = opts.controller ?? new LiveController(store);
+  // Back-compat: if a raw LiveInspector was passed (legacy tests),
+  // bridge its events into the controller's subscriber set so SSE
+  // clients still see them.
+  if (opts.live && !opts.controller) {
+    opts.live.on("data", (e: LiveEvent) => {
+      // Re-emit through any direct subscribers on the controller. The
+      // controller's `on()` registry routes to whichever inspector
+      // (or this bridged one) is current.
+      for (const fn of (controller as unknown as {
+        subscribers: Set<(e: LiveEvent) => void>;
+      }).subscribers) {
+        fn(e);
+      }
+    });
+  }
+  // shellOpts.liveMode is dynamic — read at request time so pages
+  // rendered just after `POST /api/live/start` reflect the new state.
+  // Call as a helper at each renderShell site.
+  const shellOpts = (): { liveMode: boolean } => ({
+    liveMode: controller.isLive() || opts.live !== undefined,
+  });
 
   app.get("/", (c) => {
-    // Fleet view always renders. With --live, alerts come from the
-    // running LiveInspector; without --live, we build a one-shot
-    // snapshot from the same heuristics — `firedAlerts` is just
-    // omitted, so each card shows no alerts. The /api/live SSE
-    // endpoint only mounts under --live, and the client checks the
-    // live-mode meta tag before opening an EventSource.
-    const entries = opts.live
-      ? opts.live.fleetEntries()
-      : buildFleetEntries(store, { limit: 50 });
-    return c.html(renderShell("Spool · Fleet", renderFleet(entries, { liveMode }), shellOpts));
+    // Fleet view always renders. When the controller is live (either
+    // started at boot via --live or toggled on at runtime), alerts
+    // come from its inspector; otherwise we build a one-shot
+    // snapshot from the same heuristics with empty alerts. The Live
+    // button + meta tag reflect controller state in real time.
+    const isLive = controller.isLive() || opts.live !== undefined;
+    const entries = controller.isLive()
+      ? controller.fleetEntries()
+      : opts.live
+        ? opts.live.fleetEntries()
+        : buildFleetEntries(store, { limit: 50 });
+    return c.html(
+      renderShell(
+        "Spool · Fleet",
+        renderFleet(entries, { liveMode: isLive }),
+        shellOpts(),
+      ),
+    );
   });
 
   app.get("/runs", (c) => {
@@ -122,35 +167,60 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
           totalAvailable: listRuns(store, { limit: 1000 }).length,
           filters: { status, tool, project },
         }),
-        shellOpts,
+        shellOpts(),
       ),
     );
   });
 
-  // Server-Sent Events for the live fleet view.
-  if (opts.live) {
-    const live = opts.live;
-    app.get("/api/live", (c) => {
-      c.header("Content-Type", "text/event-stream");
-      c.header("Cache-Control", "no-cache");
-      c.header("Connection", "keep-alive");
-      return stream(c, async (s) => {
-        const send = (e: LiveEvent) => {
-          void s.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
-        };
-        const handler = (e: LiveEvent) => send(e);
-        live.on("data", handler);
-        // Initial snapshot so the client populates immediately.
-        send({ type: "fleet:snapshot", entries: live.fleetEntries() });
-        await new Promise<void>((resolve) => {
-          s.onAbort(() => {
-            live.off("data", handler);
-            resolve();
-          });
+  // Server-Sent Events for live updates. Always registered so the
+  // browser can open an EventSource speculatively at page load; if
+  // the controller isn't live yet, the client sees no events until
+  // someone hits the Live button (which fires the route below).
+  // Subscribers are stored on the controller, so a stop/start cycle
+  // doesn't drop them.
+  app.get("/api/live", (c) => {
+    c.header("Content-Type", "text/event-stream");
+    c.header("Cache-Control", "no-cache");
+    c.header("Connection", "keep-alive");
+    return stream(c, async (s) => {
+      const send = (e: LiveEvent) => {
+        void s.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+      };
+      controller.on("data", send);
+      // Initial snapshot (empty when not live) so the client always
+      // sees one frame on connect — handy for "I'm subscribed" UI
+      // feedback even before the first real event fires.
+      send({ type: "fleet:snapshot", entries: controller.fleetEntries() });
+      await new Promise<void>((resolve) => {
+        s.onAbort(() => {
+          controller.off("data", send);
+          resolve();
         });
       });
     });
-  }
+  });
+
+  // v0.3 — Live control endpoints. Lets the web UI flip live mode
+  // without restarting `spool web`. Idempotent: start-when-running
+  // and stop-when-stopped are both no-ops.
+  app.get("/api/live/status", (c) =>
+    c.json({ live: controller.isLive() }),
+  );
+  app.post("/api/live/start", async (c) => {
+    let liveOpts: LiveOptions | undefined;
+    try {
+      const body = (await c.req.json()) as LiveOptions | null;
+      if (body) liveOpts = body;
+    } catch {
+      // empty body is fine — start with defaults / previous opts
+    }
+    await controller.start(liveOpts);
+    return c.json({ live: controller.isLive() });
+  });
+  app.post("/api/live/stop", (c) => {
+    controller.stop();
+    return c.json({ live: controller.isLive() });
+  });
 
   app.get("/runs/:id", async (c) => {
     const runId = c.req.param("id");
@@ -163,13 +233,68 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const annotations = listAnnotations(store, "run", run.run_id);
     const forks = listForks(store, run.run_id);
     const stepDecisions = await loadDecisionPreviews(store, steps);
+    // v0.3 — load FileChanges and group by step. One query for the
+    // whole run; group in memory. Empty map for runs that never
+    // captured file changes (proxy / non-coding / pre-v0.3).
+    const allFcs = listFileChanges(store, { runId: run.run_id });
+    const fcByStep = new Map<string, typeof allFcs>();
+    for (const fc of allFcs) {
+      const list = fcByStep.get(fc.step_id) ?? [];
+      list.push(fc);
+      fcByStep.set(fc.step_id, list);
+    }
     return c.html(
       renderShell(
         run.title ?? run.run_id,
-        renderRun(run, steps, annotations, forks, stepDecisions),
-        shellOpts,
+        renderRun(run, steps, annotations, forks, stepDecisions, fcByStep),
+        shellOpts(),
       ),
     );
+  });
+
+  // v0.3 §8.5 — file-change JSON APIs. Used by the web UI for ad-hoc
+  // loads (e.g. the per-path diff view when no UI is open) and by
+  // any external scripting that wants the same data without parsing
+  // HTML. All read-only; mutations come through the adapters.
+  app.get("/api/runs/:id/files", (c) => {
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    return c.json(listFileChanges(store, { runId: run.run_id }));
+  });
+  app.get("/api/runs/:id/files/diff", (c) => {
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    const path = c.req.query("path");
+    if (!path) return c.json({ error: "missing required ?path=" }, 400);
+    return c.json(listFileChanges(store, { runId: run.run_id, path }));
+  });
+  app.get("/api/steps/:id/file_changes", (c) => {
+    const step = getStep(store, c.req.param("id"));
+    if (!step) return c.notFound();
+    return c.json(listFileChanges(store, { stepId: step.step_id }));
+  });
+  app.get("/api/file_change/:id", (c) => {
+    const fc = getFileChange(store, c.req.param("id"));
+    return fc ? c.json(fc) : c.notFound();
+  });
+
+  // v0.3 — pre-rendered step-card HTML fragment. The live-update JS on
+  // /runs/:id calls this when a `run:updated` event arrives, then
+  // appends the returned markup to the steps anchor + adds the matching
+  // timeline cell. Keeps render logic server-side (one source of truth)
+  // and means the client doesn't have to rebuild the card from JSON.
+  app.get("/api/runs/:id/step-card/:seq", async (c) => {
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    const seq = Number(c.req.param("seq"));
+    if (!Number.isFinite(seq)) return c.json({ error: "bad seq" }, 400);
+    const step = getStepBySequence(store, run.run_id, seq);
+    if (!step) return c.notFound();
+    const decisions = await loadDecisionPreviews(store, [step]);
+    const fcs = listFileChanges(store, { stepId: step.step_id });
+    const fragment = renderStepCardFragment(step, decisions.get(step.step_id) ?? "", fcs);
+    c.header("Content-Type", "text/html; charset=utf-8");
+    return c.body(fragment);
   });
 
   app.get("/diff", (c) => {
@@ -185,7 +310,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       renderShell(
         "Diff",
         renderDiff(runA, runB, result, { showShared }),
-        shellOpts,
+        shellOpts(),
       ),
     );
   });
@@ -251,7 +376,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       renderShell(
         `Context · ${snapshotId.slice(0, 12)}`,
         renderContext(snapshotId, rendered, meta),
-        shellOpts,
+        shellOpts(),
       ),
     );
   });
@@ -636,7 +761,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.get("/tests", (c) => {
     const tests = listTests(store);
     const recent = listResults(store, undefined, 20);
-    return c.html(renderShell("Tests", renderTests(tests, recent), shellOpts));
+    return c.html(renderShell("Tests", renderTests(tests, recent), shellOpts()));
   });
 
   // ─── Settings page + supporting APIs ─────────────────────────────
@@ -662,7 +787,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
             getSetting(store, "fork.default_max_iterations") ?? 25,
           ),
         }),
-        shellOpts,
+        shellOpts(),
       ),
     );
   });
@@ -1020,21 +1145,37 @@ export interface ServeOptions {
 export function serveApp(
   store: Store,
   opts: ServeOptions = {},
-): { url: string; close: () => void; live?: LiveInspector } {
-  let live: LiveInspector | undefined;
+): {
+  url: string;
+  close: () => void;
+  controller: LiveController;
+  /** Back-compat shim — returns the controller's current inspector
+   *  (undefined when not live). Existing callers that captured
+   *  `result.live` continue to compile. */
+  live?: LiveInspector;
+} {
+  const controller = new LiveController(store);
   if (opts.live) {
-    live = new LiveInspector(store, opts.liveOptions);
-    void live.start();
+    // Fire-and-forget: start() is async but the server should accept
+    // requests immediately. Any callers that need to know when the
+    // first tick lands can poll /api/live/status.
+    void controller.start(opts.liveOptions);
   }
-  const app = buildApp(store, { live });
+  const app = buildApp(store, { controller });
   const port = opts.port ?? 4317;
   const host = opts.host ?? "127.0.0.1";
   const server = serve({ fetch: app.fetch, port, hostname: host });
   return {
     url: `http://${host}:${port}`,
-    live,
+    controller,
+    get live() {
+      // Read-through getter for back-compat — exposes the underlying
+      // inspector if live mode is on. `spool web` reads this to log
+      // alerts to the console; nothing else in the codebase mutates it.
+      return (controller as unknown as { inspector?: LiveInspector }).inspector;
+    },
     close: () => {
-      live?.stop();
+      controller.stop();
       server.close();
     },
   };

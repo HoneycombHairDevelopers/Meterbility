@@ -348,3 +348,71 @@ function collectNewSteps(
   const all = listSteps(store, run.run_id);
   return all.slice(last);
 }
+
+/**
+ * Runtime-toggleable owner of a LiveInspector. Existed implicitly in
+ * v0.2 (each `spool web --live` invocation built an inspector at
+ * startup and discarded it on close). v0.3 needs runtime toggling
+ * because the web UI's "Live" button starts/stops without restarting
+ * the server.
+ *
+ * The class is a thin shell — it forwards `on`/`off`/`fleetEntries`
+ * to whichever inspector instance is currently active, and a
+ * stopped-state stub for the off case so the routes always have
+ * something safe to call.
+ *
+ * Listener routing: the controller stores subscribers itself and
+ * re-binds them to any new inspector it spawns. That means an SSE
+ * client opened *before* live mode is enabled will start receiving
+ * events as soon as the operator hits the toggle, with no reconnect.
+ */
+export class LiveController {
+  private store: Store;
+  private inspector?: LiveInspector;
+  private subscribers = new Set<(e: LiveEvent) => void>();
+  private storeOpts: LiveOptions = {};
+
+  constructor(store: Store) {
+    this.store = store;
+  }
+
+  /** Spin up an inspector if one isn't already running. Idempotent. */
+  async start(opts?: LiveOptions): Promise<void> {
+    if (this.inspector) return;
+    if (opts) this.storeOpts = opts;
+    const inspector = new LiveInspector(this.store, this.storeOpts);
+    // Re-bind every subscriber to the new inspector so SSE clients
+    // opened pre-start receive events seamlessly post-start.
+    for (const fn of this.subscribers) inspector.on("data", fn);
+    this.inspector = inspector;
+    await inspector.start();
+  }
+
+  /** Stop the running inspector if any. Idempotent. */
+  stop(): void {
+    if (!this.inspector) return;
+    for (const fn of this.subscribers) this.inspector.off("data", fn);
+    this.inspector.stop();
+    this.inspector = undefined;
+  }
+
+  isLive(): boolean {
+    return this.inspector !== undefined;
+  }
+
+  on(event: "data", fn: (e: LiveEvent) => void): void {
+    this.subscribers.add(fn);
+    this.inspector?.on(event, fn);
+  }
+
+  off(event: "data", fn: (e: LiveEvent) => void): void {
+    this.subscribers.delete(fn);
+    this.inspector?.off(event, fn);
+  }
+
+  /** Latest fleet snapshot — empty when not running. */
+  fleetEntries(): FleetEntry[] {
+    if (!this.inspector) return [];
+    return this.inspector.fleetEntries();
+  }
+}

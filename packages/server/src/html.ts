@@ -1,4 +1,4 @@
-import type { Annotation, Run, Step } from "@spool/shared";
+import type { Annotation, FileChange, FileOp, Run, Step } from "@spool/shared";
 import type { DiffResult } from "./diff.ts";
 import type { FleetEntry } from "./live.ts";
 import type { RegressionResult, RegressionTest } from "./regression.ts";
@@ -167,7 +167,12 @@ const STYLES = `
   header #flash {
     margin-left: auto; font-size: 12px;
     font-family: var(--font-mono);
+    color: var(--text-secondary);
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-out);
   }
+  header #flash[data-kind="err"]  { color: var(--coral-400); }
+  header #flash[data-kind="info"] { color: var(--cerulean-400); }
 
   main {
     padding: var(--space-8) var(--space-6) var(--space-12);
@@ -309,6 +314,52 @@ const STYLES = `
   .dot--info    { color: var(--cerulean-400); box-shadow: 0 0 6px rgba(56, 189, 248, 0.5); }
   .dot--muted   { color: var(--text-tertiary); box-shadow: none; }
 
+  /* ─── v0.3 Live toggle ────────────────────────────────────────────
+     Sits in the header alongside the topnav. Two visual states drive
+     off the data-live attribute: idle (muted, "GO LIVE") vs live
+     (mint dot pulse, "LIVE"). Click hits POST /api/live/start|stop
+     and the JS handler flips the attribute without a reload. */
+  .live-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+  }
+  .live-toggle:hover {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
+  .live-toggle[data-live="1"] {
+    border-color: var(--mint-400);
+    color: var(--mint-400);
+    background: rgba(52, 211, 153, 0.08);
+  }
+  .live-toggle[data-live="1"]:hover {
+    background: rgba(52, 211, 153, 0.14);
+  }
+  .live-toggle[data-live="1"] .dot {
+    animation: live-pulse 1.4s ease-in-out infinite;
+  }
+  .live-toggle[disabled] { opacity: 0.55; cursor: progress; }
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(52, 211, 153, 0.6); }
+    50%      { opacity: 0.55; box-shadow: 0 0 2px rgba(52, 211, 153, 0.3); }
+  }
+
   /* Auto-dot for live-status pills inside fleet cards. Lives in the
      pseudo-element so we don't have to change every render call site. */
   .pill.live-progressing::before,
@@ -442,6 +493,160 @@ const STYLES = `
     color: var(--cerulean-300);
   }
   .seal-control > button.seal-action svg { display: block; }
+
+  /* ─── v0.3 Files tab + run-level files summary ──────────────────
+     Per SPEC §9 — reuses existing semantic palette (no new tokens
+     except --cerulean-bg added in Turn 5's plan, not needed yet
+     because the "selected file row" interaction lives in v0.5's
+     working-tree panel). Op badges follow the spec mapping:
+     mint A / amber M / coral D / violet R / dim X. */
+  .files-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 4px 0 var(--space-2);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .files-stat-add { color: var(--mint-400); }
+  .files-stat-rm  { color: var(--coral-400); }
+  .files-stat-count { color: var(--text-tertiary); }
+  .file-list { display: flex; flex-direction: column; gap: 4px; }
+  .file-row {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    overflow: hidden;
+  }
+  .file-row-head {
+    width: 100%;
+    background: transparent;
+    border: 0;
+    padding: 8px 10px;
+    text-align: left;
+    display: grid;
+    grid-template-columns: 22px 1fr auto auto auto;
+    gap: 10px;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: default;
+  }
+  .file-row-head.expandable { cursor: pointer; }
+  .file-row-head.expandable:hover { background: var(--surface-2); }
+  .file-row-head .file-row-caret {
+    color: var(--text-tertiary);
+    transition: transform var(--duration-fast) var(--ease-out);
+  }
+  .file-row.expanded .file-row-caret { transform: rotate(180deg); }
+  .file-op {
+    display: inline-block;
+    width: 20px; height: 20px; line-height: 20px;
+    text-align: center;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .file-op-create { color: var(--mint-400);    background: rgba(52, 211, 153, 0.12); }
+  .file-op-modify { color: var(--amber-400);   background: rgba(245, 158, 11, 0.12); }
+  .file-op-delete { color: var(--coral-400);   background: rgba(248, 113, 113, 0.12); }
+  .file-op-rename { color: var(--violet-400);  background: rgba(167, 139, 250, 0.12); }
+  .file-op-chmod  { color: var(--text-tertiary); background: var(--surface-2); }
+  .file-path { color: var(--text-primary); overflow-wrap: anywhere; }
+  .file-stats { display: inline-flex; gap: 6px; color: var(--text-tertiary); }
+  .file-flag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .flag-partial   { color: var(--text-tertiary); background: var(--surface-2); }
+  .flag-binary    { color: var(--text-secondary); background: var(--surface-2); }
+  .flag-redacted  { color: var(--coral-400); border: 1px solid var(--coral-400); }
+  .file-diff {
+    background: var(--surface-0);
+    border-top: 1px solid var(--border-subtle);
+    margin: 0;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .file-diff .diff-add   { color: var(--mint-400); }
+  .file-diff .diff-del   { color: var(--coral-400); }
+  .file-diff .diff-hunk  { color: var(--cerulean-400); }
+  .file-diff-empty {
+    padding: 8px 14px;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-tertiary);
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+  .tab-count {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    background: var(--surface-2);
+    color: var(--text-tertiary);
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  /* Run-level "Files changed in this run" summary, below the timeline. */
+  .run-files-summary {
+    margin: var(--space-3) 0 var(--space-4);
+    padding: var(--space-3);
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+  }
+  .run-files-summary > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .run-files-summary > summary::-webkit-details-marker { display: none; }
+  .run-files-totals {
+    display: inline-flex;
+    gap: var(--space-2);
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .run-files-list {
+    margin-top: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .run-file-row {
+    width: 100%;
+    background: transparent;
+    border: 0;
+    padding: 6px 8px;
+    text-align: left;
+    display: grid;
+    grid-template-columns: 22px 1fr auto auto auto;
+    gap: 10px;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out);
+  }
+  .run-file-row:hover { background: var(--surface-2); }
+  .run-file-row-meta { color: var(--text-tertiary); font-size: 11px; }
 
   /* ─── Row-level seal (runs list) ─────────────────────────────────
      Ghost button that fades in on row hover. Avoids visual noise on
@@ -1210,6 +1415,18 @@ function applyTextFilter(q) {
   });
 }
 
+/* --- v0.3 Files tab — per-row diff toggle --- */
+function toggleFileDiff(rowId) {
+  const container = document.getElementById(rowId);
+  if (!container) return;
+  const pre = container.querySelector('.file-diff');
+  if (!pre) return;
+  const showing = pre.style.display !== 'none';
+  pre.style.display = showing ? 'none' : '';
+  const row = container.closest('.file-row');
+  if (row) row.classList.toggle('expanded', !showing);
+}
+
 /* --- Copy to clipboard --- */
 function copyText(text, btn) {
   navigator.clipboard.writeText(text).then(() => {
@@ -1225,7 +1442,181 @@ window.addEventListener('DOMContentLoaded', () => {
   initStepObserver();
   initKeyboardNav();
   restoreFromHash();
+  initLiveToggle();
+  initLiveRunUpdates();
 });
+
+/* --- v0.3 Live toggle ---
+ * Click handler for the header button. Hits POST /api/live/start or
+ * /api/live/stop, then mirrors the response into the data-live
+ * attribute so the CSS picks up the new state. On success we also
+ * flip the meta tag so other components polling spool-live-mode
+ * see the change.
+ *
+ * The button is disabled during the request to prevent double-fire,
+ * and the failure path surfaces a flash message instead of silently
+ * leaving the user staring at a button that did nothing. */
+async function toggleLive(event) {
+  const btn = (event && event.currentTarget) || document.getElementById('live-toggle');
+  if (!btn) return;
+  const goingLive = btn.dataset.live !== '1';
+  btn.setAttribute('disabled', '1');
+  try {
+    const res = await fetch('/api/live/' + (goingLive ? 'start' : 'stop'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const body = await res.json();
+    applyLiveState(body && body.live);
+  } catch (err) {
+    flash('live toggle failed: ' + (err.message || err), 'err');
+  } finally {
+    btn.removeAttribute('disabled');
+  }
+}
+
+function applyLiveState(isLive) {
+  const btn = document.getElementById('live-toggle');
+  if (btn) {
+    btn.dataset.live = isLive ? '1' : '0';
+    const dot = btn.querySelector('.dot');
+    if (dot) {
+      dot.classList.toggle('dot--success', !!isLive);
+      dot.classList.toggle('dot--muted', !isLive);
+    }
+    const label = btn.querySelector('.live-toggle-label');
+    if (label) label.textContent = isLive ? 'LIVE' : 'GO LIVE';
+    btn.title = isLive
+      ? 'Click to stop live capture'
+      : 'Click to start watching ~/.claude/projects for live agent activity';
+  }
+  const meta = document.querySelector('meta[name="spool-live-mode"]');
+  if (meta) meta.setAttribute('content', isLive ? '1' : '0');
+  // Tell any subscribed page features to react to the state change.
+  document.dispatchEvent(
+    new CustomEvent('spool:live-state', { detail: { live: !!isLive } }),
+  );
+}
+
+function initLiveToggle() {
+  // Sync the button with /api/live/status on load — covers the case
+  // where someone hit start in another tab between renders.
+  fetch('/api/live/status')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((b) => {
+      if (b && typeof b.live === 'boolean') applyLiveState(b.live);
+    })
+    .catch(() => { /* silent — toggle still works via click */ });
+}
+
+function flash(msg, kind) {
+  const el = document.getElementById('flash');
+  if (!el) return;
+  el.textContent = msg;
+  el.dataset.kind = kind || 'info';
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, 3000);
+}
+
+/* --- v0.3 Live run updates ---
+ * On a /runs/:id page, open an EventSource and append new step cards
+ * as they arrive — no more hard refresh to see the agent's progress.
+ *
+ * Strategy: we know the current run's id from a data attribute on
+ * the main element (set by renderRun). On run:updated events for
+ * this run, fetch the missing step cards via the new
+ * GET /api/runs/:id/step-card/:seq fragment endpoint and append.
+ * The timeline gets a new block in lockstep so the scrubber stays
+ * in sync.
+ *
+ * Why fetch HTML fragments rather than JSON: the step card has a lot
+ * of structural decisions (tabs, copy buttons, monospace path padding)
+ * that the server already does well. Rebuilding all of that in JS
+ * would duplicate render logic — fragments keep one source of truth. */
+function initLiveRunUpdates() {
+  const main = document.querySelector('main');
+  const runId = main && main.dataset && main.dataset.runId;
+  if (!runId) return;
+  let es;
+  let knownStepCount = parseInt(main.dataset.stepCount || '0', 10) || 0;
+  function ensureSubscribed() {
+    if (es && es.readyState !== 2) return;
+    try { es = new EventSource('/api/live'); } catch { return; }
+    es.addEventListener('run:updated', (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (!data || !data.run || data.run.run_id !== runId) return;
+        // The server tells us how many steps the run has now; we
+        // fetch any sequences past our last-known count and append.
+        appendStepsUpTo(data.run.step_count || 0);
+      } catch (err) { /* ignore parse errors */ }
+    });
+    es.addEventListener('run:completed', (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data && data.run && data.run.run_id === runId) {
+          flash('run completed — refresh for the final timeline view', 'info');
+        }
+      } catch { /* ignore */ }
+    });
+    es.onerror = () => {
+      // Browser will auto-reconnect; nothing to do.
+    };
+  }
+  async function appendStepsUpTo(target) {
+    while (knownStepCount < target) {
+      const seq = knownStepCount;
+      try {
+        const res = await fetch(
+          '/api/runs/' + encodeURIComponent(runId) + '/step-card/' + seq,
+        );
+        if (!res.ok) break; // server doesn't have the row yet — retry next event
+        const html = await res.text();
+        const wrap = document.createElement('div');
+        wrap.innerHTML = html;
+        // The fragment endpoint wraps the card + timeline block in a
+        // single <div data-step-fragment="1">. We move each piece to
+        // its real home, then drop the wrapper.
+        const fragment = wrap.querySelector('[data-step-fragment]');
+        if (!fragment) break;
+        const card = fragment.querySelector('.step-card');
+        const tlBlock = fragment.querySelector('[data-timeline-blk]');
+        if (card) {
+          const stepsAnchor = document.getElementById('steps-anchor');
+          if (stepsAnchor) {
+            // Replace the placeholder "no steps" empty state on the
+            // first append.
+            const placeholder = stepsAnchor.querySelector('.empty');
+            if (placeholder) placeholder.remove();
+            stepsAnchor.appendChild(card);
+          } else {
+            main.appendChild(card);
+          }
+        }
+        if (tlBlock) {
+          const tl = document.querySelector('.timeline');
+          if (tl) tl.appendChild(tlBlock);
+        }
+        knownStepCount = seq + 1;
+        main.dataset.stepCount = String(knownStepCount);
+        flash('step #' + seq + ' captured live', 'info');
+      } catch {
+        break;
+      }
+    }
+  }
+  // Only subscribe when live is on; otherwise wait for the toggle.
+  function maybeSubscribe(isLive) {
+    if (isLive) ensureSubscribed();
+  }
+  const meta = document.querySelector('meta[name="spool-live-mode"]');
+  maybeSubscribe(meta && meta.getAttribute('content') === '1');
+  document.addEventListener('spool:live-state', (e) => {
+    maybeSubscribe(e.detail && e.detail.live);
+  });
+}
 
 /* --- Modal helpers --- */
 function openModal(id) {
@@ -1655,9 +2046,14 @@ export function renderShell(
   body: string,
   opts: ShellOptions = {},
 ): string {
-  const liveBadge = opts.liveMode
-    ? `<span class="badge badge--success" title="--live mode: SSE updates enabled"><span class="dot dot--success"></span>LIVE</span>`
-    : `<span class="badge badge--muted" title="--live not enabled. Restart with: spool web --live"><span class="dot dot--muted"></span>STATIC</span>`;
+  // Interactive Live toggle. The initial state comes from
+  // `opts.liveMode` (server's view at render time); the button polls
+  // and updates `data-live` on click so subsequent renders aren't
+  // necessary to flip the badge.
+  const liveToggle = `<button id="live-toggle" class="live-toggle"
+      data-live="${opts.liveMode ? "1" : "0"}"
+      title="${opts.liveMode ? "Click to stop live capture" : "Click to start watching ~/.claude/projects for live agent activity"}"
+      onclick="toggleLive(event)"><span class="dot dot--${opts.liveMode ? "success" : "muted"}"></span><span class="live-toggle-label">${opts.liveMode ? "LIVE" : "GO LIVE"}</span></button>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>${esc(title)} · Spool</title>
 <meta name="spool-live-mode" content="${opts.liveMode ? "1" : "0"}">
@@ -1677,7 +2073,7 @@ export function renderShell(
     <a href="/tests">Tests</a>
     <a href="/settings">Settings</a>
   </nav>
-  ${liveBadge}
+  ${liveToggle}
   <span class="crumbs">${esc(title)}</span>
   <span id="flash"></span>
 </header>
@@ -1980,6 +2376,13 @@ export function renderRun(
   annotations: Annotation[],
   forks: Array<{ fork_id: string; fork_run_id: string; edit_type: string; origin_step_id: string }>,
   stepDecisions: Map<string, string>,
+  /**
+   * v0.3 — FileChange rows grouped by step_id. Empty map when the run
+   * has no file capture (proxy / non-coding / pre-v0.3). When non-
+   * empty, each step card gets a Files tab and a run-level "Files
+   * changed in this run" summary appears below the timeline.
+   */
+  fileChangesByStep: Map<string, FileChange[]> = new Map(),
 ): string {
   const meta = `<div class="meta-row">
     <div class="kv"><strong>Status</strong> <span class="pill ${esc(run.status)}">${esc(run.status)}</span></div>
@@ -2071,8 +2474,24 @@ export function renderRun(
     : "";
 
   const stepCards = steps
-    .map((s) => renderStepCard(s, stepDecisions.get(s.step_id) ?? ""))
+    .map((s) =>
+      renderStepCard(
+        s,
+        stepDecisions.get(s.step_id) ?? "",
+        fileChangesByStep.get(s.step_id) ?? [],
+      ),
+    )
     .join("");
+
+  // v0.3 §8.2 — "Files changed in this run" — collapsible summary
+  // below the run header when any step touched a file. Per-path
+  // cumulative stats with op badge and step count. Click a row to
+  // jump to the most recent step that touched the path.
+  const allFileChanges: FileChange[] = [];
+  for (const list of fileChangesByStep.values()) {
+    for (const fc of list) allFileChanges.push(fc);
+  }
+  const filesSection = renderRunFilesSummary(allFileChanges, steps);
 
   const runtimeLabel =
     run.source_runtime === "fork" ? "Fork" : run.source_runtime;
@@ -2102,6 +2521,18 @@ export function renderRun(
           </button>
         </div>`
       : "";
+  // Stamp the <main> wrapper with the run id + current step count so
+  // the live-updater JS knows which run is on screen and where to
+  // resume the sequence walk. Plain inline script keeps it CSP-
+  // friendly (no module loader needed).
+  const liveStamp = `<script>
+    (function () {
+      var m = document.querySelector('main');
+      if (!m) return;
+      m.dataset.runId = ${JSON.stringify(run.run_id)};
+      m.dataset.stepCount = ${JSON.stringify(String(steps.length))};
+    })();
+  </script>`;
   return `<div style="margin-bottom:var(--space-6)">
       <div class="section-label">${esc(runtimeLabel)} · Run</div>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -2111,14 +2542,51 @@ export function renderRun(
     </div>
     ${meta}
     ${timeline}
+    ${filesSection}
     ${filterBar}
     ${runAnnotations}
     ${forksBlock}
-    ${stepCards.length ? stepCards : `<div class="empty">No steps in this run.</div>`}
-    ${COST_FOOTNOTE_HTML}`;
+    <div id="steps-anchor">${stepCards.length ? stepCards : `<div class="empty">No steps in this run.</div>`}</div>
+    ${COST_FOOTNOTE_HTML}
+    ${liveStamp}`;
 }
 
-function renderStepCard(s: Step, decision: string): string {
+/**
+ * v0.3 — pre-rendered fragment for the live-append flow. Wraps a step
+ * card + a detached timeline cell so the client can lift each into
+ * the right place in one parse (look up `[data-timeline-blk]` inside
+ * the wrapper and the rest goes to the steps anchor).
+ *
+ * Returning HTML instead of JSON keeps the rendering decisions
+ * (mono path padding, tab order, op color, copy-button setup) in one
+ * source of truth — server-side templates. The client JS stays a
+ * thin appender.
+ */
+export function renderStepCardFragment(
+  s: Step,
+  decision: string,
+  fileChanges: FileChange[] = [],
+): string {
+  const card = renderStepCard(s, decision, fileChanges);
+  const tlColor =
+    s.action.kind === "tool_call"
+      ? esc(s.action.tool_name ?? "tool")
+      : s.action.kind === "message"
+        ? "msg"
+        : s.action.kind === "thinking_only"
+          ? "•"
+          : esc(s.action.kind);
+  const timelineBlk = `<div class="blk ${esc(s.status)}" data-seq="${s.sequence}" data-timeline-blk="1" title="step ${s.sequence}: ${esc(s.action.kind)}${s.action.tool_name ? " " + esc(s.action.tool_name) : ""}" onclick="jumpToStep(${s.sequence})">${s.sequence}. ${tlColor}</div>`;
+  // Single wrapping element so the client can grab `firstElementChild`
+  // for the card; the timeline block is picked up by selector.
+  return `<div data-step-fragment="1">${card}${timelineBlk}</div>`;
+}
+
+function renderStepCard(
+  s: Step,
+  decision: string,
+  fileChanges: FileChange[] = [],
+): string {
   const status = `<span class="pill ${esc(s.status)}">${esc(s.status)}</span>`;
   const defaultText = s.action.kind === "message" ? (s.action.text ?? "").slice(0, 200) : "";
   const stepHeader = `<h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -2134,12 +2602,20 @@ function renderStepCard(s: Step, decision: string): string {
     </span>
   </h3>`;
 
+  // v0.3 — Files tab only renders when the step actually captured
+  // file changes. For read-only steps (Read/Glob/Grep/Task) we omit
+  // it to keep the tab bar quiet.
+  const hasFiles = fileChanges.length > 0;
+  const filesTabBtn = hasFiles
+    ? `<button class="tab-btn" data-tab="files" onclick="showTab('${esc(s.step_id)}','files')">Files <span class="tab-count">${fileChanges.length}</span></button>`
+    : "";
   const tabBar = `<div class="tab-bar">
     <button class="tab-btn active" data-tab="decision" onclick="showTab('${esc(s.step_id)}','decision')">Decision</button>
     <button class="tab-btn" data-tab="action" onclick="showTab('${esc(s.step_id)}','action')">Action</button>
     <button class="tab-btn" data-tab="outcome" onclick="showTab('${esc(s.step_id)}','outcome')">Outcome</button>
     <button class="tab-btn" data-tab="cost" onclick="showTab('${esc(s.step_id)}','cost')">Cost</button>
     <button class="tab-btn" data-tab="context" onclick="showTab('${esc(s.step_id)}','context')">Context</button>
+    ${filesTabBtn}
   </div>`;
 
   const decisionTab = `<div class="tab tab-decision"><pre class="body">${esc(prettyJson(decision))}</pre></div>`;
@@ -2173,7 +2649,185 @@ function renderStepCard(s: Step, decision: string): string {
     </p>
   </div>`;
 
-  return `<div class="step-card" id="step-${s.sequence}" data-step="${esc(s.step_id)}" data-step-seq="${s.sequence}" data-action-kind="${esc(s.action.kind)}" data-step-status="${esc(s.status)}">${stepHeader}${tabBar}${decisionTab}${actionTab}${outcomeTab}${costTab}${contextTab}</div>`;
+  const filesTab = hasFiles
+    ? `<div class="tab tab-files" style="display:none">${renderStepFilesPanel(fileChanges)}</div>`
+    : "";
+
+  return `<div class="step-card" id="step-${s.sequence}" data-step="${esc(s.step_id)}" data-step-seq="${s.sequence}" data-action-kind="${esc(s.action.kind)}" data-step-status="${esc(s.status)}">${stepHeader}${tabBar}${decisionTab}${actionTab}${outcomeTab}${costTab}${contextTab}${filesTab}</div>`;
+}
+
+/**
+ * v0.3 — render the Files tab body for one step. Per row: op badge,
+ * monospace path, +/- stats, flag chips, expandable unified diff.
+ * Binary + redacted + partial all surface inline so the user always
+ * knows what they're looking at.
+ */
+function renderStepFilesPanel(fcs: FileChange[]): string {
+  const stats = fcs.reduce(
+    (acc, fc) => ({
+      added: acc.added + fc.lines_added,
+      removed: acc.removed + fc.lines_removed,
+    }),
+    { added: 0, removed: 0 },
+  );
+  const header = `<div class="files-summary">
+    <span class="files-stat-add">+${stats.added}</span>
+    <span class="files-stat-rm">−${stats.removed}</span>
+    <span class="files-stat-count">${fcs.length} file${fcs.length === 1 ? "" : "s"}</span>
+  </div>`;
+  const rows = fcs
+    .map((fc, idx) => {
+      const renderedPath =
+        fc.op === "rename" && fc.old_path
+          ? `${esc(fc.old_path)} → ${esc(fc.path)}`
+          : esc(fc.path);
+      const flags: string[] = [];
+      if (fc.partial_diff) flags.push(`<span class="file-flag flag-partial">partial</span>`);
+      if (fc.patch_format === "binary") flags.push(`<span class="file-flag flag-binary">binary</span>`);
+      if (fc.redacted) flags.push(`<span class="file-flag flag-redacted">redacted</span>`);
+      const expandable = !fc.partial_diff && !!fc.patch_text;
+      const body = expandable
+        ? `<pre class="file-diff" style="display:none">${renderColorizedPatch(fc.patch_text!)}</pre>`
+        : fc.partial_diff
+          ? `<div class="file-diff-empty">partial — this change ran outside captured tools (e.g. Bash). Enable <code>spool watch --files</code> in v0.4 for full fidelity.</div>`
+          : fc.patch_format === "binary"
+            ? `<div class="file-diff-empty">binary file — ${esc(fc.path)} (${fc.size_before ?? "?"} → ${fc.size_after ?? "?"} bytes). <a href="/api/blob/${esc(fc.after_blob_ref ?? "")}" target="_blank">raw bytes</a></div>`
+            : "";
+      const rowId = `fc-${esc(fc.file_change_id)}-${idx}`;
+      return `<div class="file-row" data-op="${esc(fc.op)}">
+        <button class="file-row-head${expandable ? " expandable" : ""}"
+          ${expandable ? `onclick="toggleFileDiff('${rowId}')"` : ""}>
+          <span class="file-op file-op-${esc(fc.op)}">${opLetter(fc.op)}</span>
+          <span class="file-path mono">${renderedPath}</span>
+          <span class="file-stats"><span class="files-stat-add">+${fc.lines_added}</span> <span class="files-stat-rm">−${fc.lines_removed}</span></span>
+          ${flags.join(" ")}
+          ${expandable ? `<span class="file-row-caret">▾</span>` : ""}
+        </button>
+        <div id="${rowId}">${body}</div>
+      </div>`;
+    })
+    .join("");
+  return `${header}<div class="file-list">${rows}</div>`;
+}
+
+/** Colorize a unified-diff patch into spans the file-diff CSS picks up. */
+function renderColorizedPatch(patch: string): string {
+  return patch
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith("@@"))
+        return `<span class="diff-hunk">${esc(line)}</span>`;
+      if (line.startsWith("+") && !line.startsWith("+++"))
+        return `<span class="diff-add">${esc(line)}</span>`;
+      if (line.startsWith("-") && !line.startsWith("---"))
+        return `<span class="diff-del">${esc(line)}</span>`;
+      return esc(line);
+    })
+    .join("\n");
+}
+
+function opLetter(op: FileOp): string {
+  switch (op) {
+    case "create": return "A";
+    case "modify": return "M";
+    case "delete": return "D";
+    case "rename": return "R";
+    case "chmod":  return "X";
+  }
+}
+
+/**
+ * v0.3 §8.2 — "Files changed in this run" summary card below the
+ * run header. Collapses multiple changes to the same path into one
+ * row (op letter = the *terminal* op for that path).
+ */
+function renderRunFilesSummary(fcs: FileChange[], steps: Step[]): string {
+  if (fcs.length === 0) return "";
+  // Build the collapsed view + count steps touching each path.
+  const byPath = new Map<
+    string,
+    {
+      path: string;
+      terminalOp: FileOp;
+      lines_added: number;
+      lines_removed: number;
+      rename_from?: string;
+      any_partial: boolean;
+      any_binary: boolean;
+      step_ids: Set<string>;
+    }
+  >();
+  for (const fc of fcs) {
+    const cur = byPath.get(fc.path);
+    if (cur) {
+      cur.terminalOp = fc.op;
+      cur.lines_added += fc.lines_added;
+      cur.lines_removed += fc.lines_removed;
+      cur.any_partial = cur.any_partial || fc.partial_diff;
+      cur.any_binary = cur.any_binary || fc.patch_format === "binary";
+      cur.step_ids.add(fc.step_id);
+      if (fc.op === "rename" && fc.old_path) cur.rename_from = fc.old_path;
+    } else {
+      byPath.set(fc.path, {
+        path: fc.path,
+        terminalOp: fc.op,
+        lines_added: fc.lines_added,
+        lines_removed: fc.lines_removed,
+        rename_from: fc.op === "rename" ? fc.old_path : undefined,
+        any_partial: fc.partial_diff,
+        any_binary: fc.patch_format === "binary",
+        step_ids: new Set([fc.step_id]),
+      });
+    }
+  }
+  const rows = [...byPath.values()].sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  );
+  const totalAdded = rows.reduce((n, r) => n + r.lines_added, 0);
+  const totalRemoved = rows.reduce((n, r) => n + r.lines_removed, 0);
+  // Find each path's most recent touch (by step.sequence) so the "jump
+  // to last touch" click target is meaningful.
+  const seqByStepId = new Map<string, number>();
+  for (const s of steps) seqByStepId.set(s.step_id, s.sequence);
+  return `<details class="run-files-summary" open>
+    <summary>
+      <span class="section-label">Files changed in this run</span>
+      <span class="run-files-totals">
+        <span class="files-stat-add">+${totalAdded}</span>
+        <span class="files-stat-rm">−${totalRemoved}</span>
+        <span class="files-stat-count">${rows.length} file${rows.length === 1 ? "" : "s"}</span>
+      </span>
+    </summary>
+    <div class="run-files-list">
+      ${rows
+        .map((r) => {
+          const lastSeq = Math.max(
+            0,
+            ...[...r.step_ids].map((id) => seqByStepId.get(id) ?? 0),
+          );
+          const renderedPath =
+            r.terminalOp === "rename" && r.rename_from
+              ? `${esc(r.rename_from)} → ${esc(r.path)}`
+              : esc(r.path);
+          const flags: string[] = [];
+          if (r.any_partial) flags.push(`<span class="file-flag flag-partial">partial</span>`);
+          if (r.any_binary) flags.push(`<span class="file-flag flag-binary">binary</span>`);
+          return `<button class="run-file-row" data-op="${esc(r.terminalOp)}"
+              onclick="jumpToStep(${lastSeq})"
+              title="jump to step #${lastSeq} (last touch of ${esc(r.path)})">
+            <span class="file-op file-op-${esc(r.terminalOp)}">${opLetter(r.terminalOp)}</span>
+            <span class="file-path mono">${renderedPath}</span>
+            <span class="file-stats">
+              <span class="files-stat-add">+${r.lines_added}</span>
+              <span class="files-stat-rm">−${r.lines_removed}</span>
+            </span>
+            <span class="run-file-row-meta">${r.step_ids.size} step${r.step_ids.size === 1 ? "" : "s"}</span>
+            ${flags.join(" ")}
+          </button>`;
+        })
+        .join("")}
+    </div>
+  </details>`;
 }
 
 function prettyJson(maybeJson: string): string {
