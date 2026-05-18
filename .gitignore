@@ -6,3 +6,4 @@ dist/
 data/
 .env
 .env.local
+.claude/worktrees/stupefied-mestorf-bc1ac8/
