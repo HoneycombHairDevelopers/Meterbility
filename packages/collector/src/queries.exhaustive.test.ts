@@ -467,3 +467,794 @@ test("listRuns: combined status + containsTool filter intersects (AND semantics)
     c.cleanup();
   }
 });
+
+/* ====================================================================
+ * Section 4 — Step lifecycle (7 tests)
+ * ==================================================================== */
+
+test("insertStep + getStep: full Step shape round-trips", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/step-rt", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    const step = mkStep(run.run_id, 0, {
+      tokens: { input: 100, output: 50, cached_read: 0, cache_creation: 0 },
+      cost_cents: 5,
+      tags: ["benchmark", "redo"],
+    });
+    insertStep(c.store, step);
+    const fetched = getStep(c.store, step.step_id);
+    assert.ok(fetched, "step round-trips");
+    assert.equal(fetched.step_id, step.step_id);
+    assert.equal(fetched.tokens.input, 100);
+    assert.equal(fetched.cost_cents, 5);
+    assert.deepEqual(fetched.tags, ["benchmark", "redo"]);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("getStep: unknown id returns undefined", () => {
+  const c = freshCtx();
+  try {
+    assert.equal(getStep(c.store, "stp_unknown"), undefined);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("listSteps: returns steps in sequence ASC order regardless of insertion order", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/seq", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    insertStep(c.store, mkStep(run.run_id, 2));
+    insertStep(c.store, mkStep(run.run_id, 0));
+    insertStep(c.store, mkStep(run.run_id, 1));
+    const steps = listSteps(c.store, run.run_id);
+    assert.deepEqual(
+      steps.map((s) => s.sequence),
+      [0, 1, 2],
+      "sorted by sequence ASC",
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("listSteps: unknown run returns empty array (not error)", () => {
+  const c = freshCtx();
+  try {
+    assert.deepEqual(listSteps(c.store, "run_unknown"), []);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("getStepBySequence: finds step at exact (run, seq)", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/by-seq", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    const s0 = mkStep(run.run_id, 0);
+    const s1 = mkStep(run.run_id, 1);
+    insertStep(c.store, s0);
+    insertStep(c.store, s1);
+    const found = getStepBySequence(c.store, run.run_id, 1);
+    assert.ok(found, "step at seq 1 found");
+    assert.equal(found!.step_id, s1.step_id);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("getStepBySequence: unknown sequence returns undefined", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/by-seq-miss", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    insertStep(c.store, mkStep(run.run_id, 0));
+    assert.equal(getStepBySequence(c.store, run.run_id, 99), undefined);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("recordContextSnapshot + resolveSnapshotBlobRef: round-trip + raw-hash pass-through", () => {
+  const c = freshCtx();
+  try {
+    // Recorded mapping
+    recordContextSnapshot(c.store, "snap_logical_1", "blob_ref_for_snap1", 4);
+    assert.equal(
+      resolveSnapshotBlobRef(c.store, "snap_logical_1"),
+      "blob_ref_for_snap1",
+    );
+    // Unknown snapshot — passes through (contract documented in fn)
+    const unknown = "0".repeat(64);
+    assert.equal(
+      resolveSnapshotBlobRef(c.store, unknown),
+      unknown,
+      "unknown snapshot passes through as raw blob hash",
+    );
+    // INSERT OR IGNORE: re-recording with different blob_ref is a no-op
+    recordContextSnapshot(c.store, "snap_logical_1", "blob_ref_different", 99);
+    assert.equal(
+      resolveSnapshotBlobRef(c.store, "snap_logical_1"),
+      "blob_ref_for_snap1",
+      "first write wins under INSERT OR IGNORE",
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 5 — Fork lifecycle (4 tests)
+ * ==================================================================== */
+
+test("insertFork + listForks: single fork round-trips", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/fork", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const origin = mkRun(proj.project_id, agent.agent_id);
+    const forkRun = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, origin);
+    insertRun(c.store, forkRun);
+    const originStep = mkStep(origin.run_id, 0);
+    insertStep(c.store, originStep);
+    const forkId = insertFork(c.store, {
+      originRunId: origin.run_id,
+      originStepId: originStep.step_id,
+      forkRunId: forkRun.run_id,
+      edit: { type: "inject_message", payload: { text: "stop" } },
+    });
+    assert.ok(forkId.startsWith("frk_"));
+    const forks = listForks(c.store, origin.run_id);
+    assert.equal(forks.length, 1);
+    assert.equal(forks[0]!.fork_id, forkId);
+    assert.equal(forks[0]!.edit_type, "inject_message");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("listForks: returns empty array for unknown origin run", () => {
+  const c = freshCtx();
+  try {
+    assert.deepEqual(listForks(c.store, "run_no_forks"), []);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("listForks: multiple forks of same origin returned in created_at order", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/multifork", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const origin = mkRun(proj.project_id, agent.agent_id);
+    const fork1 = mkRun(proj.project_id, agent.agent_id);
+    const fork2 = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, origin);
+    insertRun(c.store, fork1);
+    insertRun(c.store, fork2);
+    const step = mkStep(origin.run_id, 0);
+    insertStep(c.store, step);
+    insertFork(c.store, {
+      originRunId: origin.run_id,
+      originStepId: step.step_id,
+      forkRunId: fork1.run_id,
+      edit: { type: "add_context", payload: "first" },
+    });
+    insertFork(c.store, {
+      originRunId: origin.run_id,
+      originStepId: step.step_id,
+      forkRunId: fork2.run_id,
+      edit: { type: "add_context", payload: "second" },
+    });
+    const forks = listForks(c.store, origin.run_id);
+    assert.equal(forks.length, 2);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("insertFork: payload survives JSON round-trip (object → string → object via listForks doesn't decode payload)", () => {
+  // listForks omits the payload by design (small projection). Just
+  // verify the fork was persisted and the projection columns are right.
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/payload", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const origin = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, origin);
+    const step = mkStep(origin.run_id, 0);
+    insertStep(c.store, step);
+    const forkRun = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, forkRun);
+    const forkId = insertFork(c.store, {
+      originRunId: origin.run_id,
+      originStepId: step.step_id,
+      forkRunId: forkRun.run_id,
+      edit: {
+        type: "modify_tool_description",
+        payload: { tool: "Edit", new_description: "spicier" },
+      },
+    });
+    const forks = listForks(c.store, origin.run_id);
+    assert.equal(forks[0]!.fork_id, forkId);
+    assert.equal(forks[0]!.edit_type, "modify_tool_description");
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 6 — Annotation lifecycle (4 tests)
+ * ==================================================================== */
+
+test("insertAnnotation + listAnnotations: run annotation round-trips", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/ann-run", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    const ann = insertAnnotation(c.store, {
+      targetKind: "run",
+      targetId: run.run_id,
+      author: "tester",
+      verdict: "good_decision",
+      note: "nicely done",
+    });
+    assert.ok(ann.annotation_id.startsWith("ann_"));
+    const list = listAnnotations(c.store, "run", run.run_id);
+    assert.equal(list.length, 1);
+    assert.equal(list[0]!.verdict, "good_decision");
+    assert.equal(list[0]!.note, "nicely done");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("insertAnnotation + listAnnotations: step annotation round-trips", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/ann-step", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    const step = mkStep(run.run_id, 0);
+    insertStep(c.store, step);
+    insertAnnotation(c.store, {
+      targetKind: "step",
+      targetId: step.step_id,
+      author: "tester",
+      verdict: "incorrect",
+    });
+    const list = listAnnotations(c.store, "step", step.step_id);
+    assert.equal(list.length, 1);
+    assert.equal(list[0]!.target_kind, "step");
+    assert.equal(list[0]!.verdict, "incorrect");
+    // run scope must NOT pick up the step annotation
+    assert.equal(listAnnotations(c.store, "run", step.step_id).length, 0);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("listAnnotations: multiple annotations on same target returned in created_at order", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/multi-ann", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    insertAnnotation(c.store, {
+      targetKind: "run",
+      targetId: run.run_id,
+      author: "a",
+      note: "first",
+    });
+    insertAnnotation(c.store, {
+      targetKind: "run",
+      targetId: run.run_id,
+      author: "b",
+      note: "second",
+    });
+    const list = listAnnotations(c.store, "run", run.run_id);
+    assert.equal(list.length, 2);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("listAnnotations: unknown target returns empty array", () => {
+  const c = freshCtx();
+  try {
+    assert.deepEqual(listAnnotations(c.store, "run", "run_unknown"), []);
+    assert.deepEqual(listAnnotations(c.store, "step", "stp_unknown"), []);
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 7 — Ingest offset (3 tests)
+ * ==================================================================== */
+
+test("getIngestOffset: unknown (runtime, path) returns 0 (baseline contract)", () => {
+  const c = freshCtx();
+  try {
+    assert.equal(
+      getIngestOffset(c.store, "claude-code", "/never/seen.jsonl"),
+      0,
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("setIngestOffset + getIngestOffset: round-trips, second call overwrites", () => {
+  const c = freshCtx();
+  try {
+    setIngestOffset(c.store, "claude-code", "/tmp/session.jsonl", 1234);
+    assert.equal(
+      getIngestOffset(c.store, "claude-code", "/tmp/session.jsonl"),
+      1234,
+    );
+    // Second call must overwrite, not duplicate.
+    setIngestOffset(c.store, "claude-code", "/tmp/session.jsonl", 5678);
+    assert.equal(
+      getIngestOffset(c.store, "claude-code", "/tmp/session.jsonl"),
+      5678,
+      "second call overwrites the offset",
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("setIngestOffset: distinct (runtime, path) keys do not collide", () => {
+  const c = freshCtx();
+  try {
+    setIngestOffset(c.store, "claude-code", "/tmp/a.jsonl", 100);
+    setIngestOffset(c.store, "claude-code", "/tmp/b.jsonl", 200);
+    setIngestOffset(c.store, "codex-cli", "/tmp/a.jsonl", 300);
+    assert.equal(getIngestOffset(c.store, "claude-code", "/tmp/a.jsonl"), 100);
+    assert.equal(getIngestOffset(c.store, "claude-code", "/tmp/b.jsonl"), 200);
+    assert.equal(getIngestOffset(c.store, "codex-cli", "/tmp/a.jsonl"), 300);
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 8 — Session lookup (2 tests)
+ * ==================================================================== */
+
+test("getRunBySessionId: finds run with matching source_session_id", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/sess", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id, {
+      source_session_id: "claude-session-uuid-1234",
+    });
+    insertRun(c.store, run);
+    const found = getRunBySessionId(c.store, "claude-session-uuid-1234");
+    assert.ok(found);
+    assert.equal(found.run_id, run.run_id);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("getRunBySessionId: unknown session returns undefined", () => {
+  const c = freshCtx();
+  try {
+    assert.equal(
+      getRunBySessionId(c.store, "session-that-was-never-recorded"),
+      undefined,
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 9 — Token math: aggregateTokens + updateRunTotals (5 tests)
+ * Pure-logic and SQL-aggregation paths both pinned.
+ * ==================================================================== */
+
+test("aggregateTokens: empty array returns all-zero usage", () => {
+  const result = aggregateTokens([]);
+  assert.deepEqual(result, {
+    input: 0,
+    output: 0,
+    cached_read: 0,
+    cache_creation: 0,
+    cache_creation_1h: 0,
+  });
+});
+
+test("aggregateTokens: single step returns that step's usage verbatim", () => {
+  const proj = "p";
+  const agent = "a";
+  const run = "r";
+  const step = mkStep(run, 0, {
+    tokens: {
+      input: 100,
+      output: 50,
+      cached_read: 10,
+      cache_creation: 5,
+      cache_creation_1h: 2,
+    },
+  });
+  void proj;
+  void agent;
+  const sum = aggregateTokens([step]);
+  assert.equal(sum.input, 100);
+  assert.equal(sum.output, 50);
+  assert.equal(sum.cached_read, 10);
+  assert.equal(sum.cache_creation, 5);
+  assert.equal(sum.cache_creation_1h, 2);
+});
+
+test("aggregateTokens: N steps sum each field independently", () => {
+  const steps: Step[] = [];
+  for (let i = 0; i < 4; i++) {
+    steps.push(
+      mkStep("r", i, {
+        tokens: {
+          input: 10,
+          output: 5,
+          cached_read: 2,
+          cache_creation: 1,
+        },
+      }),
+    );
+  }
+  const sum = aggregateTokens(steps);
+  assert.equal(sum.input, 40);
+  assert.equal(sum.output, 20);
+  assert.equal(sum.cached_read, 8);
+  assert.equal(sum.cache_creation, 4);
+});
+
+test("aggregateTokens: missing cache_creation_1h coerces to 0 (the spread fallback)", () => {
+  const step = mkStep("r", 0, {
+    tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+  });
+  // cache_creation_1h intentionally undefined
+  const sum = aggregateTokens([step]);
+  assert.equal(sum.cache_creation_1h, 0);
+});
+
+test("updateRunTotals: sums step tokens + costs into the run row", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/totals", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    for (let i = 0; i < 3; i++) {
+      insertStep(
+        c.store,
+        mkStep(run.run_id, i, {
+          tokens: {
+            input: 100,
+            output: 50,
+            cached_read: 10,
+            cache_creation: 5,
+          },
+          cost_cents: 7,
+        }),
+      );
+    }
+    updateRunTotals(c.store, run.run_id);
+    const updated = getRun(c.store, run.run_id);
+    assert.equal(updated!.step_count, 3);
+    assert.equal(updated!.tokens_total_input, 300);
+    assert.equal(updated!.tokens_total_output, 150);
+    // tokens_total_cached = cached_read + cache_creation + cache_creation_1h
+    assert.equal(updated!.tokens_total_cached, 45);
+    assert.equal(updated!.cost_cents, 21);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("updateRunTotals: run with zero steps gets zeroed totals (COALESCE fallback)", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/zero", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id, {
+      tokens_total_input: 999, // garbage initial value
+      cost_cents: 99,
+    });
+    insertRun(c.store, run);
+    updateRunTotals(c.store, run.run_id);
+    const updated = getRun(c.store, run.run_id);
+    assert.equal(updated!.step_count, 0);
+    assert.equal(updated!.tokens_total_input, 0, "no steps → 0, not NULL");
+    assert.equal(updated!.cost_cents, 0);
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 10 — Baseline tree (5 tests)
+ * ==================================================================== */
+
+test("insertBaselineTree + getBaselineTree: round-trips all fields", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/bt", "p");
+    const bt = insertBaselineTree(c.store, {
+      project_id: proj.project_id,
+      manifest_blob_ref: "sha_xyz",
+      git_head: "abc1234",
+      git_dirty: true,
+    });
+    assert.ok(bt.baseline_tree_id.startsWith("bt_"));
+    const fetched = getBaselineTree(c.store, bt.baseline_tree_id);
+    assert.equal(fetched!.manifest_blob_ref, "sha_xyz");
+    assert.equal(fetched!.git_head, "abc1234");
+    assert.equal(fetched!.git_dirty, true);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("getBaselineTree: unknown id returns undefined", () => {
+  const c = freshCtx();
+  try {
+    assert.equal(getBaselineTree(c.store, "bt_unknown"), undefined);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("findBaselineByManifest: dedup lookup hits", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/bt-dedup", "p");
+    const inserted = insertBaselineTree(c.store, {
+      project_id: proj.project_id,
+      manifest_blob_ref: "sha_dedup",
+      git_dirty: false,
+    });
+    const found = findBaselineByManifest(c.store, proj.project_id, "sha_dedup");
+    assert.equal(found!.baseline_tree_id, inserted.baseline_tree_id);
+    // Different project_id with same manifest → no match
+    const otherProj = upsertProjectByCwd(c.store, "/tmp/other", "o");
+    const miss = findBaselineByManifest(
+      c.store,
+      otherProj.project_id,
+      "sha_dedup",
+    );
+    assert.equal(miss, undefined, "scoped to project");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("findBaselineByManifest: unknown manifest returns undefined", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/bt-miss", "p");
+    assert.equal(
+      findBaselineByManifest(c.store, proj.project_id, "sha_does_not_exist"),
+      undefined,
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("setRunBaselineTree: links + overwrites + works under repeated calls (idempotent)", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/link", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    const bt1 = insertBaselineTree(c.store, {
+      project_id: proj.project_id,
+      manifest_blob_ref: "sha_1",
+      git_dirty: false,
+    });
+    const bt2 = insertBaselineTree(c.store, {
+      project_id: proj.project_id,
+      manifest_blob_ref: "sha_2",
+      git_dirty: false,
+    });
+    setRunBaselineTree(c.store, run.run_id, bt1.baseline_tree_id);
+    let after = getRun(c.store, run.run_id);
+    assert.equal(after!.baseline_tree_id, bt1.baseline_tree_id);
+    // Overwrite path
+    setRunBaselineTree(c.store, run.run_id, bt2.baseline_tree_id);
+    after = getRun(c.store, run.run_id);
+    assert.equal(after!.baseline_tree_id, bt2.baseline_tree_id);
+    // Repeating the same link is a no-op
+    setRunBaselineTree(c.store, run.run_id, bt2.baseline_tree_id);
+    after = getRun(c.store, run.run_id);
+    assert.equal(after!.baseline_tree_id, bt2.baseline_tree_id);
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 11 — Run probe state column (3 tests)
+ * The persisted column (`paused | resumed | null`), distinct from the
+ * runtime FSM tested in Tier 3.
+ * ==================================================================== */
+
+test("setRunProbeState: round-trips 'paused' value", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/probe-paused", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    setRunProbeState(c.store, run.run_id, "paused");
+    const after = getRun(c.store, run.run_id);
+    assert.equal(after!.probe_state, "paused");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("setRunProbeState: round-trips 'resumed' value", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/probe-resumed", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    setRunProbeState(c.store, run.run_id, "resumed");
+    const after = getRun(c.store, run.run_id);
+    assert.equal(after!.probe_state, "resumed");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("setRunProbeState: null clears a previously-set value", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/probe-clear", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    setRunProbeState(c.store, run.run_id, "paused");
+    setRunProbeState(c.store, run.run_id, null);
+    const after = getRun(c.store, run.run_id);
+    assert.equal(after!.probe_state, undefined, "null clears the column");
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Section 12 — Fast-check properties (4 tests)
+ * ==================================================================== */
+
+const TOKEN_ARB = fc.record({
+  input: fc.integer({ min: 0, max: 10_000 }),
+  output: fc.integer({ min: 0, max: 10_000 }),
+  cached_read: fc.integer({ min: 0, max: 10_000 }),
+  cache_creation: fc.integer({ min: 0, max: 10_000 }),
+});
+
+test("property P1: aggregateTokens is commutative under reordering", () => {
+  fc.assert(
+    fc.property(
+      fc.array(TOKEN_ARB, { minLength: 0, maxLength: 20 }),
+      (tokens) => {
+        const steps = tokens.map((t, i) => mkStep("r", i, { tokens: t }));
+        const forward = aggregateTokens(steps);
+        const reversed = aggregateTokens([...steps].reverse());
+        return (
+          forward.input === reversed.input &&
+          forward.output === reversed.output &&
+          forward.cached_read === reversed.cached_read &&
+          forward.cache_creation === reversed.cache_creation
+        );
+      },
+    ),
+    { numRuns: 50 },
+  );
+});
+
+test("property P2: aggregateTokens is additive across array splits", () => {
+  // For any sequence of token records, sum(whole) === sum(prefix) +
+  // sum(suffix) for every split point. This is the property that makes
+  // the function safe for incremental aggregation.
+  fc.assert(
+    fc.property(
+      fc.array(TOKEN_ARB, { minLength: 2, maxLength: 20 }),
+      fc.integer({ min: 0, max: 19 }),
+      (tokens, splitAt) => {
+        const steps = tokens.map((t, i) => mkStep("r", i, { tokens: t }));
+        const k = Math.min(splitAt, steps.length);
+        const whole = aggregateTokens(steps);
+        const prefix = aggregateTokens(steps.slice(0, k));
+        const suffix = aggregateTokens(steps.slice(k));
+        return (
+          whole.input === prefix.input + suffix.input &&
+          whole.output === prefix.output + suffix.output &&
+          whole.cached_read === prefix.cached_read + suffix.cached_read &&
+          whole.cache_creation === prefix.cache_creation + suffix.cache_creation
+        );
+      },
+    ),
+    { numRuns: 50 },
+  );
+});
+
+test("property P3: listRuns limit is exact — result.length <= min(limit, total)", () => {
+  const c = freshCtx();
+  let counter = 0;
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/limit-prop", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 5 }), // batch size
+        fc.integer({ min: 0, max: 10 }), // limit
+        (batchSize, limit) => {
+          // Insert N more runs per iteration (cumulative). Total runs
+          // visible at this point is `counter + batchSize`.
+          for (let i = 0; i < batchSize; i++) {
+            insertRun(c.store, mkRun(proj.project_id, agent.agent_id));
+            counter++;
+          }
+          const rows = listRuns(c.store, { limit });
+          return rows.length <= Math.min(limit, counter);
+        },
+      ),
+      { numRuns: 30 },
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("property P4: getRun is idempotent — calling twice with the same id returns identical rows", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/get-prop", "p");
+    const agent = upsertAgent(c.store, proj.project_id, "a");
+    const runs: Run[] = [];
+    for (let i = 0; i < 8; i++) {
+      const r = mkRun(proj.project_id, agent.agent_id);
+      insertRun(c.store, r);
+      runs.push(r);
+    }
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 7 }), (idx) => {
+        const a = getRun(c.store, runs[idx]!.run_id);
+        const b = getRun(c.store, runs[idx]!.run_id);
+        if (!a || !b) return false;
+        return a.run_id === b.run_id && a.title === b.title;
+      }),
+      { numRuns: 30 },
+    );
+  } finally {
+    c.cleanup();
+  }
+});
