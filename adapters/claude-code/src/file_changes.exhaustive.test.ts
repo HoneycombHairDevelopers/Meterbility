@@ -78,12 +78,23 @@ function buildSession(opts: {
     },
   ];
   if (opts.backupFor) {
+    const cwdPrefix = opts.cwd.replace(/\/+$/, "") + "/";
+    const relBackups: Record<string, { backupFileName: string | null }> = {};
+    for (const [absPath, entry] of Object.entries(opts.backupFor)) {
+      const rel = absPath.startsWith(cwdPrefix)
+        ? absPath.slice(cwdPrefix.length)
+        : absPath;
+      relBackups[rel] = entry;
+    }
     records.push({
       type: "file-history-snapshot",
       sessionId: opts.sessionId,
       timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: opts.backupFor,
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: relBackups,
+      },
     });
   }
   records.push({

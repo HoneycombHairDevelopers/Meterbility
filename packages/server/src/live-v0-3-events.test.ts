@@ -130,8 +130,11 @@ test("files:changed fires for a freshly ingested step that produced file_change 
       sessionId: "sess-fc-1",
       timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        [join(repoCwd, "src/greet.ts")]: { backupFileName: "bak-greet" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/greet.ts": { backupFileName: "bak-greet" },
+        },
       },
     },
     {

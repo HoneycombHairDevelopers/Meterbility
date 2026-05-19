@@ -72,8 +72,11 @@ test("ingest with captureBaseline=true (default) sets runs.baseline_tree_id on f
       type: "file-history-snapshot",
       sessionId: "sess-int-1", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        [join(repoCwd, "src/greet.ts")]: { backupFileName: "bak-greet" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/greet.ts": { backupFileName: "bak-greet" },
+        },
       },
     },
     {
@@ -138,8 +141,11 @@ test("ingest with captureBaseline=false leaves runs.baseline_tree_id unset", asy
       type: "file-history-snapshot",
       sessionId: "sess-int-2", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        [join(repoCwd, "src/x.ts")]: { backupFileName: "bak-x" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/x.ts": { backupFileName: "bak-x" },
+        },
       },
     },
     {
@@ -187,9 +193,10 @@ test("ingest with a missing cwd doesn't crash — run lands without baseline", a
       type: "file-history-snapshot",
       sessionId: "sess-int-gone", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/var/spool-test-deleted/repo-that-no-longer-exists/a.ts": {
-          backupFileName: "bak-a",
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "a.ts": { backupFileName: "bak-a" },
         },
       },
     },
@@ -234,8 +241,11 @@ test("baseline is captured once per run — re-ingest doesn't re-walk", async ()
       type: "file-history-snapshot",
       sessionId: "sess-int-once", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        [join(repoCwd, "src/z.ts")]: { backupFileName: "bak-z" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/z.ts": { backupFileName: "bak-z" },
+        },
       },
     },
     {
@@ -292,8 +302,11 @@ test("workingTreeAt(stepSeq=0) returns the baseline as captured", async () => {
       type: "file-history-snapshot",
       sessionId: "sess-int-base", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        [join(repoCwd, "src/a.ts")]: { backupFileName: "bak-a" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/a.ts": { backupFileName: "bak-a" },
+        },
       },
     },
     {
