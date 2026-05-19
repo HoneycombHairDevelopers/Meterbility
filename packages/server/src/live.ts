@@ -6,7 +6,14 @@ import {
   readState as readProbeState,
 } from "@spool/shared";
 import type { ProbeFsmState } from "@spool/shared";
-import { ingestSession, discoverSessions } from "@spool/claude-code-adapter";
+import {
+  ingestSession,
+  discoverSessions,
+  readSession,
+  probeRecords,
+  formatWarning,
+  type ShapeWarning,
+} from "@spool/claude-code-adapter";
 import {
   getRun,
   listFileChanges,
@@ -219,12 +226,50 @@ export class LiveInspector extends EventEmitter {
     // the operator with notifications for sessions that ended weeks ago.
     await this.tick({ silent: true });
     this.booted = true;
+    // Fire-and-forget shape probe against a sample of recent sessions —
+    // surfaces CC JSONL drift on day one instead of waiting for the
+    // parser to silently return wrong data. See shape_probe.ts.
+    void this.runShapeProbe().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn("[spool/shape-probe] probe failed (non-fatal):", err);
+    });
     this.timer = setInterval(() => {
       void this.tick().catch((err) => {
         // eslint-disable-next-line no-console
         console.error("[spool/live] tick error:", err);
       });
     }, this.opts.scanIntervalMs);
+  }
+
+  /**
+   * Sample the newest few sessions and validate their records against
+   * the shapes `types.ts` claims. One warning per unique drift hash
+   * (so a single schema change doesn't spam thousands of lines).
+   * Disabled when `SPOOL_DISABLE_SHAPE_PROBE` is set — useful for
+   * tests with intentionally minimal fixtures.
+   */
+  private async runShapeProbe(): Promise<void> {
+    if (process.env.SPOOL_DISABLE_SHAPE_PROBE) return;
+    const sessions = await discoverSessions();
+    // newest-first; cap so we don't read the whole history on boot.
+    const sample = sessions
+      .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+      .slice(0, 5);
+    if (sample.length === 0) return;
+    const allRecords: unknown[] = [];
+    for (const s of sample) {
+      try {
+        const parsed = await readSession(s.path);
+        for (const p of parsed) allRecords.push(p.record);
+      } catch {
+        // A single unreadable session shouldn't break the probe; skip it.
+      }
+    }
+    const warnings: ShapeWarning[] = probeRecords(allRecords);
+    for (const w of warnings) {
+      // eslint-disable-next-line no-console
+      console.warn(formatWarning(w));
+    }
   }
 
   stop(): void {
