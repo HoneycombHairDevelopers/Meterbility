@@ -7,7 +7,6 @@ import {
   isAssistant,
   isFileHistorySnapshot,
   type ClaudeContentBlock,
-  type ClaudeFileHistorySnapshotRecord,
 } from "./types.ts";
 import { diffLines } from "./diff.ts";
 import { isProbablyText } from "@spool/collector";
@@ -46,7 +45,10 @@ import { isProbablyText } from "@spool/collector";
  *   1. `file-history-snapshot.messageId` occasionally collides with a
  *      real message `uuid`. We always discriminate by record `type`
  *      first via `isFileHistorySnapshot`. Never key into the snapshot
- *      map by `messageId` and trust the result.
+ *      map by `messageId` and trust the result. The assistant linkage
+ *      we actually index on is the inner `snapshot.messageId` (stable
+ *      across initial + update records); the outer `messageId` gets a
+ *      fresh uuid on every update and is unsafe to key off.
  *
  *   2. The first JSONL line is nondeterministic. Our generator iterates
  *      the entire record stream; we never key off `records[0]`.
@@ -129,14 +131,25 @@ export async function extractFileChanges(
   const { records, stepByAssistantUuid, runId, cwd, sessionId, blobs } = args;
   const readBackup = args.readBackup ?? fsBackupReader;
 
-  // Build messageId → snapshot index. Discriminator-first per defense
-  // #1: only records whose `type === "file-history-snapshot"` get
-  // indexed, so a regular assistant uuid that happens to match a
-  // snapshot's messageId can never be misinterpreted.
-  const snapshotByMessageId = new Map<string, ClaudeFileHistorySnapshotRecord>();
+  // Build assistantUuid → merged-backups index. Discriminator-first per
+  // defense #1: only records whose `type === "file-history-snapshot"`
+  // are considered. The linkage to the assistant turn lives at
+  // `record.snapshot.messageId` (stable across initial + update
+  // records), not the outer `messageId` (which gets a fresh uuid on
+  // every update). Update records add more entries to the same turn,
+  // so we fold them into one map per assistant uuid.
+  const backupsByAssistantUuid = new Map<string, SnapshotBackups>();
   for (const { record } of records) {
     if (!isFileHistorySnapshot(record)) continue;
-    if (record.messageId) snapshotByMessageId.set(record.messageId, record);
+    const assistantUuid = record.snapshot?.messageId;
+    if (!assistantUuid) continue;
+    const entries = record.snapshot.trackedFileBackups;
+    if (!entries) continue;
+    const merged = backupsByAssistantUuid.get(assistantUuid) ?? {};
+    for (const [relPath, entry] of Object.entries(entries)) {
+      merged[relPath] = entry;
+    }
+    backupsByAssistantUuid.set(assistantUuid, merged);
   }
 
   const out: FileChangeInsert[] = [];
@@ -149,7 +162,7 @@ export async function extractFileChanges(
     if (!step) continue; // step builder collapsed this — fine, skip
 
     const blocks = arrayContent(record.message);
-    const snapshot = snapshotByMessageId.get(assistantUuid);
+    const backups = backupsByAssistantUuid.get(assistantUuid);
 
     // Intra-step sequence — UNIQUE(step_id, sequence) in the schema.
     // We reset per step and increment for every emitted row regardless
@@ -161,7 +174,7 @@ export async function extractFileChanges(
       if (block.type !== "tool_use") continue;
       const generated = await extractForToolUse({
         toolUse: block,
-        snapshot,
+        backups,
         runId,
         stepId: step.step_id,
         startingSequence: sequence,
@@ -178,9 +191,14 @@ export async function extractFileChanges(
   return out;
 }
 
+type SnapshotBackups = Record<
+  string,
+  { backupFileName: string | null; version?: number; backupTime?: string }
+>;
+
 interface PerToolArgs {
   toolUse: Extract<ClaudeContentBlock, { type: "tool_use" }>;
-  snapshot: ClaudeFileHistorySnapshotRecord | undefined;
+  backups: SnapshotBackups | undefined;
   runId: string;
   stepId: string;
   startingSequence: number;
@@ -682,7 +700,11 @@ async function readBackupForPath(
   args: PerToolArgs,
   absPath: string,
 ): Promise<Buffer | undefined> {
-  const entry = args.snapshot?.trackedFileBackups?.[absPath];
+  // trackedFileBackups is keyed by repo-relative path (CC writes
+  // entries like "tests/package.json"), but the tool inputs that
+  // reach us hold absolute paths. Normalize before the lookup.
+  const relPath = toRepoRelative(absPath, args.cwd);
+  const entry = args.backups?.[relPath];
   if (!entry) return undefined;
   if (entry.backupFileName === null) return undefined; // file didn't exist before
   return args.readBackup(args.sessionId, entry.backupFileName);

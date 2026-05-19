@@ -108,8 +108,11 @@ async function setupFixture(): Promise<{
       type: "file-history-snapshot",
       sessionId: "sess-cli-fix", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        [join(repoCwd, "src/greet.ts")]: { backupFileName: "bak-greet" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/greet.ts": { backupFileName: "bak-greet" },
+        },
       },
     },
     {

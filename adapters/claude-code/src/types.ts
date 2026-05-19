@@ -71,23 +71,33 @@ export interface ClaudeSystemRecord extends ClaudeRecordBase {
 }
 
 /**
- * v0.3 file-history-snapshot record (SPEC §3.4). Claude Code writes
- * one of these immediately before each modifying assistant turn — the
- * `trackedFileBackups` map names a backup blob per file the turn is
- * about to touch.
+ * v0.3 file-history-snapshot record. Claude Code emits one initial
+ * snapshot before each modifying turn (`isSnapshotUpdate: false`) and
+ * any number of follow-up update records (`isSnapshotUpdate: true`)
+ * as the turn touches more files. The captured bytes live under
+ * `.snapshot.trackedFileBackups`; the outer `messageId` gets a fresh
+ * uuid on every update, while `snapshot.messageId` keeps pointing at
+ * the assistant uuid the turn belongs to — that's the field that
+ * links a snapshot back to its Step.
  *
- * `messageId` points at the assistant message that will follow. We use
- * it to attribute the captured pre-edit bytes to a specific Step.
- *
- * `backupFileName: null` means "this file did not previously exist"
- * (i.e., the upcoming `op` is `create`). Non-null is the SHA Claude
- * chose at backup time; the file lives at
+ * Path keys in `trackedFileBackups` are repo-relative (e.g.
+ * `"src/index.ts"`), not absolute. `backupFileName: null` means the
+ * file didn't exist before the turn (the upcoming op is a `create`).
+ * Non-null is the SHA Claude chose at backup time; the file lives at
  * `<claudeFileHistoryDir>/<backupFileName>`.
  */
 export interface ClaudeFileHistorySnapshotRecord extends ClaudeRecordBase {
   type: "file-history-snapshot";
   messageId: string;
-  trackedFileBackups: Record<string, { backupFileName: string | null }>;
+  isSnapshotUpdate?: boolean;
+  snapshot: {
+    messageId: string;
+    trackedFileBackups: Record<
+      string,
+      { backupFileName: string | null; version?: number; backupTime?: string }
+    >;
+    timestamp?: string;
+  };
 }
 
 export type ClaudeRecord =

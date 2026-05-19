@@ -113,8 +113,11 @@ test("Edit tool produces one FileChange with op='modify', blob refs, and a unifi
       sessionId: "sess-edit",
       timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/src/greet.ts": { backupFileName: "bak-greet-v0" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/greet.ts": { backupFileName: "bak-greet-v0" },
+        },
       },
     },
     {
@@ -293,8 +296,11 @@ test("Write over an existing file → op='modify' with both blob refs set", asyn
       type: "file-history-snapshot",
       sessionId: "sess-w-m", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/src/x.ts": { backupFileName: "bak-x-v0" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/x.ts": { backupFileName: "bak-x-v0" },
+        },
       },
     },
     {
@@ -339,8 +345,11 @@ test("MultiEdit applies edits in order; final after_blob reflects all of them", 
       type: "file-history-snapshot",
       sessionId: "sess-me", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/src/conf.ts": { backupFileName: "bak-conf-v0" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/conf.ts": { backupFileName: "bak-conf-v0" },
+        },
       },
     },
     {
@@ -388,8 +397,11 @@ test("MultiEdit aborts cleanly if a later edit's old_string doesn't match", asyn
       type: "file-history-snapshot",
       sessionId: "sess-me-bad", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/src/x.ts": { backupFileName: "bak-x" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/x.ts": { backupFileName: "bak-x" },
+        },
       },
     },
     {
@@ -515,8 +527,11 @@ test("Bash `rm` of a tracked file → op='delete' with -N lines_removed and befo
       type: "file-history-snapshot",
       sessionId: "sess-rm", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/src/dead.ts": { backupFileName: "bak-dead-v0" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "src/dead.ts": { backupFileName: "bak-dead-v0" },
+        },
       },
     },
     {
@@ -604,9 +619,12 @@ test("Bash `rm` of multiple files emits one row each, in argument order, no (she
       type: "file-history-snapshot",
       sessionId: "sess-rm-m", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/a.ts": { backupFileName: "bak-a" },
-        // /tmp/proj/b.ts intentionally not tracked → stub branch
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "a.ts": { backupFileName: "bak-a" },
+          // /tmp/proj/b.ts intentionally not tracked → stub branch
+        },
       },
     },
     {
@@ -662,8 +680,11 @@ test("Bash `rm` chained with another command falls back to the (shell) stub", as
       type: "file-history-snapshot",
       sessionId: "sess-rm-c", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/a.ts": { backupFileName: "bak-a" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "a.ts": { backupFileName: "bak-a" },
+        },
       },
     },
     {
@@ -742,8 +763,11 @@ test("defense #1: snapshot.messageId colliding with a real message uuid does NOT
       type: "file-history-snapshot",
       sessionId: "sess-col", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "real_a1",  // <- the assistant uuid, not "collide"
-      trackedFileBackups: {
-        "/tmp/proj/src/y.ts": { backupFileName: "bak-y" },
+      snapshot: {
+        messageId: "real_a1",
+        trackedFileBackups: {
+          "src/y.ts": { backupFileName: "bak-y" },
+        },
       },
     },
     {
@@ -794,8 +818,11 @@ test("defense #2: nondeterministic first line (e.g., 'progress') doesn't break i
       type: "file-history-snapshot",
       sessionId: "sess-prog", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/z.ts": { backupFileName: "bak-z" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "z.ts": { backupFileName: "bak-z" },
+        },
       },
     },
     {
@@ -834,8 +861,11 @@ test("defense #4: missing backup file → partial_diff stub (not a dropped row)"
       type: "file-history-snapshot",
       sessionId: "sess-miss", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/missing.ts": { backupFileName: "bak-was-cleaned-up" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "missing.ts": { backupFileName: "bak-was-cleaned-up" },
+        },
       },
     },
     {
@@ -881,8 +911,11 @@ test("re-ingesting the same session doesn't double-write FileChanges", async () 
       type: "file-history-snapshot",
       sessionId: "sess-idemp", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/a.ts": { backupFileName: "bak-a" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "a.ts": { backupFileName: "bak-a" },
+        },
       },
     },
     {
@@ -927,8 +960,11 @@ test("multiple modifying steps in one run produce correctly attributed and order
       type: "file-history-snapshot",
       sessionId: "sess-multi", timestamp: "2026-05-15T00:00:00.500Z",
       messageId: "a1",
-      trackedFileBackups: {
-        "/tmp/proj/p.ts": { backupFileName: "bak-p-v0" },
+      snapshot: {
+        messageId: "a1",
+        trackedFileBackups: {
+          "p.ts": { backupFileName: "bak-p-v0" },
+        },
       },
     },
     {
@@ -955,8 +991,11 @@ test("multiple modifying steps in one run produce correctly attributed and order
       type: "file-history-snapshot",
       sessionId: "sess-multi", timestamp: "2026-05-15T00:00:02.500Z",
       messageId: "a2",
-      trackedFileBackups: {
-        "/tmp/proj/q.ts": { backupFileName: "bak-q-v0" },
+      snapshot: {
+        messageId: "a2",
+        trackedFileBackups: {
+          "q.ts": { backupFileName: "bak-q-v0" },
+        },
       },
     },
     {
