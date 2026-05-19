@@ -61,6 +61,7 @@
  * real pattern.
  */
 
+import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spoolHome } from "./paths.ts";
@@ -145,8 +146,14 @@ export function readState(runId: string, now: () => number = Date.now): ProbeRec
  * Coerce a parsed-JSON object back into a valid ProbeRecord. Unknown
  * fields are dropped; missing fields take safe defaults; bad state
  * strings collapse to "running" (the inert default).
+ *
+ * @internal — exported only so `probe.exhaustive.test.ts` can hit
+ *   every coercion branch directly without disk I/O ceremony.
+ *   `@spool/shared` is a workspace-private package (`"private": true`
+ *   in package.json) and isn't published to npm, so no external
+ *   consumer can depend on this surface.
  */
-function normalize(parsed: unknown, runId: string, nowMs: number): ProbeRecord {
+export function normalize(parsed: unknown, runId: string, nowMs: number): ProbeRecord {
   const o = (parsed ?? {}) as Partial<ProbeRecord>;
   const validStates: ProbeFsmState[] = ["running", "pause_requested", "paused"];
   const state = (validStates as string[]).includes(o.state as string)
@@ -189,7 +196,14 @@ function mutate(
   const next: ProbeRecord = { ...transform(current, nowMs), updated_at_ms: nowMs };
   const path = probeFilePath(runId);
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
+  // Unique tmp suffix per write. Concurrent writers MUST NOT share a
+  // `.tmp` filename — if they did, writer B's writeFileSync could land
+  // after writer A's renameSync consumed the tmp, and B's own rename
+  // would then ENOENT. The atomicity stress test in
+  // probe.exhaustive.test.ts caught this when a shared `${path}.tmp`
+  // was in use. Random hex is cheap and avoids a process-pid collision
+  // when one process drives many in-flight mutates.
+  const tmp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
   writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", "utf-8");
   renameSync(tmp, path);
   return next;
