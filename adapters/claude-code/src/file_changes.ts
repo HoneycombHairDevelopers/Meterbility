@@ -682,7 +682,7 @@ async function readBackupForPath(
   args: PerToolArgs,
   absPath: string,
 ): Promise<Buffer | undefined> {
-  const entry = args.snapshot?.trackedFileBackups[absPath];
+  const entry = args.snapshot?.trackedFileBackups?.[absPath];
   if (!entry) return undefined;
   if (entry.backupFileName === null) return undefined; // file didn't exist before
   return args.readBackup(args.sessionId, entry.backupFileName);

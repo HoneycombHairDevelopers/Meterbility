@@ -520,7 +520,11 @@ async function* buildSteps(args: BuildArgs): AsyncGenerator<Step> {
     if (approx) tags.push("cost:approx");
     if (thinking_only) tags.push("thinking_only");
 
-    const stepId = `stp_${randomUUID()}`;
+    // Deterministic so live re-ingest's INSERT OR REPLACE is a no-op
+    // instead of cascading away file_change rows that point at us.
+    const groupKey =
+      firstRecord.requestId ?? firstRecord.uuid ?? `anon_${group.firstIdx}`;
+    const stepId = `stp_${hashJson([runId, groupKey]).slice(0, 32)}`;
     const step: Step = {
       step_id: stepId,
       run_id: runId,
