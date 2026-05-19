@@ -1,8 +1,9 @@
 import pc from "picocolors";
 import { Store } from "@spool/collector";
+import { fmtCents, fmtTokens } from "@spool/shared";
 import type { Run, Step } from "@spool/shared";
 
-export { fmtCents, fmtTokens } from "@spool/shared";
+export { fmtCents, fmtTokens };
 
 export function openStore(): Store {
   return Store.open();
