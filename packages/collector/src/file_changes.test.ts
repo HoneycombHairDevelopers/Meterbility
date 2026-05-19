@@ -144,9 +144,13 @@ test("insertFileChange round-trips every field", async () => {
   store.close();
 });
 
-test("insertFileChange minimal payload (no optionals) survives round-trip", async () => {
+test("insertFileChange minimal payload (no optional metadata) survives round-trip", async () => {
   const store = fresh();
   const { runId, stepIds } = scaffold(store, 1);
+  // Minimum-required shape per the invariant validator: op='create'
+  // needs `after_blob_ref`. Everything else (tool_call_id, patch_text,
+  // encoding, line_endings, etc.) stays optional and should come back
+  // as undefined.
   const fc = insertFileChange(store, {
     run_id: runId,
     step_id: stepIds[0]!,
@@ -154,6 +158,7 @@ test("insertFileChange minimal payload (no optionals) survives round-trip", asyn
     derived_from: "tool_call",
     path: "x.txt",
     op: "create",
+    after_blob_ref: "blob_x_after",
     partial_diff: false,
     gitignored: false,
     bom: false,
@@ -164,7 +169,7 @@ test("insertFileChange minimal payload (no optionals) survives round-trip", asyn
   const fetched = getFileChange(store, fc.file_change_id)!;
   assert.equal(fetched.tool_call_id, undefined);
   assert.equal(fetched.before_blob_ref, undefined);
-  assert.equal(fetched.after_blob_ref, undefined);
+  assert.equal(fetched.after_blob_ref, "blob_x_after");
   assert.equal(fetched.patch_text, undefined);
   assert.equal(fetched.encoding, undefined);
   assert.equal(fetched.source_tool_input, undefined);
@@ -181,26 +186,31 @@ test("listFileChanges filters by runId, stepId, path, and step-sequence", async 
   insertFileChange(store, {
     run_id: runId, step_id: stepIds[0]!, sequence: 0,
     derived_from: "tool_call", path: "src/auth.ts", op: "modify",
+    before_blob_ref: "blob_auth_v0", after_blob_ref: "blob_auth_v1",
     partial_diff: false, gitignored: false, bom: false,
     lines_added: 1, lines_removed: 0, redacted: false,
   });
   insertFileChange(store, {
     run_id: runId, step_id: stepIds[0]!, sequence: 1,
     derived_from: "tool_call", path: "src/lib/x.ts", op: "create",
+    after_blob_ref: "blob_x_v0",
     partial_diff: false, gitignored: false, bom: false,
     lines_added: 10, lines_removed: 0, redacted: false,
   });
-  // step 1: rename old.ts → new.ts
+  // step 1: rename old.ts → new.ts (content preserved across rename)
   insertFileChange(store, {
     run_id: runId, step_id: stepIds[1]!, sequence: 0,
     derived_from: "tool_call", path: "src/new.ts", old_path: "src/old.ts",
-    op: "rename", partial_diff: false, gitignored: false, bom: false,
+    op: "rename",
+    before_blob_ref: "blob_old", after_blob_ref: "blob_old",
+    partial_diff: false, gitignored: false, bom: false,
     lines_added: 0, lines_removed: 0, redacted: false,
   });
   // step 2: delete auth.ts
   insertFileChange(store, {
     run_id: runId, step_id: stepIds[2]!, sequence: 0,
     derived_from: "tool_call", path: "src/auth.ts", op: "delete",
+    before_blob_ref: "blob_auth_v1",
     partial_diff: false, gitignored: false, bom: false,
     lines_added: 0, lines_removed: 5, redacted: false,
   });
@@ -409,11 +419,12 @@ test("workingTreeAt: create / modify / delete / rename / chmod compose correctly
     partial_diff: false, gitignored: false, bom: false,
     lines_added: 5, lines_removed: 0, redacted: false,
   });
-  // step 2: rename old.ts → new.ts
+  // step 2: rename old.ts → new.ts (content preserved across rename)
   insertFileChange(store, {
     run_id: runId, step_id: stepIds[2]!, sequence: 0,
     derived_from: "tool_call", path: "new.ts", old_path: "old.ts", op: "rename",
-    after_blob_ref: "blob_old", mode_after: 0o100644,
+    before_blob_ref: "blob_old", after_blob_ref: "blob_old",
+    mode_after: 0o100644,
     partial_diff: false, gitignored: false, bom: false,
     lines_added: 0, lines_removed: 0, redacted: false,
   });

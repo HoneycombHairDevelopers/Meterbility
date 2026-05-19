@@ -146,12 +146,14 @@ test("GET /api/runs/:id/files returns rows ordered by (step.seq, fc.seq)", async
     insertFileChange(store, {
       run_id: runId, step_id: stepIds[1]!, sequence: 0,
       derived_from: "tool_call", path: "z.ts", op: "modify",
+      before_blob_ref: "blob_z_v0", after_blob_ref: "blob_z_v1",
       partial_diff: false, gitignored: false, bom: false,
       lines_added: 1, lines_removed: 0, redacted: false,
     });
     insertFileChange(store, {
       run_id: runId, step_id: stepIds[0]!, sequence: 0,
       derived_from: "tool_call", path: "a.ts", op: "create",
+      after_blob_ref: "blob_a",
       partial_diff: false, gitignored: false, bom: false,
       lines_added: 10, lines_removed: 0, redacted: false,
     });
@@ -178,6 +180,7 @@ test("GET /api/runs/:id/files/diff?path=... filters and 400s without ?path=", as
     insertFileChange(store, {
       run_id: runId, step_id: stepIds[0]!, sequence: 0,
       derived_from: "tool_call", path: "src/auth.ts", op: "modify",
+      before_blob_ref: "blob_auth_v0", after_blob_ref: "blob_auth_v1",
       partial_diff: false, gitignored: false, bom: false,
       lines_added: 1, lines_removed: 1, redacted: false,
     });
@@ -208,12 +211,14 @@ test("GET /api/steps/:id/file_changes returns rows for one step", async () => {
     insertFileChange(store, {
       run_id: runId, step_id: stepIds[0]!, sequence: 0,
       derived_from: "tool_call", path: "a.ts", op: "create",
+      after_blob_ref: "blob_a",
       partial_diff: false, gitignored: false, bom: false,
       lines_added: 1, lines_removed: 0, redacted: false,
     });
     insertFileChange(store, {
       run_id: runId, step_id: stepIds[1]!, sequence: 0,
       derived_from: "tool_call", path: "b.ts", op: "create",
+      after_blob_ref: "blob_b",
       partial_diff: false, gitignored: false, bom: false,
       lines_added: 1, lines_removed: 0, redacted: false,
     });
@@ -238,6 +243,7 @@ test("GET /api/file_change/:id returns one row and 404s on unknown", async () =>
     const fc = insertFileChange(store, {
       run_id: runId, step_id: stepIds[0]!, sequence: 0,
       derived_from: "tool_call", path: "x.ts", op: "modify",
+      before_blob_ref: "blob_x_v0", after_blob_ref: "blob_x_v1",
       partial_diff: false, gitignored: false, bom: false,
       lines_added: 5, lines_removed: 2, redacted: false,
     });
@@ -321,6 +327,7 @@ test("/runs/:id stamps data-run-id, exposes #steps-anchor, and renders the Live 
     insertFileChange(store, {
       run_id: runId, step_id: step.step_id, sequence: 0,
       derived_from: "tool_call", path: "src/x.ts", op: "modify",
+      before_blob_ref: "blob_x_v0", after_blob_ref: "blob_x_v1",
       partial_diff: false, gitignored: false, bom: false,
       lines_added: 3, lines_removed: 1, redacted: false,
       patch_text: "@@ -1 +1 @@\n-old\n+new\n",

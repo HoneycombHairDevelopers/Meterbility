@@ -661,6 +661,114 @@ function safeJsonParse(s: string): unknown {
 }
 
 /**
+ * Thrown by `insertFileChange` when a candidate row violates the
+ * biconditional contract documented on `FileChange` in
+ * `packages/shared/src/types.ts:242-244`:
+ *
+ *   - `before_blob_ref` is null iff op === "create" OR partial_diff
+ *   - `after_blob_ref`  is null iff op === "delete" OR partial_diff
+ *   - op === "rename" requires `old_path`
+ *
+ * `chmod` is the documented exception — it's a mode-only operation
+ * and is exempt from both blob_ref biconditionals. The replay layer
+ * (`applyFileChange`) treats chmod blob refs as a no-op regardless,
+ * so accepting either shape is safe.
+ *
+ * Hard-fail by design: an adapter that produces an invariant-violating
+ * row would otherwise ship the malformation silently into the DB and
+ * surface as a downstream rendering or replay bug. Better to throw at
+ * the boundary.
+ */
+export class FileChangeInvariantError extends Error {
+  constructor(message: string) {
+    super(`FileChange invariant violation: ${message}`);
+    this.name = "FileChangeInvariantError";
+  }
+}
+
+/**
+ * Verify a candidate FileChange satisfies the contract on `FileChange`
+ * in `packages/shared/src/types.ts`. Throws `FileChangeInvariantError`
+ * with a clear message on the first violation. Pure; no side effects.
+ *
+ * Exported for direct testing.
+ */
+export function assertFileChangeInvariants(fc: {
+  op: FileChange["op"];
+  partial_diff: boolean;
+  before_blob_ref?: string;
+  after_blob_ref?: string;
+  old_path?: string;
+}): void {
+  // chmod is mode-only — exempt from blob_ref rules.
+  if (fc.op === "chmod") return;
+
+  // partial_diff overrides per-op rules: both blob refs MUST be null.
+  if (fc.partial_diff) {
+    if (fc.before_blob_ref !== undefined) {
+      throw new FileChangeInvariantError(
+        `partial_diff=true requires before_blob_ref to be null (got ${JSON.stringify(fc.before_blob_ref)})`,
+      );
+    }
+    if (fc.after_blob_ref !== undefined) {
+      throw new FileChangeInvariantError(
+        `partial_diff=true requires after_blob_ref to be null (got ${JSON.stringify(fc.after_blob_ref)})`,
+      );
+    }
+    return;
+  }
+
+  // Non-partial create: no prior state → before must be null; new
+  // content → after must be set.
+  if (fc.op === "create") {
+    if (fc.before_blob_ref !== undefined) {
+      throw new FileChangeInvariantError(
+        "op='create' requires before_blob_ref to be null",
+      );
+    }
+    if (fc.after_blob_ref === undefined) {
+      throw new FileChangeInvariantError(
+        "op='create' requires after_blob_ref to be set",
+      );
+    }
+    return;
+  }
+
+  // Non-partial delete: prior state captured → before set; no after.
+  if (fc.op === "delete") {
+    if (fc.before_blob_ref === undefined) {
+      throw new FileChangeInvariantError(
+        "op='delete' requires before_blob_ref to be set",
+      );
+    }
+    if (fc.after_blob_ref !== undefined) {
+      throw new FileChangeInvariantError(
+        "op='delete' requires after_blob_ref to be null",
+      );
+    }
+    return;
+  }
+
+  // modify + rename: both blob refs required for full-fidelity capture.
+  // If the adapter couldn't capture either side, it should set
+  // partial_diff=true (which short-circuited above).
+  if (fc.before_blob_ref === undefined) {
+    throw new FileChangeInvariantError(
+      `op='${fc.op}' requires before_blob_ref to be set (use partial_diff=true if not captured)`,
+    );
+  }
+  if (fc.after_blob_ref === undefined) {
+    throw new FileChangeInvariantError(
+      `op='${fc.op}' requires after_blob_ref to be set (use partial_diff=true if not captured)`,
+    );
+  }
+
+  if (fc.op === "rename" && fc.old_path === undefined) {
+    throw new FileChangeInvariantError("op='rename' requires old_path to be set");
+  }
+}
+
+/**
  * Insert a FileChange row. ID auto-generated if not provided.
  *
  * Idempotency: the schema's `UNIQUE(step_id, sequence)` constraint
@@ -671,6 +779,11 @@ function safeJsonParse(s: string): unknown {
  * `created_at` defaults to "now" if omitted — adapters usually want
  * this since they don't have a per-FileChange wall-clock from the
  * source.
+ *
+ * Validation: every row passes through `assertFileChangeInvariants`
+ * before the INSERT. Adapter bugs that would otherwise ship malformed
+ * rows surface here as a thrown `FileChangeInvariantError` rather
+ * than as a silent downstream replay bug.
  */
 export function insertFileChange(
   store: Store,
@@ -679,6 +792,7 @@ export function insertFileChange(
     created_at?: string;
   },
 ): FileChange {
+  assertFileChangeInvariants(fc);
   const id = fc.file_change_id ?? `fc_${randomUUID()}`;
   const created = fc.created_at ?? new Date().toISOString();
   store.db

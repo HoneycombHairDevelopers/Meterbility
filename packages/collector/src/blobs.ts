@@ -10,23 +10,42 @@ import {
 import type Database from "better-sqlite3";
 
 /**
- * Quick heuristic: a buffer with a NUL byte in the first 8 KB is almost
- * certainly binary. UTF-8 text, even Asian-script-heavy text, never
- * contains 0x00. Used to gate redaction so PNG / .woff2 / lockfile bytes
- * don't get round-tripped through `String#replace` and shredded.
+ * Two-stage heuristic for "is this buffer safe to send through the
+ * redaction pipeline?". Used to gate `redactBuffer` so PNG / .woff2 /
+ * lockfile / `.pyc` bytes don't get round-tripped through
+ * `String#replace` and shredded by U+FFFD substitution.
  *
- * Why "first 8 KB" and not the whole buffer: the test catches every real
- * binary format we care about (PNG signature has NULs in IHDR, .woff2
- * header is full of zeros, .pyc starts with a magic + NUL, ELF/Mach-O
- * obviously) and stays O(1) for multi-megabyte files. False negatives
- * (binary file with all-nonzero first 8 KB) are theoretically possible
- * but extraordinarily rare; callers who *know* they have binary should
- * pass `skipRedact: true` explicitly.
+ * Stage 1 — Full-buffer NUL scan. UTF-8 source code — even with CJK,
+ * emoji, every weird code point — never contains 0x00. A NUL byte
+ * anywhere is strong evidence of binary content. For files whose
+ * binary signature is at the start (PNG, ELF, .pyc, .woff2) this
+ * bails at byte 7-12 and is effectively O(1). Removing the previous
+ * 8KB cap closes the rare-but-real "binary file with all-non-NUL
+ * first 8KB" gap (gzip headers, some compressed formats can hit it).
+ *
+ * Stage 2 — Round-trip-length check. Even with no NUL, a buffer can
+ * still be invalid UTF-8 (stray continuation bytes, truncated multi-
+ * byte sequences). The redaction pipeline calls
+ * `Buffer.toString('utf-8')` which silently replaces invalid bytes
+ * with U+FFFD (3 encoded bytes per replacement). If the re-encoded
+ * length differs from the input, the round trip is lossy and would
+ * corrupt the caller's bytes. Classify as binary so the bytes survive.
+ *
+ * Both stages are O(n). Cost is dominated by the redaction pipeline
+ * itself (which also runs `toString` on the buffer), so this adds at
+ * most one extra full pass to the redact path. Callers who already
+ * know their bytes are binary can still pass `skipRedact: true` to
+ * skip both stages entirely.
  */
 export function isProbablyText(buf: Buffer): boolean {
-  const sampleEnd = Math.min(buf.length, 8192);
-  for (let i = 0; i < sampleEnd; i++) {
+  for (let i = 0; i < buf.length; i++) {
     if (buf[i] === 0) return false;
+  }
+  if (
+    buf.length > 0 &&
+    Buffer.byteLength(buf.toString("utf-8"), "utf-8") !== buf.length
+  ) {
+    return false;
   }
   return true;
 }
