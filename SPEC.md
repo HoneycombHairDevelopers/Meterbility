@@ -805,7 +805,7 @@ Single-user, local-only, Claude Code only, post-hoc only.
 - Spool CLI (`spool` command, `npx`-installable, TS).
 - Claude Code session capture (hook mode, reads from `~/.claude/` session storage).
 - Local SQLite + filesystem blob storage.
-- `spool inspect <run-id>` — terminal-rendered step timeline + step inspector.
+- `spool inspect <run-id>` — terminal-rendered step timeline + step inspector. Pass `--pretty-print` to render `decision`, `action`, `outcome`, and `cost` as schema-aware field layouts instead of raw JSON; the `context` and `files` tabs are unchanged. Default output stays raw so grep/jq pipelines keep working. The web step cards expose the same toggle per-step via a `Pretty (all tabs)` button that persists in `localStorage`.
 - `spool list` — recent runs with filters.
 - `spool fork <run-id> --at <step-id> --edit <edit-type>` — fork mechanism.
 - `spool diff <run-id-a> <run-id-b>` — trajectory diff.

@@ -24,6 +24,7 @@ import {
   openStore,
   statusColor,
 } from "../util.ts";
+import { reformatJsonString, prettyTab, type PrettyMode } from "@spool/server";
 
 export function registerInspectCommand(program: Command): void {
   program
@@ -39,9 +40,13 @@ export function registerInspectCommand(program: Command): void {
       "--diff",
       "When `--show files`, print the unified diff for each captured file",
     )
+    .option(
+      "--pretty-print",
+      "Render decision/action/outcome/cost tabs in a human-readable layout. Default is raw JSON. The context and files tabs are unchanged.",
+    )
     .action(async (
       runId: string,
-      opts: { at?: string; show: string; diff?: boolean },
+      opts: { at?: string; show: string; diff?: boolean; prettyPrint?: boolean },
     ) => {
       const store = openStore();
       try {
@@ -77,7 +82,7 @@ export function registerInspectCommand(program: Command): void {
             ? getStepBySequence(store, run.run_id, seq)
             : getStep(store, opts.at);
           if (!step) throw new Error(`step not found: ${opts.at}`);
-          await printStep(store, step, opts.show, opts.diff === true);
+          await printStep(store, step, opts.show, opts.diff === true, opts.prettyPrint === true);
         } else {
           console.log("");
           for (const s of steps) await printStepSummary(s);
@@ -148,6 +153,7 @@ async function printStep(
   step: Step,
   show: string,
   withDiff = false,
+  pretty = false,
 ): Promise<void> {
   console.log(pc.bold(`\nStep #${step.sequence}  ${pc.dim(step.step_id)}`));
   console.log(`  ${pc.dim("model")} ${step.model}`);
@@ -155,49 +161,93 @@ async function printStep(
   console.log(`  ${pc.dim("action")} ${actionLabel(step)}`);
 
   const showAll = show === "all";
+  const pmode: PrettyMode = "ansi";
+
   if (showAll || show === "action") {
-    console.log(pc.bold("\n  action"));
-    console.log(indent(JSON.stringify(step.action, null, 2)));
+    if (pretty) {
+      console.log("\n" + indent(prettyTab("action", step.action, { mode: pmode }), "  "));
+    } else {
+      console.log(pc.bold("\n  action"));
+      console.log(indent(JSON.stringify(step.action, null, 2)));
+    }
   }
   if (showAll || show === "outcome") {
-    console.log(pc.bold("\n  outcome"));
-    console.log(indent(JSON.stringify(step.outcome, null, 2)));
-    if (step.outcome.tool_result_ref) {
-      const text = await store.blobs.tryGetString(step.outcome.tool_result_ref);
-      if (text) {
-        console.log(pc.bold("\n  tool result (truncated)"));
-        console.log(indent(truncate(prettyJson(text), 2000)));
+    if (pretty) {
+      const toolResultText = step.outcome.tool_result_ref
+        ? (await store.blobs.tryGetString(step.outcome.tool_result_ref)) ?? undefined
+        : undefined;
+      console.log(
+        "\n" +
+          indent(
+            prettyTab("outcome", step.outcome, { mode: pmode, toolResultText }),
+            "  ",
+          ),
+      );
+    } else {
+      console.log(pc.bold("\n  outcome"));
+      console.log(indent(JSON.stringify(step.outcome, null, 2)));
+      if (step.outcome.tool_result_ref) {
+        const text = await store.blobs.tryGetString(step.outcome.tool_result_ref);
+        if (text) {
+          console.log(pc.bold("\n  tool result (truncated)"));
+          console.log(indent(truncate(reformatJsonString(text), 2000)));
+        }
       }
     }
   }
   if (showAll || show === "decision") {
     const text = await store.blobs.tryGetString(step.decision_ref);
     if (text) {
-      console.log(pc.bold("\n  decision"));
-      console.log(indent(truncate(prettyJson(text), 4000)));
+      if (pretty) {
+        console.log("\n" + indent(prettyTab("decision", text, { mode: pmode }), "  "));
+      } else {
+        console.log(pc.bold("\n  decision"));
+        console.log(indent(truncate(reformatJsonString(text), 4000)));
+      }
     }
   }
   if (showAll || show === "context") {
+    // --pretty-print is a no-op for context; the bespoke renderer wins.
     await printResolvedContext(store, step);
   }
   if (showAll || show === "cost") {
-    console.log(pc.bold("\n  cost"));
-    console.log(
-      indent(
-        JSON.stringify(
-          {
-            tokens: step.tokens,
-            latency_ms: step.latency_ms,
-            cost_cents: step.cost_cents,
-            tags: step.tags,
-          },
-          null,
-          2,
+    if (pretty) {
+      console.log(
+        "\n" +
+          indent(
+            prettyTab(
+              "cost",
+              {
+                tokens: step.tokens,
+                latency_ms: step.latency_ms,
+                cost_cents: step.cost_cents,
+                tags: step.tags,
+              },
+              { mode: pmode },
+            ),
+            "  ",
+          ),
+      );
+    } else {
+      console.log(pc.bold("\n  cost"));
+      console.log(
+        indent(
+          JSON.stringify(
+            {
+              tokens: step.tokens,
+              latency_ms: step.latency_ms,
+              cost_cents: step.cost_cents,
+              tags: step.tags,
+            },
+            null,
+            2,
+          ),
         ),
-      ),
-    );
+      );
+    }
   }
   if (showAll || show === "files") {
+    // --pretty-print is a no-op for files; the bespoke renderer wins.
     await printStepFiles(store, step, withDiff);
   }
 }
@@ -387,7 +437,7 @@ async function printResolvedContext(
         pc.bold(`\n  tool_definitions`) +
           pc.dim(` · ${c.text.length.toLocaleString()} chars · ${c.ref.slice(0, 12)}`),
       );
-      console.log(indent(truncate(prettyJson(c.text), 2000)));
+      console.log(indent(truncate(reformatJsonString(c.text), 2000)));
     } else if (c.type === "conversation_history") {
       console.log(
         pc.bold(`\n  conversation_history`) +
@@ -451,12 +501,4 @@ function indent(s: string, prefix = "    "): string {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + pc.dim(`\n… (${s.length - max} more chars)`) : s;
-}
-
-function prettyJson(maybe: string): string {
-  try {
-    return JSON.stringify(JSON.parse(maybe), null, 2);
-  } catch {
-    return maybe;
-  }
 }

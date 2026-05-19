@@ -8,3 +8,8 @@ data/
 .env.local
 .claude/worktrees/stupefied-mestorf-bc1ac8/
 /.claude/worktrees
+
+# Playwright
+test-results/
+playwright-report/
+packages/server/src/e2e/fixture.json

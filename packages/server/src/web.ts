@@ -34,6 +34,7 @@ import {
 } from "@spool/collector";
 import type { Store } from "@spool/collector";
 import { diffRuns } from "./diff.ts";
+import { DECISION_PREVIEW_LIMIT } from "./pretty.ts";
 import {
   renderShell,
   renderRunList,
@@ -259,13 +260,22 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       run.status === "in_progress"
         ? renderProbePanel(run.run_id, readProbeState(run.run_id))
         : "";
-    return c.html(
-      renderShell(
-        run.title ?? run.run_id,
-        renderRun(run, steps, annotations, forks, stepDecisions, fcByStep, probePanel),
-        shellOpts(),
-      ),
+    const shell = renderShell(
+      run.title ?? run.run_id,
+      renderRun(run, steps, annotations, forks, stepDecisions, fcByStep, probePanel),
+      shellOpts(),
     );
+    if (process.env.SPOOL_DEBUG && shell.length > 2_000_000) {
+      // Dev-only sentinel: pretty-print pre-renders both raw and pretty
+      // bodies for every step. For very long runs that doubled markup
+      // can push the page over the 2 MB threshold where switching to
+      // lazy-fetch becomes worth it. Surfaced via SPOOL_DEBUG so it
+      // never spams normal users.
+      console.warn(
+        `spool: run ${run.run_id.slice(0, 12)} page is ${(shell.length / 1024 / 1024).toFixed(1)}MB — consider lazy pretty fetch`,
+      );
+    }
+    return c.html(shell);
   });
 
   // v0.3 §8.5 — file-change JSON APIs. Used by the web UI for ad-hoc
@@ -1236,10 +1246,15 @@ async function loadDecisionPreviews(
   store: Store,
   steps: Step[],
 ): Promise<Map<string, string>> {
+  // Pretty-print mode needs enough of the decision blob to JSON.parse
+  // most outputs successfully. 32 kB covers ~99% of model outputs while
+  // capping memory cost. Anything truncated trips the
+  // `(truncated · view raw)` badge in pretty mode via the
+  // DECISION_PREVIEW_LIMIT contract in pretty.ts.
   const out = new Map<string, string>();
   for (const s of steps) {
     const text = await store.blobs.tryGetString(s.decision_ref);
-    if (text) out.set(s.step_id, text.slice(0, 4000));
+    if (text) out.set(s.step_id, text.slice(0, DECISION_PREVIEW_LIMIT));
   }
   return out;
 }

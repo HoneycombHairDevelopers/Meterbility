@@ -11,12 +11,14 @@
   ],
   "scripts": {
     "spool": "node --import tsx/esm packages/cli/src/index.ts",
-    "test": "node --import tsx/esm scripts/run-tests.ts"
+    "test": "node --import tsx/esm scripts/run-tests.ts",
+    "test:e2e": "playwright test"
   },
   "engines": {
     "node": ">=20.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^20.11.0",
     "fast-check": "^4.8.0",
     "tsx": "^4.7.0",

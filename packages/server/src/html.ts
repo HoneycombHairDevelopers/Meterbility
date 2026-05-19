@@ -2,6 +2,7 @@ import type { Annotation, FileChange, FileOp, ProbeRecord, Run, Step } from "@sp
 import type { DiffResult } from "./diff.ts";
 import type { FleetEntry } from "./live.ts";
 import type { RegressionResult, RegressionTest } from "./regression.ts";
+import { reformatJsonString, prettyTab, DECISION_PREVIEW_LIMIT } from "./pretty.ts";
 
 /**
  * Server-rendered HTML. Single bundle of styles + tiny vanilla JS for
@@ -890,6 +891,24 @@ const STYLES = `
   .step-card .row-actions button:hover {
     color: var(--text-primary); border-color: var(--border-strong); background: var(--surface-2);
   }
+  .step-card .row-actions button.pretty-toggle[aria-pressed="true"] {
+    color: var(--cerulean-300); border-color: var(--cerulean-400); background: rgba(56,189,248,0.08);
+  }
+
+  /* ─── Pretty-print color classes (matches CLI ANSI palette) ─────── */
+  pre.body.pretty .p-section { color: var(--text-primary); font-weight: 600; }
+  pre.body.pretty .p-key { color: var(--text-tertiary); }
+  pre.body.pretty .p-val { color: var(--text-primary); }
+  pre.body.pretty .p-str { color: var(--violet-400); }
+  pre.body.pretty .p-num { color: var(--cerulean-400); }
+  pre.body.pretty .p-bool { color: var(--cerulean-400); }
+  pre.body.pretty .p-null { color: var(--text-tertiary); }
+  pre.body.pretty .p-meta { color: var(--text-tertiary); }
+  pre.body.pretty .p-block { color: var(--text-tertiary); }
+  pre.body.pretty .p-ok { color: #22C55E; }
+  pre.body.pretty .p-error { color: var(--coral-400, #F87171); }
+  pre.body.pretty .p-pending { color: #F59E0B; }
+  pre.body.pretty .p-meta a { color: var(--cerulean-400); }
 
   /* ─── Code blocks (decision/action/outcome bodies) ──────────────── */
   pre.body {
@@ -1334,6 +1353,50 @@ function showTab(stepId, tab) {
   const btn = document.querySelector('[data-step="' + stepId + '"] .tab-btn[data-tab="' + tab + '"]');
   if (btn) btn.classList.add('active');
 }
+/* ─── Per-step pretty toggle ──────────────────────────────────────
+ * One button per step card flips all four tab bodies between raw
+ * and pretty. State persists in localStorage under
+ * spool:pretty:<run_id>:<step_id>. Live-appended step cards check
+ * this key when they mount so reload + SSE both restore correctly.
+ */
+function togglePretty(btn) {
+  const card = btn.closest('.step-card');
+  if (!card) return;
+  const runId = btn.dataset.runId;
+  const stepId = btn.dataset.stepId;
+  const key = 'spool:pretty:' + runId + ':' + stepId;
+  const turningOn = btn.getAttribute('aria-pressed') !== 'true';
+  applyPrettyState(card, turningOn);
+  try {
+    if (turningOn) localStorage.setItem(key, '1');
+    else localStorage.removeItem(key);
+  } catch (e) { /* private browsing — toggle still works, state lost on reload */ }
+}
+function applyPrettyState(card, pretty) {
+  const btn = card.querySelector('.pretty-toggle');
+  if (btn) btn.setAttribute('aria-pressed', pretty ? 'true' : 'false');
+  card.querySelectorAll('.tab .raw').forEach(el => {
+    if (pretty) el.style.display = 'none';
+    else el.style.removeProperty('display');
+  });
+  card.querySelectorAll('.tab .pretty').forEach(el => {
+    if (pretty) el.style.removeProperty('display');
+    else el.style.display = 'none';
+  });
+}
+function restorePrettyForCard(card) {
+  const btn = card.querySelector('.pretty-toggle');
+  if (!btn) return;
+  const runId = btn.dataset.runId;
+  const stepId = btn.dataset.stepId;
+  const key = 'spool:pretty:' + runId + ':' + stepId;
+  try {
+    if (localStorage.getItem(key) === '1') applyPrettyState(card, true);
+  } catch (e) { /* localStorage unavailable — leave default raw */ }
+}
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.step-card[data-step]').forEach(restorePrettyForCard);
+});
 function jumpToStep(seq, opts) {
   // Scroll the step CARD into view, not the timeline block (which shares
   // the data-seq attribute). Sticky header offset is handled in CSS via
@@ -1636,6 +1699,11 @@ function initLiveRunUpdates() {
           } else {
             main.appendChild(card);
           }
+          // The freshly-inserted card needs to honor any per-step
+          // pretty toggle the user set on prior cards' siblings via
+          // localStorage. Restore before any user interaction is
+          // possible. (See togglePretty / restorePrettyForCard.)
+          restorePrettyForCard(card);
         }
         if (tlBlock) {
           const tl = document.querySelector('.timeline');
@@ -2834,6 +2902,7 @@ function renderStepCard(
     <span class="row-actions" style="margin-left:auto">
       <button onclick="openForkModal('${esc(s.run_id)}', ${s.sequence}, ${JSON.stringify(defaultText)})">Fork from here</button>
       <button onclick="openAnnotateModal('step', '${esc(s.step_id)}')">Annotate</button>
+      <button class="pretty-toggle" data-step-id="${esc(s.step_id)}" data-run-id="${esc(s.run_id)}" aria-pressed="false" onclick="togglePretty(this)">Pretty (all tabs)</button>
     </span>
   </h3>`;
 
@@ -2853,13 +2922,40 @@ function renderStepCard(
     ${filesTabBtn}
   </div>`;
 
-  const decisionTab = `<div class="tab tab-decision"><pre class="body">${esc(prettyJson(decision))}</pre></div>`;
-  const actionTab = `<div class="tab tab-action" style="display:none"><pre class="body">${esc(JSON.stringify(s.action, null, 2))}</pre></div>`;
-  const outcomeTab = `<div class="tab tab-outcome" style="display:none"><pre class="body">${esc(JSON.stringify(s.outcome, null, 2))}</pre>${s.outcome.tool_result_ref
-    ? `<p><a href="/api/blob/${esc(s.outcome.tool_result_ref)}" target="_blank">view tool result (${esc(s.outcome.tool_result_ref.slice(0, 12))})</a></p>`
+  // Pre-render BOTH raw and pretty bodies server-side. The raw body
+  // matches the pre-PR output byte-for-byte; the pretty body is hidden
+  // by default and revealed when the user clicks the per-step Pretty
+  // toggle. Toggle state persists in localStorage so reloads survive.
+  const prettyOpts = { mode: "html" as const };
+  const prettyDecision = prettyTab("decision", decision, {
+    ...prettyOpts,
+    truncated: decision.length >= DECISION_PREVIEW_LIMIT,
+  });
+  const prettyAction = prettyTab("action", s.action, prettyOpts);
+  const prettyOutcome = prettyTab("outcome", s.outcome, {
+    ...prettyOpts,
+    rawBlobHref: s.outcome.tool_result_ref
+      ? `/api/blob/${s.outcome.tool_result_ref}`
+      : undefined,
+  });
+  const prettyCost = prettyTab(
+    "cost",
+    {
+      tokens: s.tokens,
+      latency_ms: s.latency_ms,
+      cost_cents: s.cost_cents,
+      tags: s.tags,
+    },
+    prettyOpts,
+  );
+
+  const decisionTab = `<div class="tab tab-decision"><pre class="body raw">${esc(reformatJsonString(decision))}</pre><pre class="body pretty" style="display:none">${prettyDecision}</pre></div>`;
+  const actionTab = `<div class="tab tab-action" style="display:none"><pre class="body raw">${esc(JSON.stringify(s.action, null, 2))}</pre><pre class="body pretty" style="display:none">${prettyAction}</pre></div>`;
+  const outcomeTab = `<div class="tab tab-outcome" style="display:none"><pre class="body raw">${esc(JSON.stringify(s.outcome, null, 2))}</pre>${s.outcome.tool_result_ref
+    ? `<p class="raw"><a href="/api/blob/${esc(s.outcome.tool_result_ref)}" target="_blank">view tool result (${esc(s.outcome.tool_result_ref.slice(0, 12))})</a></p>`
     : ""
-    }</div>`;
-  const costTab = `<div class="tab tab-cost" style="display:none"><pre class="body">${esc(
+    }<pre class="body pretty" style="display:none">${prettyOutcome}</pre></div>`;
+  const costTab = `<div class="tab tab-cost" style="display:none"><pre class="body raw">${esc(
     JSON.stringify(
       {
         model: s.model,
@@ -2871,7 +2967,7 @@ function renderStepCard(
       null,
       2,
     ),
-  )}</pre></div>`;
+  )}</pre><pre class="body pretty" style="display:none">${prettyCost}</pre></div>`;
   const contextTab = `<div class="tab tab-context" style="display:none">
     <p>
       <a href="/contexts/${esc(s.context_snapshot_id)}?run=${esc(s.run_id)}&step=${esc(s.step_id)}&seq=${s.sequence}" target="_blank">
@@ -3063,15 +3159,6 @@ function renderRunFilesSummary(fcs: FileChange[], steps: Step[]): string {
         .join("")}
     </div>
   </details>`;
-}
-
-function prettyJson(maybeJson: string): string {
-  try {
-    const obj = JSON.parse(maybeJson);
-    return JSON.stringify(obj, null, 2);
-  } catch {
-    return maybeJson;
-  }
 }
 
 export interface DiffRenderOptions {
@@ -3317,7 +3404,7 @@ function renderContextComponent(c: RenderedComponent): string {
       return `<div class="step-card">
         <div class="section-label">Tool definitions</div>
         <h3>${c.text.length.toLocaleString()} chars</h3>
-        <pre class="body">${esc(prettyJsonMaybe(c.text))}</pre>
+        <pre class="body">${esc(reformatJsonString(c.text))}</pre>
       </div>`;
 
     case "conversation_history":
@@ -3390,14 +3477,6 @@ function roleBadgeClass(role: string): string {
       return "badge--muted";
   }
 }
-function prettyJsonMaybe(s: string): string {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2);
-  } catch {
-    return s;
-  }
-}
-
 export interface SettingsPageData {
   slackWebhook?: string;
   slackWebhookFromEnv: boolean;

@@ -95,7 +95,7 @@ Spool maps the browser DevTools mental model onto agents. See [SPEC §4](SPEC.md
 | DevTools | Spool | v0.3 |
 |---|---|---|
 | Elements | Resolved context viewer (`/contexts/:id`) | ✅ |
-| Sources | Step inspector + fork-from-here (`spool inspect`, `spool fork`) | ✅ |
+| Sources | Step inspector + fork-from-here (`spool inspect`, `spool fork`); add `--pretty-print` for schema-aware tab rendering | ✅ |
 | Network | I/O Inspector (decision blob, tool results, files changed) | ✅ |
 | Performance | Cost + token + latency timeline (per step + per run) | ✅ |
 | Console | **Live Probe** — pause, inject, resume (`spool probe`, web panel) | ✅ |

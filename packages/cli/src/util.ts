@@ -2,27 +2,10 @@ import pc from "picocolors";
 import { Store } from "@spool/collector";
 import type { Run, Step } from "@spool/shared";
 
+export { fmtCents, fmtTokens } from "@spool/shared";
+
 export function openStore(): Store {
   return Store.open();
-}
-
-/**
- * Format a cost (stored in cents) as dollars. 2 decimals for anything
- * ≥ half a cent, 4 decimals for sub-cent costs so they don't collapse
- * to "$0.00". Matches the web UI's formatter so terminal and browser
- * never mix units.
- */
-export function fmtCents(cents: number): string {
-  const dollars = cents / 100;
-  if (dollars === 0) return "$0.00";
-  if (Math.abs(dollars) >= 0.005) return `$${dollars.toFixed(2)}`;
-  return `$${dollars.toFixed(4)}`;
-}
-
-export function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
 }
 
 export function statusColor(status: string): (s: string) => string {

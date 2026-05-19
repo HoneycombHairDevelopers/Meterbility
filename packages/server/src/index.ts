@@ -7,3 +7,4 @@ export * from "./live-heuristics.ts";
 export * from "./regression.ts";
 export * from "./continuation.ts";
 export * from "./slack.ts";
+export * from "./pretty.ts";
