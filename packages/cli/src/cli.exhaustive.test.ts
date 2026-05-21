@@ -413,6 +413,198 @@ test("export <unknown-id> exits non-zero", () => {
   }
 });
 
+/* ── v0.3 trace format tests ──────────────────────────────────────────
+ *
+ * Per SPEC-V0_3 §10 + §12: the exported trace declares itself
+ * spool_trace_version "0.3.0", carries `file_changes[]` and
+ * `baseline_trees[]`, and defaults to *omitting* file content blobs.
+ * `--include-file-blobs` opts back in (the export.include_file_blobs
+ * setting also flips the default).
+ */
+
+test("export v0.3: spool_trace_version is exactly 0.3.0", () => {
+  const fx = setupFixture({ stepCount: 1 });
+  try {
+    const r = runCli(["export", fx.runId!, "--no-blobs"], fx);
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    const parsed = JSON.parse(r.stdout) as { spool_trace_version: string };
+    assert.equal(parsed.spool_trace_version, "0.3.0");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("export v0.3: trace always carries file_changes[] and baseline_trees[]", () => {
+  const fx = setupFixture({ stepCount: 1 });
+  try {
+    const r = runCli(["export", fx.runId!, "--no-blobs"], fx);
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    const parsed = JSON.parse(r.stdout) as {
+      file_changes: unknown[];
+      baseline_trees: unknown[];
+    };
+    assert.ok(Array.isArray(parsed.file_changes));
+    assert.ok(Array.isArray(parsed.baseline_trees));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("export v0.3: file_changes[] surfaces inserted FileChange rows", async () => {
+  const fx = setupFixture({ stepCount: 1 });
+  try {
+    // Seed a FileChange into the fixture store directly. Re-open with
+    // the same SPOOL_HOME so the subprocess sees it.
+    const { Store, insertFileChange } = await import("@spool/collector");
+    const store = Store.open({ path: join(fx.home, "spool.db") });
+    try {
+      const after = await store.blobs.putString("created\n");
+      insertFileChange(store, {
+        run_id: fx.runId!,
+        step_id: fx.stepIds![0]!,
+        sequence: 0,
+        derived_from: "tool_call",
+        path: "src/new.ts",
+        op: "create",
+        after_blob_ref: after,
+        partial_diff: false,
+        gitignored: false,
+        bom: false,
+        lines_added: 1,
+        lines_removed: 0,
+        redacted: false,
+      });
+    } finally {
+      store.close();
+    }
+
+    const r = runCli(["export", fx.runId!, "--no-blobs"], fx);
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    const parsed = JSON.parse(r.stdout) as {
+      file_changes: Array<{ path: string; op: string }>;
+    };
+    assert.equal(parsed.file_changes.length, 1);
+    assert.equal(parsed.file_changes[0]!.path, "src/new.ts");
+    assert.equal(parsed.file_changes[0]!.op, "create");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("export v0.3: --include-file-blobs OFF by default, ON inlines file blobs", async () => {
+  const fx = setupFixture({ stepCount: 1 });
+  try {
+    const { Store, insertFileChange } = await import("@spool/collector");
+    const store = Store.open({ path: join(fx.home, "spool.db") });
+    let afterRef = "";
+    try {
+      afterRef = await store.blobs.putString("contents of file\n");
+      insertFileChange(store, {
+        run_id: fx.runId!,
+        step_id: fx.stepIds![0]!,
+        sequence: 0,
+        derived_from: "tool_call",
+        path: "src/z.ts",
+        op: "create",
+        after_blob_ref: afterRef,
+        partial_diff: false,
+        gitignored: false,
+        bom: false,
+        lines_added: 1,
+        lines_removed: 0,
+        redacted: false,
+      });
+    } finally {
+      store.close();
+    }
+
+    // Default — file content blob omitted (bug-reports get shared).
+    const offRun = runCli(["export", fx.runId!], fx);
+    assert.equal(offRun.status, 0, `stderr: ${offRun.stderr}`);
+    const offBody = JSON.parse(offRun.stdout) as {
+      blobs: Record<string, string>;
+    };
+    assert.equal(
+      offBody.blobs[afterRef],
+      undefined,
+      "file blob should be omitted by default",
+    );
+
+    // Opt-in — should include the blob bytes (base64 of the source).
+    const onRun = runCli(
+      ["export", fx.runId!, "--include-file-blobs"],
+      fx,
+    );
+    assert.equal(onRun.status, 0, `stderr: ${onRun.stderr}`);
+    const onBody = JSON.parse(onRun.stdout) as {
+      blobs: Record<string, string>;
+    };
+    assert.equal(
+      typeof onBody.blobs[afterRef],
+      "string",
+      "--include-file-blobs inlines the file content blob",
+    );
+    assert.equal(
+      Buffer.from(onBody.blobs[afterRef]!, "base64").toString("utf-8"),
+      "contents of file\n",
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("export v0.3: baseline_trees[] surfaces the run's attached baseline", async () => {
+  const fx = setupFixture({ stepCount: 1 });
+  try {
+    const { Store, insertBaselineTree, setRunBaselineTree, serializeManifest } =
+      await import("@spool/collector");
+    const store = Store.open({ path: join(fx.home, "spool.db") });
+    let manifestRef = "";
+    let baselineId = "";
+    try {
+      // Resolve the project_id the fixture seeded so the baseline FK lines up.
+      const projectId = (
+        store.db
+          .prepare("SELECT project_id FROM runs WHERE run_id = ?")
+          .get(fx.runId!) as { project_id: string }
+      ).project_id;
+      manifestRef = await store.blobs.putBuffer(
+        serializeManifest([
+          { path: "README.md", mode: 0o644, blob_ref: "blob_x" },
+        ]),
+      );
+      const bt = insertBaselineTree(store, {
+        project_id: projectId,
+        manifest_blob_ref: manifestRef,
+        git_head: "deadbeef",
+        git_dirty: false,
+      });
+      baselineId = bt.baseline_tree_id;
+      setRunBaselineTree(store, fx.runId!, baselineId);
+    } finally {
+      store.close();
+    }
+
+    const r = runCli(["export", fx.runId!], fx);
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    const parsed = JSON.parse(r.stdout) as {
+      baseline_trees: Array<{ baseline_tree_id: string; git_head: string }>;
+      blobs: Record<string, string>;
+    };
+    assert.equal(parsed.baseline_trees.length, 1);
+    assert.equal(parsed.baseline_trees[0]!.baseline_tree_id, baselineId);
+    assert.equal(parsed.baseline_trees[0]!.git_head, "deadbeef");
+    // Manifest is a structured index → always included per SPEC-V0_3 §12,
+    // even without --include-file-blobs.
+    assert.ok(
+      parsed.blobs[manifestRef],
+      "baseline manifest blob should be inlined even without --include-file-blobs",
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
 // ── web (long-running; test --help only) ────────────────────────────
 
 test("web --help lists port, host, and live options", () => {

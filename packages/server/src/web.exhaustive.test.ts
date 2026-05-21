@@ -980,3 +980,177 @@ test("export: GET /api/runs/:id/export returns trace shape; unknown id → 404",
     c.cleanup();
   }
 });
+
+/* ====================================================================
+ * v0.3 export — file_changes, baseline_trees, file-blob gating
+ *
+ * Per SPEC-V0_3 §10 + §12: the exported trace must carry
+ * `file_changes[]` and `baseline_trees[]`, declare itself as
+ * spool_trace_version "0.3.0", and *default* to omitting file content
+ * blobs (bug reports get shared). `?file_blobs=1` opts in.
+ * ==================================================================== */
+
+test("export v0.3: spool_trace_version is exactly 0.3.0", async () => {
+  const c = freshCtx();
+  try {
+    const { runId } = scaffoldRun(c.store);
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/export`),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { spool_trace_version: string };
+    assert.equal(body.spool_trace_version, "0.3.0");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("export v0.3: trace includes file_changes[] and baseline_trees[] even when empty", async () => {
+  const c = freshCtx();
+  try {
+    const { runId } = scaffoldRun(c.store);
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/export`),
+    );
+    const body = (await res.json()) as {
+      file_changes: unknown[];
+      baseline_trees: unknown[];
+    };
+    assert.ok(Array.isArray(body.file_changes), "file_changes is an array");
+    assert.equal(body.file_changes.length, 0);
+    assert.ok(Array.isArray(body.baseline_trees), "baseline_trees is an array");
+    assert.equal(body.baseline_trees.length, 0);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("export v0.3: file_changes[] surfaces inserted FileChange rows", async () => {
+  const c = freshCtx();
+  try {
+    const { runId, stepIds, projectId } = scaffoldRun(c.store, {
+      stepCount: 1,
+    });
+    // Insert a FileChange the run owns. Use a real before+after content
+    // blob so we can also assert blob-gating below.
+    const beforeRef = await c.store.blobs.putString("orig\n");
+    const afterRef = await c.store.blobs.putString("changed\n");
+    insertFileChange(c.store, {
+      run_id: runId,
+      step_id: stepIds[0]!,
+      sequence: 0,
+      derived_from: "tool_call",
+      path: "src/x.ts",
+      op: "modify",
+      before_blob_ref: beforeRef,
+      after_blob_ref: afterRef,
+      partial_diff: false,
+      gitignored: false,
+      bom: false,
+      lines_added: 1,
+      lines_removed: 1,
+      redacted: false,
+    });
+
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/export`),
+    );
+    const body = (await res.json()) as {
+      file_changes: Array<{ path: string; op: string; run_id: string }>;
+    };
+    assert.equal(body.file_changes.length, 1);
+    assert.equal(body.file_changes[0]!.path, "src/x.ts");
+    assert.equal(body.file_changes[0]!.op, "modify");
+    assert.equal(body.file_changes[0]!.run_id, runId);
+    void projectId;
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("export v0.3: baseline_trees[] surfaces the run's attached baseline", async () => {
+  const c = freshCtx();
+  try {
+    const { runId, projectId } = scaffoldRun(c.store);
+    // Manifest is a tiny serialized index — use the spec's helper so
+    // the blob is well-formed (matters for any consumer that re-parses).
+    const manifestRef = await c.store.blobs.putBuffer(
+      serializeManifest([{ path: "README.md", mode: 0o644, blob_ref: "blob_x" }]),
+    );
+    const bt = insertBaselineTree(c.store, {
+      project_id: projectId,
+      manifest_blob_ref: manifestRef,
+      git_head: "abc123",
+      git_dirty: false,
+    });
+    setRunBaselineTree(c.store, runId, bt.baseline_tree_id);
+
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/export`),
+    );
+    const body = (await res.json()) as {
+      baseline_trees: Array<{ baseline_tree_id: string; git_head: string }>;
+      blobs: Record<string, string>;
+    };
+    assert.equal(body.baseline_trees.length, 1);
+    assert.equal(body.baseline_trees[0]!.baseline_tree_id, bt.baseline_tree_id);
+    assert.equal(body.baseline_trees[0]!.git_head, "abc123");
+    // Manifest blob is structured — always inlined per SPEC-V0_3 §12.
+    assert.ok(
+      body.blobs[manifestRef],
+      "baseline manifest blob is included even without ?file_blobs=1",
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("export v0.3: file content blobs default OFF, opt-in via ?file_blobs=1", async () => {
+  const c = freshCtx();
+  try {
+    const { runId, stepIds } = scaffoldRun(c.store, { stepCount: 1 });
+    const afterRef = await c.store.blobs.putString("hello world\n");
+    insertFileChange(c.store, {
+      run_id: runId,
+      step_id: stepIds[0]!,
+      sequence: 0,
+      derived_from: "tool_call",
+      path: "src/y.ts",
+      op: "create",
+      after_blob_ref: afterRef,
+      partial_diff: false,
+      gitignored: false,
+      bom: false,
+      lines_added: 1,
+      lines_removed: 0,
+      redacted: false,
+    });
+
+    const app = buildApp(c.store);
+    // Default — should NOT inline file content blobs.
+    const off = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/export`),
+    );
+    const offBody = (await off.json()) as { blobs: Record<string, string> };
+    assert.ok(
+      offBody.blobs[afterRef] === undefined,
+      "file content blob should be omitted by default (bug-reports get shared)",
+    );
+
+    // Opt-in — should include it.
+    const on = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/export?file_blobs=1`),
+    );
+    const onBody = (await on.json()) as { blobs: Record<string, string> };
+    assert.ok(
+      typeof onBody.blobs[afterRef] === "string",
+      "?file_blobs=1 inlines the file content blob",
+    );
+  } finally {
+    c.cleanup();
+  }
+});

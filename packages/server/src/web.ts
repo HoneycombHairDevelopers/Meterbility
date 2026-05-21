@@ -11,6 +11,7 @@ import {
   setInject as probeSetInject,
 } from "@spool/shared";
 import {
+  getBaselineTree,
   getFileChange,
   getRun,
   getStep,
@@ -33,6 +34,7 @@ import {
   type SettingKey,
 } from "@spool/collector";
 import type { Store } from "@spool/collector";
+import { TRACE_FORMAT_VERSION } from "@spool/spec";
 import { diffRuns } from "./diff.ts";
 import { DECISION_PREVIEW_LIMIT } from "./pretty.ts";
 import {
@@ -1137,26 +1139,64 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     }
   });
 
-  // Run trace export
+  // Run trace export — Spool Trace Format 0.3.0
+  //
+  // Query params:
+  //   ?blobs=0             — skip blob inlining (refs only).
+  //   ?file_blobs=1        — inline file-content blobs as well as
+  //                          structural blobs. Default off per
+  //                          SPEC-V0_3 §10.4 (bug reports get shared).
+  //
+  // Baseline manifest blobs are always inlined when ?blobs=0 isn't
+  // passed — they're structured indexes, not redactable content.
+  // Patch text on each FileChange is always present (already
+  // routed through the redaction pass at capture time).
   app.get("/api/runs/:id/export", async (c) => {
     const run = getRun(store, c.req.param("id"));
     if (!run) return c.notFound();
     const includeBlobs = c.req.query("blobs") !== "0";
+    const includeFileBlobs = c.req.query("file_blobs") === "1";
     const steps = listSteps(store, run.run_id);
+    const file_changes = listFileChanges(store, { runId: run.run_id });
+    const baseline_trees = run.baseline_tree_id
+      ? [getBaselineTree(store, run.baseline_tree_id)].filter(
+          (bt): bt is NonNullable<typeof bt> => !!bt,
+        )
+      : [];
     const trace: Record<string, unknown> = {
-      spool_trace_version: "0.2.0",
+      spool_trace_version: TRACE_FORMAT_VERSION,
       run,
       steps,
+      file_changes,
+      baseline_trees,
     };
     if (includeBlobs) {
       const blobs: Record<string, string> = {};
-      const refs = new Set<string>();
-      for (const s of steps) {
-        refs.add(resolveSnapshotBlobRef(store, s.context_snapshot_id));
-        refs.add(s.decision_ref);
-        if (s.outcome.tool_result_ref) refs.add(s.outcome.tool_result_ref);
+      const fileBlobRefs = new Set<string>();
+      for (const fc of file_changes) {
+        if (fc.before_blob_ref) fileBlobRefs.add(fc.before_blob_ref);
+        if (fc.after_blob_ref) fileBlobRefs.add(fc.after_blob_ref);
       }
-      for (const r of refs) {
+      const structuralRefs = new Set<string>();
+      for (const s of steps) {
+        structuralRefs.add(
+          resolveSnapshotBlobRef(store, s.context_snapshot_id),
+        );
+        structuralRefs.add(s.decision_ref);
+        if (s.outcome.tool_result_ref) {
+          structuralRefs.add(s.outcome.tool_result_ref);
+        }
+      }
+      for (const bt of baseline_trees) {
+        if (bt.manifest_blob_ref) {
+          structuralRefs.add(bt.manifest_blob_ref);
+        }
+      }
+      const refsToInline = new Set<string>(structuralRefs);
+      if (includeFileBlobs) {
+        for (const r of fileBlobRefs) refsToInline.add(r);
+      }
+      for (const r of refsToInline) {
         const text = await store.blobs.tryGetString(r);
         if (text !== undefined) {
           blobs[r] = Buffer.from(text, "utf-8").toString("base64");

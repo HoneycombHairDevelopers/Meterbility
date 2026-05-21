@@ -19,7 +19,8 @@ export type SettingKey =
   | "fork.default_model"
   | "fork.default_max_iterations"
   | "anthropic.api_key"
-  | "postgres.url";
+  | "postgres.url"
+  | "export.include_file_blobs";
 
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db
