@@ -55,6 +55,17 @@ SAMPLES: Dict[str, str] = {
         "Pt8Qp4N4nvKBu+IZ9PMcN1zV7Z6OQ3xXrGGqv7sCAwEAAQJAIJLixBy2qpFo\n"
         "-----END RSA PRIVATE KEY-----"
     ),
+    # v0.3 extensions — kept byte-identical to the TS Tier 1 SAMPLES so
+    # the cross-language compat layer below has stable shared fixtures.
+    "slack-token": "xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx",
+    "jwt": (
+        "eyJhbGciOiJIUzI1NiJ9"
+        ".eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+        ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    ),
+    "stripe-live-key": "sk_live_eeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    # env-secret nukes the whole KEY=value line; sample is the full match.
+    "env-secret": "DATABASE_PASSWORD=hunter2longvaluefortesting",
 }
 
 # Plain text with no secret-shaped substrings. Used as both the
@@ -399,6 +410,190 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             spool_redact_off=True,
         )
 
+    # ── v0.3 extensions: slack-token × 6 scenarios ────────────────────
+
+    def test_slack_no_match(self) -> None:
+        self._assert_cell("slack-token", "no match (decoy)", PLAIN_PROSE, 0)
+
+    def test_slack_single_match(self) -> None:
+        self._assert_cell(
+            "slack-token",
+            "single match in middle",
+            f"prefix {SAMPLES['slack-token']} suffix\n",
+            1,
+        )
+
+    def test_slack_adjacent_matches(self) -> None:
+        self._assert_cell(
+            "slack-token",
+            "adjacent matches",
+            f"{SAMPLES['slack-token']} {SAMPLES['slack-token']}\n",
+            2,
+        )
+
+    def test_slack_start_of_buffer(self) -> None:
+        self._assert_cell(
+            "slack-token",
+            "match at start",
+            f"{SAMPLES['slack-token']} trailing prose here",
+            1,
+        )
+
+    def test_slack_multiline(self) -> None:
+        self._assert_cell(
+            "slack-token",
+            "multi-line",
+            f"line1: {SAMPLES['slack-token']}\nline2 prose\nline3: {SAMPLES['slack-token']}\n",
+            2,
+        )
+
+    def test_slack_spool_redact_off(self) -> None:
+        self._assert_cell(
+            "slack-token",
+            "SPOOL_REDACT=off",
+            f"prefix {SAMPLES['slack-token']} suffix\n",
+            0,
+            spool_redact_off=True,
+        )
+
+    # ── v0.3 extensions: jwt × 6 scenarios ────────────────────────────
+
+    def test_jwt_no_match(self) -> None:
+        self._assert_cell("jwt", "no match (decoy)", PLAIN_PROSE, 0)
+
+    def test_jwt_single_match(self) -> None:
+        self._assert_cell(
+            "jwt",
+            "single match in middle",
+            f"prefix {SAMPLES['jwt']} suffix\n",
+            1,
+        )
+
+    def test_jwt_adjacent_matches(self) -> None:
+        self._assert_cell(
+            "jwt",
+            "adjacent matches",
+            f"{SAMPLES['jwt']} {SAMPLES['jwt']}\n",
+            2,
+        )
+
+    def test_jwt_start_of_buffer(self) -> None:
+        self._assert_cell(
+            "jwt",
+            "match at start",
+            f"{SAMPLES['jwt']} trailing prose here",
+            1,
+        )
+
+    def test_jwt_multiline(self) -> None:
+        self._assert_cell(
+            "jwt",
+            "multi-line",
+            f"line1: {SAMPLES['jwt']}\nline2 prose\nline3: {SAMPLES['jwt']}\n",
+            2,
+        )
+
+    def test_jwt_spool_redact_off(self) -> None:
+        self._assert_cell(
+            "jwt",
+            "SPOOL_REDACT=off",
+            f"prefix {SAMPLES['jwt']} suffix\n",
+            0,
+            spool_redact_off=True,
+        )
+
+    # ── v0.3 extensions: stripe-live-key × 6 scenarios ────────────────
+
+    def test_stripe_no_match(self) -> None:
+        self._assert_cell("stripe-live-key", "no match (decoy)", PLAIN_PROSE, 0)
+
+    def test_stripe_single_match(self) -> None:
+        self._assert_cell(
+            "stripe-live-key",
+            "single match in middle",
+            f"prefix {SAMPLES['stripe-live-key']} suffix\n",
+            1,
+        )
+
+    def test_stripe_adjacent_matches(self) -> None:
+        self._assert_cell(
+            "stripe-live-key",
+            "adjacent matches",
+            f"{SAMPLES['stripe-live-key']} {SAMPLES['stripe-live-key']}\n",
+            2,
+        )
+
+    def test_stripe_start_of_buffer(self) -> None:
+        self._assert_cell(
+            "stripe-live-key",
+            "match at start",
+            f"{SAMPLES['stripe-live-key']} trailing prose here",
+            1,
+        )
+
+    def test_stripe_multiline(self) -> None:
+        self._assert_cell(
+            "stripe-live-key",
+            "multi-line",
+            f"line1: {SAMPLES['stripe-live-key']}\nline2 prose\nline3: {SAMPLES['stripe-live-key']}\n",
+            2,
+        )
+
+    def test_stripe_spool_redact_off(self) -> None:
+        self._assert_cell(
+            "stripe-live-key",
+            "SPOOL_REDACT=off",
+            f"prefix {SAMPLES['stripe-live-key']} suffix\n",
+            0,
+            spool_redact_off=True,
+        )
+
+    # ── v0.3 extensions: env-secret × 6 scenarios ─────────────────────
+
+    def test_env_secret_no_match(self) -> None:
+        self._assert_cell("env-secret", "no match (decoy)", PLAIN_PROSE, 0)
+
+    def test_env_secret_single_match(self) -> None:
+        self._assert_cell(
+            "env-secret",
+            "single match in middle",
+            f"prefix {SAMPLES['env-secret']} suffix\n",
+            1,
+        )
+
+    def test_env_secret_adjacent_matches(self) -> None:
+        self._assert_cell(
+            "env-secret",
+            "adjacent matches",
+            f"{SAMPLES['env-secret']} {SAMPLES['env-secret']}\n",
+            2,
+        )
+
+    def test_env_secret_start_of_buffer(self) -> None:
+        self._assert_cell(
+            "env-secret",
+            "match at start",
+            f"{SAMPLES['env-secret']} trailing prose here",
+            1,
+        )
+
+    def test_env_secret_multiline(self) -> None:
+        self._assert_cell(
+            "env-secret",
+            "multi-line",
+            f"line1: {SAMPLES['env-secret']}\nline2 prose\nline3: {SAMPLES['env-secret']}\n",
+            2,
+        )
+
+    def test_env_secret_spool_redact_off(self) -> None:
+        self._assert_cell(
+            "env-secret",
+            "SPOOL_REDACT=off",
+            f"prefix {SAMPLES['env-secret']} suffix\n",
+            0,
+            spool_redact_off=True,
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Section 2 — Cross-rule interactions (3 tests)
@@ -458,6 +653,11 @@ class TestRedactCrossRule(IsolatedRedactEnv):
             f"creds={SAMPLES['github-token']}\n"
             f"{SAMPLES['aws-access-key']}\n"
             f"{SAMPLES['private-key']}\n"
+            # v0.3 extensions — same idempotence contract.
+            f"slack={SAMPLES['slack-token']}\n"
+            f"auth={SAMPLES['jwt']}\n"
+            f"pay={SAMPLES['stripe-live-key']}\n"
+            f"{SAMPLES['env-secret']}\n"
         )
         once, _ = redact_string(text)
         twice, twice_counts = redact_string(once)
@@ -678,6 +878,51 @@ class TestRedactCrossLanguageCompat(IsolatedRedactEnv):
             f"中文 emoji 🎉 {SAMPLES['github-token']}\n"
         )
         self._assert_compat("unicode + secrets", text)
+
+    # ── v0.3 extensions: cross-lang compat for each new rule ──────────
+    # Each test pins byte-identical output between the Python and TS
+    # implementations of the same rule. Any drift fails immediately.
+
+    def test_compat_slack_token(self) -> None:
+        self._assert_compat(
+            "slack token in middle",
+            f"line: {SAMPLES['slack-token']}\n",
+        )
+
+    def test_compat_slack_webhook_url(self) -> None:
+        self._assert_compat(
+            "slack webhook url",
+            "POST https://hooks.slack.com/services/T01ABCDEFGH/B01ABCDEFGH/abc123def456ghi789jkl012\n",
+        )
+
+    def test_compat_jwt(self) -> None:
+        self._assert_compat(
+            "naked jwt",
+            f"cookie=auth_token={SAMPLES['jwt']};\n",
+        )
+
+    def test_compat_stripe_live_key(self) -> None:
+        self._assert_compat(
+            "stripe live key",
+            f"STRIPE = '{SAMPLES['stripe-live-key']}'\n",
+        )
+
+    def test_compat_env_secret(self) -> None:
+        self._assert_compat(
+            "env secret line",
+            f"{SAMPLES['env-secret']}\nLOG_LEVEL=INFO\n",
+        )
+
+    def test_compat_all_v03_rules_mixed(self) -> None:
+        """One buffer with one match for each v0.3 rule. Pins that rule
+        ordering + placeholder format stay byte-identical end-to-end."""
+        text = (
+            f"slack: {SAMPLES['slack-token']}\n"
+            f"jwt: {SAMPLES['jwt']}\n"
+            f"stripe: {SAMPLES['stripe-live-key']}\n"
+            f"{SAMPLES['env-secret']}\n"
+        )
+        self._assert_compat("all v0.3 rules mixed", text)
 
 
 if __name__ == "__main__":

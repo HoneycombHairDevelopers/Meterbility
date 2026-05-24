@@ -28,6 +28,12 @@ const SAMPLES: Record<string, string> = {
     "MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1\n" +
     "Pt8Qp4N4nvKBu+IZ9PMcN1zV7Z6OQ3xXrGGqv7sCAwEAAQJAIJLixBy2qpFo\n" +
     "-----END RSA PRIVATE KEY-----",
+  // v0.3 extensions
+  "slack-token": "xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx",
+  jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+  "stripe-live-key": "sk_live_eeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  // env-secret nukes the whole KEY=value line; sample is the full match.
+  "env-secret": "DATABASE_PASSWORD=hunter2longvaluefortesting",
 };
 
 /**
@@ -207,7 +213,12 @@ test("cross-rule: placeholder is inert under all rules — redact(redact(x)) ===
     `${SAMPLES["bearer"]!}\n` +
     `creds=${SAMPLES["github-token"]!}\n` +
     `${SAMPLES["aws-access-key"]!}\n` +
-    `${SAMPLES["private-key"]!}\n`;
+    `${SAMPLES["private-key"]!}\n` +
+    // v0.3 extensions — same idempotence contract.
+    `slack=${SAMPLES["slack-token"]!}\n` +
+    `auth=${SAMPLES["jwt"]!}\n` +
+    `pay=${SAMPLES["stripe-live-key"]!}\n` +
+    `${SAMPLES["env-secret"]!}\n`;
   const once = redactString(input);
   const twice = redactString(once.text);
   assert.equal(twice.text, once.text, "second pass is a no-op");

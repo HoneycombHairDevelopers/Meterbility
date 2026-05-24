@@ -4,6 +4,7 @@ import {
   insertBaselineTree,
   insertFileChange,
   setRunBaselineTree,
+  setSetting,
 } from "@spool/collector";
 import { serializeManifest } from "@spool/collector";
 import { buildApp } from "./web.ts";
@@ -1150,6 +1151,152 @@ test("export v0.3: file content blobs default OFF, opt-in via ?file_blobs=1", as
       typeof onBody.blobs[afterRef] === "string",
       "?file_blobs=1 inlines the file content blob",
     );
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * v0.3 §11 — Bearer-token gate on /api/* routes
+ *
+ * Per SPEC-V0_3 §11 the middleware gates JSON /api/* when the
+ * `web.bind_token` setting is set. HTML pages (/, /runs, …) are
+ * intentionally NOT gated. The default (no token set) is a no-op so
+ * the local-loopback workflow is unchanged.
+ * ==================================================================== */
+
+test("auth: no web.bind_token → /api/* is unauthenticated (current behavior)", async () => {
+  const c = freshCtx();
+  try {
+    const { runId } = scaffoldRun(c.store);
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/export`),
+    );
+    assert.equal(res.status, 200, "no token set → no auth required");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("auth: web.bind_token set + no Authorization header → 401", async () => {
+  const c = freshCtx();
+  try {
+    scaffoldRun(c.store);
+    setSetting(c.store, "web.bind_token", "s3cret-token-value");
+    const app = buildApp(c.store);
+    const res = await app.fetch(new Request("http://x/api/runs"));
+    assert.equal(res.status, 401);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /unauthorized/i);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("auth: web.bind_token set + wrong Bearer token → 401", async () => {
+  const c = freshCtx();
+  try {
+    scaffoldRun(c.store);
+    setSetting(c.store, "web.bind_token", "s3cret-token-value");
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request("http://x/api/runs", {
+        headers: { Authorization: "Bearer wrong-token" },
+      }),
+    );
+    assert.equal(res.status, 401);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("auth: web.bind_token set + correct Bearer token → 200", async () => {
+  const c = freshCtx();
+  try {
+    scaffoldRun(c.store);
+    setSetting(c.store, "web.bind_token", "s3cret-token-value");
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request("http://x/api/runs", {
+        headers: { Authorization: "Bearer s3cret-token-value" },
+      }),
+    );
+    assert.equal(res.status, 200);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("auth: web.bind_token set + non-Bearer scheme (Basic) → 401", async () => {
+  const c = freshCtx();
+  try {
+    scaffoldRun(c.store);
+    setSetting(c.store, "web.bind_token", "s3cret-token-value");
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request("http://x/api/runs", {
+        headers: { Authorization: "Basic czNjcmV0LXRva2VuLXZhbHVl" },
+      }),
+    );
+    assert.equal(res.status, 401);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("auth: HTML routes (/, /runs) are NOT gated even when token is set", async () => {
+  // Threat model is "the DATA shouldn't leak". The UI shell being
+  // browsable is acceptable — the shell makes the same gated /api/*
+  // calls, so it can't expose data without the token.
+  const c = freshCtx();
+  try {
+    setSetting(c.store, "web.bind_token", "s3cret-token-value");
+    const app = buildApp(c.store);
+    const root = await app.fetch(new Request("http://x/"));
+    assert.equal(root.status, 200, "/ renders unauthenticated");
+    const runs = await app.fetch(new Request("http://x/runs"));
+    assert.equal(runs.status, 200, "/runs renders unauthenticated");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("auth: token update via setSetting takes effect on the next request (no restart)", async () => {
+  // Per SPEC-V0_3 §11 the middleware reads the token per-request so a
+  // settings-page update applies immediately. This pins that contract.
+  const c = freshCtx();
+  try {
+    scaffoldRun(c.store);
+    const app = buildApp(c.store);
+    // Initially no token — request succeeds.
+    const before = await app.fetch(new Request("http://x/api/runs"));
+    assert.equal(before.status, 200);
+    // Set the token; same app instance, next request needs auth.
+    setSetting(c.store, "web.bind_token", "fresh-token");
+    const after = await app.fetch(new Request("http://x/api/runs"));
+    assert.equal(after.status, 401, "new token gates the next request");
+    // And with the right token, the same app accepts again.
+    const withAuth = await app.fetch(
+      new Request("http://x/api/runs", {
+        headers: { Authorization: "Bearer fresh-token" },
+      }),
+    );
+    assert.equal(withAuth.status, 200);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("auth: /api/live (SSE) is also gated when token is set", async () => {
+  // SSE streams JSON events — same data sensitivity as JSON endpoints,
+  // so it gets the same gate.
+  const c = freshCtx();
+  try {
+    setSetting(c.store, "web.bind_token", "s3cret-token-value");
+    const app = buildApp(c.store);
+    const res = await app.fetch(new Request("http://x/api/live"));
+    assert.equal(res.status, 401);
   } finally {
     c.cleanup();
   }

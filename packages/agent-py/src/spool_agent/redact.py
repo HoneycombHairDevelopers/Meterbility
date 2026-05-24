@@ -38,6 +38,47 @@ DEFAULT_RULES: List[RedactionRule] = [
             r"-----END (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----"
         ),
     ),
+    # ── v0.3 extensions (SPEC-V0_3 §10.1) ─────────────────────────────
+    # Mirrors packages/shared/src/redact.ts; the cross-language compat
+    # tests in test_redact_exhaustive.py pin byte-identical output.
+    #
+    # slack-token: bot/user OAuth tokens (xoxb-, xoxp-, xoxa-, xoxr-,
+    # xoxs-) + incoming-webhook URLs. Both leak freely into shell
+    # scripts and CI logs.
+    RedactionRule(
+        "slack-token",
+        re.compile(
+            r"(?:xox[baprs]-[A-Za-z0-9-]{10,}"
+            r"|https?://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+)"
+        ),
+    ),
+    # jwt: three base64url segments. Header + payload always start with
+    # `eyJ` because they decode to JSON starting with `{`. Catches OAuth
+    # IDPs, Supabase, Vercel — effectively every JWT in the wild.
+    RedactionRule(
+        "jwt",
+        re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+    ),
+    # stripe-live-key: secret (sk_live_), restricted (rk_live_), and
+    # publishable (pk_live_) live keys. The `_live_` infix is the
+    # marker — `_test_` keys are not redacted by default.
+    RedactionRule(
+        "stripe-live-key",
+        re.compile(r"\b(?:sk|rk|pk)_live_[A-Za-z0-9]{24,}"),
+    ),
+    # env-secret: catches `KEY=value` lines where KEY contains one of
+    # the canonical secret-name tokens. Must come LAST so more-specific
+    # shape rules (slack-token, jwt, anthropic-key, etc.) claim their
+    # value first — those produce more informative placeholders.
+    RedactionRule(
+        "env-secret",
+        re.compile(
+            r"\b(?:[A-Z][A-Z0-9_]*_)?"
+            r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|API[_-]?TOKEN|"
+            r"AUTH_?TOKEN|CREDENTIAL|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|SECRET_?KEY)"
+            r"\b\s*=\s*[\"']?[A-Za-z0-9+/=_\-.:]{8,}[\"']?"
+        ),
+    ),
 ]
 
 

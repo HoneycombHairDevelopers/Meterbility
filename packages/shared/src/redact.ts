@@ -46,6 +46,55 @@ export const DEFAULT_RULES: RedactionRule[] = [
     pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----/g,
     replacement: () => PLACEHOLDER("private-key"),
   },
+  // ── v0.3 extensions (SPEC-V0_3 §10.1) ─────────────────────────────
+  //
+  // slack-token: matches both bot/user OAuth tokens (`xoxb-`, `xoxp-`,
+  // `xoxa-`, `xoxr-`, `xoxs-`) and incoming-webhook URLs. Both leak
+  // freely into shell scripts and CI logs.
+  {
+    name: "slack-token",
+    pattern:
+      /(?:xox[baprs]-[A-Za-z0-9-]{10,}|https?:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+)/g,
+    replacement: () => PLACEHOLDER("slack-token"),
+  },
+  // jwt: three base64url segments. Header + payload always start with
+  // `eyJ` because they decode to JSON starting with `{`. Catches OAuth
+  // IDPs, Supabase, Vercel, and effectively every JWT in the wild.
+  // Note: `Bearer eyJ...` is consumed by the bearer rule above first;
+  // this rule catches naked JWTs (cookies, query strings, etc.).
+  {
+    name: "jwt",
+    pattern: /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+    replacement: () => PLACEHOLDER("jwt"),
+  },
+  // stripe-live-key: secret (`sk_live_`), restricted (`rk_live_`), and
+  // publishable (`pk_live_`) live keys. The `_live_` infix is the
+  // marker — `_test_` keys are not redacted by default (lower severity,
+  // commonly checked into fixtures). 24+ char tail allows the modern
+  // expanded format up to ~107 chars.
+  {
+    name: "stripe-live-key",
+    pattern: /\b(?:sk|rk|pk)_live_[A-Za-z0-9]{24,}/g,
+    replacement: () => PLACEHOLDER("stripe-live-key"),
+  },
+  // env-secret: catches `KEY=value` lines where the KEY contains one of
+  // the canonical secret-name tokens (SECRET, TOKEN, PASSWORD, API_KEY,
+  // CREDENTIAL, PRIVATE_KEY, ACCESS_KEY, AUTH_TOKEN). Keep this LAST in
+  // the rule list so more-specific shape rules (slack-token, jwt,
+  // anthropic-key, etc.) get to claim their value first — the slack
+  // rule produces a more informative placeholder than `env-secret`.
+  // Requires the value to be 8+ chars of `[A-Za-z0-9+/=_\-.:]` so it
+  // won't false-positive on short config values like `LOG_LEVEL=INFO`.
+  // Cross-lang note: avoids variable-length lookbehind (Python's `re`
+  // module doesn't support it) — the whole `KEY=value` is consumed and
+  // the KEY name is lost. Tradeoff: simpler, but harder to debug which
+  // var leaked. Acceptable per SPEC-V0_3 §10.1 ("conservative, visible").
+  {
+    name: "env-secret",
+    pattern:
+      /\b(?:[A-Z][A-Z0-9_]*_)?(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|API[_-]?TOKEN|AUTH_?TOKEN|CREDENTIAL|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|SECRET_?KEY)\b\s*=\s*["']?[A-Za-z0-9+/=_\-.:]{8,}["']?/g,
+    replacement: () => PLACEHOLDER("env-secret"),
+  },
 ];
 
 export interface RedactionResult {

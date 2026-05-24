@@ -107,6 +107,33 @@ export interface BuildAppOptions {
 export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   const app = new Hono();
   const controller = opts.controller ?? new LiveController(store);
+
+  // ── v0.3 §11 — Bearer-token gate on JSON /api/* routes ────────────
+  //
+  // HTML pages (/, /runs, /runs/:id, /diff, …) are intentionally NOT
+  // gated — anyone on the network sees the UI shell, but every API
+  // call from that UI needs the Bearer header. The threat model is
+  // "the data shouldn't leak"; the UI being browsable is acceptable
+  // since the UI just makes the same gated API calls.
+  //
+  // Token is read per-request from the settings table so toggling
+  // `web.bind_token` via the settings page takes effect immediately —
+  // no server restart needed. Reads are cheap (indexed PK lookup).
+  // When the setting is absent (the local-dev default), the middleware
+  // is a no-op — current behavior is preserved.
+  app.use("/api/*", async (c, next) => {
+    const expected = getSetting(store, "web.bind_token");
+    if (!expected) return next();
+    const header = c.req.header("authorization") ?? "";
+    const match = /^Bearer\s+(.+)$/i.exec(header);
+    if (!match || match[1] !== expected) {
+      return c.json(
+        { error: "unauthorized: invalid or missing Bearer token" },
+        401,
+      );
+    }
+    return next();
+  });
   // Back-compat: if a raw LiveInspector was passed (legacy tests),
   // bridge its events into the controller's subscriber set so SSE
   // clients still see them.

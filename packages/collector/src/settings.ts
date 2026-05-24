@@ -20,7 +20,12 @@ export type SettingKey =
   | "fork.default_max_iterations"
   | "anthropic.api_key"
   | "postgres.url"
-  | "export.include_file_blobs";
+  | "export.include_file_blobs"
+  // v0.3 §11 — defense-in-depth for non-loopback `spool web` binds.
+  // When set, /api/* routes require `Authorization: Bearer <token>`.
+  // Stored verbatim; `isSecret()` matches the `token$` suffix so the
+  // settings UI masks it on display.
+  | "web.bind_token";
 
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db

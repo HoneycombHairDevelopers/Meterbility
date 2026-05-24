@@ -632,6 +632,80 @@ test("web --port with non-numeric value parses to NaN; should still --help clean
   }
 });
 
+// ── v0.3 §11 non-loopback bind safety ──────────────────────────────
+
+test("web --help advertises --allow-unauth-bind", () => {
+  const fx = setupEmpty();
+  try {
+    const r = runCli(["web", "--help"], fx);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /--allow-unauth-bind/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("web --host 0.0.0.0 refuses to start when web.bind_token is unset (no flag)", () => {
+  const fx = setupEmpty();
+  try {
+    // Use --no-open so we don't try to spawn a browser. Bind to a port
+    // we won't actually reach since the action exits before serveApp.
+    const r = runCli(
+      ["web", "--host", "0.0.0.0", "--port", "0", "--no-open"],
+      fx,
+      { timeoutMs: 8000 },
+    );
+    assert.notEqual(r.status, 0, "non-loopback + no token should refuse");
+    // The error message must surface the actual fix paths.
+    assert.match(
+      r.stderr + r.stdout,
+      /refusing to bind|web\.bind_token|--allow-unauth-bind/i,
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("web --host 192.168.x.x refuses to start when web.bind_token is unset (no flag)", () => {
+  const fx = setupEmpty();
+  try {
+    const r = runCli(
+      ["web", "--host", "192.168.1.10", "--port", "0", "--no-open"],
+      fx,
+      { timeoutMs: 8000 },
+    );
+    assert.notEqual(r.status, 0, "LAN-style IP + no token should refuse");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("web --host 127.0.0.1 (loopback) starts normally with no token + no flag", () => {
+  // Loopback is always safe. Don't actually run the server (it never
+  // returns) — instead assert that the action made it past the safety
+  // check by timing out (which means the server is running) OR ran far
+  // enough to print the "Spool running at" line.
+  // We use the subprocess timeout to bound the test.
+  const fx = setupEmpty();
+  try {
+    const r = runCli(
+      ["web", "--host", "127.0.0.1", "--port", "0", "--no-open"],
+      fx,
+      { timeoutMs: 1500 },
+    );
+    // Either it's still running (status === null on timeout) or it
+    // printed the running banner before something else killed it.
+    // The crucial signal: NO "refusing to bind" anywhere in output.
+    assert.doesNotMatch(
+      r.stderr + r.stdout,
+      /refusing to bind/i,
+      "loopback must never trip the refusal path",
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
 // ── doctor ──────────────────────────────────────────────────────────
 
 test("doctor exits 0 or non-zero depending on env; output has summary section", () => {
