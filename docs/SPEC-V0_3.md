@@ -116,7 +116,7 @@ draft. Cut hard on day one rather than chasing scope mid-cycle:
   additive-only).
 - Lazy baseline tree capture + `working_tree_at(run, step)` function.
   No working-tree panel UI yet.
-- Files tab on the step card, `/files/:run_id` page, `spool files` CLI.
+- Files tab on the step card, `/runs/:run_id/files` page, `spool files` CLI.
 - Live Probe: pause / inject context / resume for SDK-instrumented runs.
 - Public OSS launch: license, contributing docs, public repo, install
   story for strangers.
@@ -814,7 +814,12 @@ tab shows:
 - **Probe panel** beneath the run header (§4.8). Conditional on
   source_runtime + status + probeEnabled.
 
-### 8.3 New page: `/files/:run_id`
+### 8.3 New page: `/runs/:run_id/files`
+
+> **Note (2026-05-22):** spec text was updated from `/files/:run_id` to
+> `/runs/:run_id/files` for consistency with the JSON endpoint
+> `/api/runs/:id/files` (§8.4) and the run-detail page convention
+> (`/runs/:run_id`). The HTML page now lives under the run namespace.
 
 Full-page browse view, no step-list chrome. Two-pane layout:
 
@@ -1124,7 +1129,7 @@ other section appears to contradict this table, this table wins.
 
 | Track | Deliverables |
 |---|---|
-| Track A — File capture | Binary-safety fix (PR 1) · schema v4 (file_change, baseline_tree, runs.baseline_tree_id) · Claude Code hook adapter for Edit/MultiEdit/Write/NotebookEdit · Bash stubs · lazy baseline capture · `working_tree_at` library · Files tab on step card · `/files/:run_id` page · `spool files` CLI · trace format 0.3.0 · redaction extensions · `.spoolignore` defaults · `spool init` |
+| Track A — File capture | Binary-safety fix (PR 1) · schema v4 (file_change, baseline_tree, runs.baseline_tree_id) · Claude Code hook adapter for Edit/MultiEdit/Write/NotebookEdit · Bash stubs · lazy baseline capture · `working_tree_at` library · Files tab on step card · `/runs/:run_id/files` page · `spool files` CLI · trace format 0.3.0 · redaction extensions · `.spoolignore` defaults · `spool init` |
 | Track B — Live Probe | `runs.probe_state` column · SDK pause/inject/resume in TS + Python · `spool probe` CLI · Probe panel on run detail page · SSE events · annotation conventions for probe_edit / probe_pause |
 | Track C — OSS launch | Public repo · MIT license · `npm install -g @spool/cli` works on fresh machines · CONTRIBUTING + SECURITY · README < 5-min path · "fresh laptop" test by 3 outside reviewers · versioning + tagged releases · CI on macOS + Linux |
 
@@ -1168,7 +1173,7 @@ other section appears to contradict this table, this table wins.
 The v0.2 cycle promised more than it shipped. The v0.3-broad draft
 repeated the pattern. This phasing chooses three things and protects
 them. If a week-three review finds Track A slipping, **scope cuts come
-from Track A first** (e.g., defer `/files/:run_id` to v0.4, ship only
+from Track A first** (e.g., defer `/runs/:run_id/files` to v0.4, ship only
 the Files tab) before Track B or Track C are reopened. Tracks B and C
 defend themselves on smaller surface area for a reason.
 

@@ -138,6 +138,43 @@ export class BlobStore {
     }
   }
 
+  /**
+   * Binary-safe variant of `tryGetString`. Used by /api/blob/:hash/render
+   * which has to look at raw bytes for MIME sniffing before deciding
+   * whether to render text or serve as image/octet-stream.
+   */
+  async tryGetBuffer(hash: string): Promise<Buffer | undefined> {
+    try {
+      return await this.getBuffer(hash);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Write pre-computed HTML (or other text) under a caller-chosen
+   * synthetic key, bypassing the content-addressed hash. Used by the
+   * blob_render cache to store rendered HTML under a key derived
+   * from `sha(blob_hash + lang + RENDER_VERSION)` rather than the
+   * content's own hash — this way two different renders of the same
+   * source code (e.g. lang=auto vs lang=typescript) cache separately
+   * but predictably.
+   *
+   * Skips redaction (renders are derived from already-stored blobs
+   * that went through redaction at put time).
+   */
+  async putWithKey(content: string, key: string): Promise<void> {
+    const path = blobPath(key);
+    try {
+      await stat(path);
+      return; // already cached
+    } catch {
+      // not present — write it
+    }
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, Buffer.from(content, "utf-8"));
+  }
+
   rootDir(): string {
     return blobRoot();
   }

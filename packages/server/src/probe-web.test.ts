@@ -69,7 +69,7 @@ test("GET /api/probe/:run_id returns the default running record when no file exi
   try {
     const runId = scaffold(store);
     const app = buildApp(store);
-    const res = await app.fetch(new Request(`http://x/api/probe/${runId}`));
+    const res = await app.fetch(new Request(`http://x/api/runs/${runId}/probe`));
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string; inject: string | null };
     assert.equal(body.state, "running");
@@ -84,7 +84,7 @@ test("GET /api/probe/:run_id 404s on unknown run id", async () => {
   const store = Store.open();
   try {
     const app = buildApp(store);
-    const res = await app.fetch(new Request("http://x/api/probe/run_nope"));
+    const res = await app.fetch(new Request("http://x/api/runs/run_nope/probe"));
     assert.equal(res.status, 404);
   } finally {
     store.close();
@@ -100,7 +100,7 @@ test("POST /api/probe/:run_id/pause writes pause_requested state", async () => {
     const runId = scaffold(store);
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/pause`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/pause`, { method: "POST" }),
     );
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string; requested_at_ms: number };
@@ -122,7 +122,7 @@ test("POST /api/probe/:run_id/resume transitions back to running, preserves inje
     setInject(runId, "carry forward");
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/resume`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/resume`, { method: "POST" }),
     );
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string; inject: string | null };
@@ -142,7 +142,7 @@ test("POST /api/probe/:run_id/inject queues a message", async () => {
     const runId = scaffold(store);
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/inject`, {
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "remember the stale fixture" }),
@@ -164,7 +164,7 @@ test("POST inject refuses to clobber a pending inject without { force: true }", 
     setInject(runId, "earlier message");
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/inject`, {
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "newer" }),
@@ -189,7 +189,7 @@ test("POST inject with { force: true } overwrites the pending message", async ()
     setInject(runId, "earlier");
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/inject`, {
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "newer", force: true }),
@@ -211,7 +211,7 @@ test("POST inject with { clear: true } discards the pending inject (operator UI 
     setInject(runId, "to be discarded");
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/inject`, {
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ clear: true }),
@@ -237,7 +237,7 @@ test("POST inject rejects an empty message (without { clear: true })", async () 
     const runId = scaffold(store);
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/inject`, {
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "" }),
@@ -259,7 +259,7 @@ test("POST /api/probe/:run_id/clear removes the probe file", async () => {
     requestPause(runId);
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/clear`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/clear`, { method: "POST" }),
     );
     assert.equal(res.status, 200);
     // File removed:
@@ -277,7 +277,7 @@ test("POST /api/probe/:run_id/clear succeeds even for an unknown run (stale reco
     setInject(orphan, "orphaned");
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${orphan}/clear`, { method: "POST" }),
+      new Request(`http://x/api/runs/${orphan}/probe/clear`, { method: "POST" }),
     );
     assert.equal(res.status, 200, "clear must work for orphaned probe files");
   } finally {
@@ -295,7 +295,7 @@ test("GET /api/probe/:run_id/panel returns HTML reflecting current state", async
     requestPause(runId);
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/panel`),
+      new Request(`http://x/api/runs/${runId}/probe/panel`),
     );
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
@@ -317,7 +317,7 @@ test("GET /api/probe/:run_id/panel 404s when run is sealed (no polling against d
     setRunStatus(store, runId, "ok", new Date().toISOString());
     const app = buildApp(store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/panel`),
+      new Request(`http://x/api/runs/${runId}/probe/panel`),
     );
     assert.equal(res.status, 404);
   } finally {
@@ -369,13 +369,13 @@ test("operator round-trip via /api/probe: pause → inject → resume → state"
 
     // pause
     let res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/pause`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/pause`, { method: "POST" }),
     );
     assert.equal(res.status, 200);
 
     // inject
     res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/inject`, {
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "do this" }),
@@ -385,12 +385,12 @@ test("operator round-trip via /api/probe: pause → inject → resume → state"
 
     // resume
     res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/resume`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/resume`, { method: "POST" }),
     );
     assert.equal(res.status, 200);
 
     // final state
-    res = await app.fetch(new Request(`http://x/api/probe/${runId}`));
+    res = await app.fetch(new Request(`http://x/api/runs/${runId}/probe`));
     const final = (await res.json()) as {
       state: string;
       inject: string | null;

@@ -332,7 +332,7 @@ test("probe: GET /api/probe/:run_id returns default state for new run", async ()
   try {
     const { runId } = scaffoldRun(c.store, { status: "in_progress" });
     const app = buildApp(c.store);
-    const res = await app.fetch(new Request(`http://x/api/probe/${runId}`));
+    const res = await app.fetch(new Request(`http://x/api/runs/${runId}/probe`));
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string; inject: string | null };
     assert.equal(body.state, "running");
@@ -347,7 +347,7 @@ test("probe: GET /api/probe/:run_id on unknown run returns 404", async () => {
   try {
     const app = buildApp(c.store);
     const res = await app.fetch(
-      new Request("http://x/api/probe/run_unknown"),
+      new Request("http://x/api/runs/run_unknown/probe"),
     );
     assert.equal(res.status, 404);
   } finally {
@@ -363,7 +363,7 @@ test("probe: full FSM via HTTP — pause → inject → resume → clear", async
 
     // Pause
     const pauseRes = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/pause`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/pause`, { method: "POST" }),
     );
     assert.equal(pauseRes.status, 200);
     const paused = (await pauseRes.json()) as { state: string };
@@ -371,7 +371,7 @@ test("probe: full FSM via HTTP — pause → inject → resume → clear", async
 
     // Inject
     const injectRes = await app.fetch(
-      jsonReq(`http://x/api/probe/${runId}/inject`, {
+      jsonReq(`http://x/api/runs/${runId}/probe/inject`, {
         message: "stop and reconsider",
       }),
     );
@@ -381,7 +381,7 @@ test("probe: full FSM via HTTP — pause → inject → resume → clear", async
 
     // Resume
     const resumeRes = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/resume`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/resume`, { method: "POST" }),
     );
     assert.equal(resumeRes.status, 200);
     const resumed = (await resumeRes.json()) as { state: string };
@@ -389,7 +389,7 @@ test("probe: full FSM via HTTP — pause → inject → resume → clear", async
 
     // Clear
     const clearRes = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/clear`, { method: "POST" }),
+      new Request(`http://x/api/runs/${runId}/probe/clear`, { method: "POST" }),
     );
     assert.equal(clearRes.status, 200);
     const cleared = (await clearRes.json()) as { cleared: string };
@@ -405,7 +405,7 @@ test("probe: POST /api/probe/:run_id/inject with no message → 400", async () =
     const { runId } = scaffoldRun(c.store, { status: "in_progress" });
     const app = buildApp(c.store);
     const res = await app.fetch(
-      jsonReq(`http://x/api/probe/${runId}/inject`, {}),
+      jsonReq(`http://x/api/runs/${runId}/probe/inject`, {}),
     );
     assert.equal(res.status, 400);
     const body = (await res.json()) as { error: string };
@@ -422,12 +422,12 @@ test("probe: POST /api/probe/:run_id/inject without force on existing inject →
     const app = buildApp(c.store);
     // First inject succeeds
     const first = await app.fetch(
-      jsonReq(`http://x/api/probe/${runId}/inject`, { message: "first" }),
+      jsonReq(`http://x/api/runs/${runId}/probe/inject`, { message: "first" }),
     );
     assert.equal(first.status, 200);
     // Second without force → 409
     const second = await app.fetch(
-      jsonReq(`http://x/api/probe/${runId}/inject`, { message: "second" }),
+      jsonReq(`http://x/api/runs/${runId}/probe/inject`, { message: "second" }),
     );
     assert.equal(second.status, 409);
     const body = (await second.json()) as {
@@ -437,7 +437,7 @@ test("probe: POST /api/probe/:run_id/inject without force on existing inject →
     assert.equal(body.current_inject, "first");
     // Third with force → 200 and overwrites
     const third = await app.fetch(
-      jsonReq(`http://x/api/probe/${runId}/inject`, {
+      jsonReq(`http://x/api/runs/${runId}/probe/inject`, {
         message: "third",
         force: true,
       }),
@@ -456,7 +456,7 @@ test("probe: GET /api/probe/:run_id/panel returns 404 for sealed run (status !==
     const { runId } = scaffoldRun(c.store, { status: "ok" });
     const app = buildApp(c.store);
     const res = await app.fetch(
-      new Request(`http://x/api/probe/${runId}/panel`),
+      new Request(`http://x/api/runs/${runId}/probe/panel`),
     );
     assert.equal(res.status, 404, "sealed run has no probe panel");
   } finally {

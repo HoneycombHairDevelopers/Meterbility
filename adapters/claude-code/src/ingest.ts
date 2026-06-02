@@ -18,6 +18,7 @@ import {
   getIngestOffset,
   getRun,
   getRunBySessionId,
+  getSetting,
   insertFileChange,
   insertRun,
   insertStep,
@@ -179,8 +180,30 @@ export async function ingestSession(
   // schema's UNIQUE(step_id, sequence) prevents double-insertion if the
   // session gets re-ingested. We catch & log per-row errors so one
   // malformed tool_input can't sink the whole ingest.
+  //
+  // Capture toggle (SPEC-V0_3 §3.5, plan A7 live-read): an operator
+  // can disable file capture mid-incident via `capture.files.enabled
+  // = false` in settings. Default is enabled — we explicitly compare
+  // against the literal string "false" so undefined / missing / any
+  // other value keeps capture on (back-compat).
   let fileChangesAdded = 0;
-  if (stepByAssistantUuid.size > 0) {
+  const captureEnabled =
+    getSetting(store, "capture.files.enabled") !== "false";
+  if (captureEnabled && stepByAssistantUuid.size > 0) {
+    // Resolve size-policy thresholds once per ingest batch. Per A7
+    // these are live-read (not cached for the lifetime of the run) so
+    // a toggle takes effect on the next batch. Within a batch we use
+    // a single consistent threshold to avoid mid-batch policy churn.
+    const maxPartialRaw = getSetting(store, "capture.files.max_partial_bytes");
+    const maxSkipRaw = getSetting(store, "capture.files.max_skip_bytes");
+    const sizePolicy = {
+      max_partial_bytes: maxPartialRaw
+        ? Number.parseInt(maxPartialRaw, 10)
+        : undefined,
+      max_skip_bytes: maxSkipRaw
+        ? Number.parseInt(maxSkipRaw, 10)
+        : undefined,
+    };
     const fileChanges = await extractFileChanges({
       records: allRecords,
       stepByAssistantUuid,
@@ -189,6 +212,7 @@ export async function ingestSession(
       sessionId: sessionId ?? "",
       blobs: store.blobs,
       readBackup: opts.readBackup,
+      sizePolicy,
     });
     // v0.3 §3.5 — lazy baseline capture. Trigger when we have at least
     // one FileChange to write AND the run doesn't already have a

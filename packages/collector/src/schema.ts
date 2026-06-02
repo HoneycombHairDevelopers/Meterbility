@@ -20,7 +20,7 @@ import type Database from "better-sqlite3";
  *   v3 → v4 — file_change, baseline_tree, runs.baseline_tree_id,
  *             runs.probe_state (Track A file capture + Track B Live Probe)
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export function ensureSchema(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
@@ -136,11 +136,18 @@ export function ensureSchema(db: Database.Database): void {
       author TEXT NOT NULL,
       verdict TEXT,
       note TEXT,
+      kind TEXT NOT NULL DEFAULT 'comment'
+        CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped')),
       created_at TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_annotations_target
       ON annotations(target_kind, target_id);
+    -- idx_annotations_kind is created AFTER ensureColumn below so
+    -- legacy v4 DBs (which lack the kind column at executescript
+    -- time) don't trip on referencing a column that doesn't exist
+    -- yet. For fresh DBs the column is created above so the index
+    -- still fires on the same call path, just a few statements later.
 
     -- Idempotency aid for the Claude Code adapter: remember the last byte
     -- offset we ingested per session file so we can resume cheaply.
@@ -312,6 +319,36 @@ export function ensureSchema(db: Database.Database): void {
   // for source_runtime in (sdk-ts, sdk-py) — hook and proxy runs
   // can't be probed cleanly (see v0.3 §4.2).
   ensureColumn(db, "runs", "probe_state", "TEXT");
+
+  // v5 — Annotation `kind` discriminator. Distinguishes human comments
+  // (the historical-default) from system-generated event markers
+  // emitted by the Live Probe (`probe_pause`, `probe_edit` per
+  // SPEC-V0_3 §4.4) and the file-capture size policy
+  // (`capture_skipped` per §11.1). Pre-v5 rows get backfilled to
+  // 'comment' atomically via the ADD COLUMN ... DEFAULT clause.
+  //
+  // CHECK constraint nuance: SQLite's ALTER TABLE ADD COLUMN does
+  // NOT accept inline CHECK clauses; the constraint engine only
+  // wires CHECKs at CREATE time. So:
+  //   - Fresh DBs: CHECK lives on the CREATE TABLE above. Database
+  //     enforcement of the kind enum is the safety net.
+  //   - Legacy DBs upgraded via ALTER: column exists but DB-level
+  //     CHECK does NOT. Application-level validation in
+  //     queries.ts insertAnnotation (typed `kind: AnnotationKind`)
+  //     carries the enforcement.
+  // Standard SQLite migration pattern; rebuilding the table to add
+  // the CHECK would cost a table-copy on every upgrade for a
+  // column whose enum is already typed at the API layer.
+  ensureColumn(
+    db,
+    "annotations",
+    "kind",
+    "TEXT NOT NULL DEFAULT 'comment'",
+  );
+  // Index AFTER ensureColumn — see the note in the CREATE TABLE block.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind)",
+  );
 
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }

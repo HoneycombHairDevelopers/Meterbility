@@ -555,6 +555,26 @@ const STYLES = `
   .file-op-delete { color: var(--coral-400);   background: rgba(248, 113, 113, 0.12); }
   .file-op-rename { color: var(--violet-400);  background: rgba(167, 139, 250, 0.12); }
   .file-op-chmod  { color: var(--text-tertiary); background: var(--surface-2); }
+
+  /* v0.3 — Shiki render override (design D10).
+   * Shiki ships themes with hardcoded backgrounds; we override to
+   * blend with the Cerulean dark surface tokens so /api/blob/:hash/render
+   * output looks native inside the files page Final tab and the
+   * Step card context viewer. github-dark-dimmed's foreground stays
+   * usable on --surface-0, no foreground override needed. */
+  .shiki {
+    background: var(--surface-0) !important;
+    color: var(--text-primary) !important;
+    padding: 12px 14px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+  }
+  .shiki code { background: transparent; padding: 0; }
+  .shiki .line { display: block; min-height: 1.5em; }
+
   .file-path { color: var(--text-primary); overflow-wrap: anywhere; }
   .file-stats { display: inline-flex; gap: 6px; color: var(--text-tertiary); }
   .file-flag {
@@ -1912,7 +1932,7 @@ async function probeCall(runId, action, method, body) {
       opts.headers = { 'Content-Type': 'application/json' };
       opts.body = JSON.stringify(body);
     }
-    const res = await fetch('/api/probe/' + encodeURIComponent(runId) + '/' + action, opts);
+    const res = await fetch('/api/runs/' + encodeURIComponent(runId) + '/probe/' + action, opts);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || ('HTTP ' + res.status));
@@ -1924,7 +1944,7 @@ async function probeCall(runId, action, method, body) {
 }
 async function refreshProbePanel(runId) {
   try {
-    const res = await fetch('/api/probe/' + encodeURIComponent(runId) + '/panel');
+    const res = await fetch('/api/runs/' + encodeURIComponent(runId) + '/probe/panel');
     if (!res.ok) return;
     const html = await res.text();
     const existing = document.getElementById('probe-panel-' + runId);

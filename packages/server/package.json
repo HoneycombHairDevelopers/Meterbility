@@ -9,11 +9,12 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@hono/node-server": "^1.13.0",
+    "@spool/collector": "*",
     "@spool/shared": "*",
     "@spool/spec": "*",
-    "@spool/collector": "*",
-    "@anthropic-ai/sdk": "^0.30.0",
     "hono": "^4.6.0",
-    "@hono/node-server": "^1.13.0"
+    "shiki": "^1.29.2"
   }
 }

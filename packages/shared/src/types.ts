@@ -203,11 +203,37 @@ export interface Fork {
   created_at: string;
 }
 
+/**
+ * v0.3 (schema v5) — discriminator on every annotation row.
+ *
+ * - `comment` (default) — a human-authored note via the Annotate CLI
+ *   or web UI. Always paired with `verdict` and/or `note`.
+ * - `probe_pause` — emitted by the Live Probe pause handler at the
+ *   moment an operator pauses a run. `target_kind='run'`,
+ *   `target_id=run_id`. Per SPEC-V0_3 §4.4.
+ * - `probe_edit` — emitted by the resume handler for each staged
+ *   inject that will fire on the next step. `target_kind='run'` (the
+ *   next step id isn't known at resume time; consumers attach to the
+ *   step that follows). Per SPEC-V0_3 §4.4.
+ * - `capture_skipped` — emitted by the file-capture size policy when
+ *   a file exceeded `max_skip_bytes` and was stubbed with
+ *   `redacted=true`. Per SPEC-V0_3 §11.1.
+ *
+ * Pre-v5 rows are migrated to 'comment' atomically; the schema CHECK
+ * constraint rejects any other value going forward.
+ */
+export type AnnotationKind =
+  | "comment"
+  | "probe_pause"
+  | "probe_edit"
+  | "capture_skipped";
+
 export interface Annotation {
   annotation_id: string;
   target_kind: "step" | "run";
   target_id: string;
   author: string;
+  kind: AnnotationKind;
   verdict?: AnnotationVerdict;
   note?: string;
   created_at: string;

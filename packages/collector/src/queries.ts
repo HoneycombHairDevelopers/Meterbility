@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   Action,
   Annotation,
+  AnnotationKind,
   AnnotationVerdict,
   BaselineTree,
   FileChange,
@@ -446,6 +447,13 @@ export function insertAnnotation(
     targetKind: "step" | "run";
     targetId: string;
     author: string;
+    /**
+     * Annotation discriminator (v0.3 schema v5). Defaults to 'comment'
+     * — human-authored notes via the Annotate CLI / web UI keep the
+     * back-compat shape. System-emitted events pass their own kind
+     * (`probe_pause`, `probe_edit`, `capture_skipped`).
+     */
+    kind?: AnnotationKind;
     verdict?: AnnotationVerdict;
     note?: string;
   },
@@ -455,20 +463,22 @@ export function insertAnnotation(
     target_kind: args.targetKind,
     target_id: args.targetId,
     author: args.author,
+    kind: args.kind ?? "comment",
     verdict: args.verdict,
     note: args.note,
     created_at: new Date().toISOString(),
   };
   store.db
     .prepare(
-      `INSERT INTO annotations(annotation_id, target_kind, target_id, author, verdict, note, created_at)
-       VALUES (?,?,?,?,?,?,?)`,
+      `INSERT INTO annotations(annotation_id, target_kind, target_id, author, kind, verdict, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
     )
     .run(
       ann.annotation_id,
       ann.target_kind,
       ann.target_id,
       ann.author,
+      ann.kind,
       ann.verdict ?? null,
       ann.note ?? null,
       ann.created_at,
@@ -490,6 +500,7 @@ export function listAnnotations(
     target_kind: string;
     target_id: string;
     author: string;
+    kind: string;
     verdict: string | null;
     note: string | null;
     created_at: string;
@@ -499,6 +510,7 @@ export function listAnnotations(
     target_kind: r.target_kind as "step" | "run",
     target_id: r.target_id,
     author: r.author,
+    kind: r.kind as AnnotationKind,
     verdict: (r.verdict ?? undefined) as AnnotationVerdict | undefined,
     note: r.note ?? undefined,
     created_at: r.created_at,

@@ -9,7 +9,7 @@ import {
   type ClaudeContentBlock,
 } from "./types.ts";
 import { diffLines } from "./diff.ts";
-import { isProbablyText } from "@spool/collector";
+import { enforceFileSizePolicy, isProbablyText } from "@spool/collector";
 
 /**
  * v0.3 Track A — Claude Code file-history-snapshot parser.
@@ -104,6 +104,18 @@ export interface ExtractArgs {
   sessionId: string;
   blobs: BlobSink;
   readBackup?: BackupReader;
+  /**
+   * v0.3 size-policy thresholds. Per SPEC-V0_3 §11.1: files larger
+   * than `max_partial_bytes` get partial-captured (the larger blob is
+   * dropped); files larger than `max_skip_bytes` get redacted entirely.
+   * When undefined, `enforceFileSizePolicy` uses 5MB / 50MB defaults.
+   * Caller is responsible for live-reading the settings (per A7) so
+   * mid-run toggles take effect on the next FileChange.
+   */
+  sizePolicy?: {
+    max_partial_bytes?: number;
+    max_skip_bytes?: number;
+  };
 }
 
 /**
@@ -182,6 +194,7 @@ export async function extractFileChanges(
         sessionId,
         blobs,
         readBackup,
+        sizePolicy: args.sizePolicy,
       });
       sequence += generated.length;
       out.push(...generated);
@@ -206,6 +219,11 @@ interface PerToolArgs {
   sessionId: string;
   blobs: BlobSink;
   readBackup: BackupReader;
+  /** Resolved size-policy thresholds, forwarded into every materialize. */
+  sizePolicy?: {
+    max_partial_bytes?: number;
+    max_skip_bytes?: number;
+  };
 }
 
 async function extractForToolUse(
@@ -560,7 +578,17 @@ interface MaterializeArgs {
 }
 
 async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
-  const { args, path, op, beforeBuf, afterBuf, tool } = m;
+  const { args, path, op, tool } = m;
+  // v0.3 §11.1 — apply size policy BEFORE blob writes. Drops the
+  // larger blob on partial-capture; drops both on skip. Original
+  // sizes are preserved in size_before/size_after below regardless.
+  const policy = enforceFileSizePolicy({
+    beforeBuf: m.beforeBuf,
+    afterBuf: m.afterBuf,
+    settings: args.sizePolicy,
+  });
+  const beforeBuf = policy.beforeBuf;
+  const afterBuf = policy.afterBuf;
   // A side counts as "text" if it doesn't exist (we treat the missing
   // side as an empty file for diff purposes) OR if it passes the
   // null-byte heuristic from PR 1. We can run a text diff iff at
@@ -624,18 +652,30 @@ async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
     op,
     before_blob_ref,
     after_blob_ref,
-    partial_diff: false,
+    // v0.3 §11.1 — size policy fans out into the row:
+    //   partial_diff = the larger blob was dropped; the kept side is
+    //     still useful for delta context.
+    //   redacted = both blobs were dropped; the stub row records the
+    //     path + op + original sizes so the user knows something
+    //     happened (even though we can't show the content).
+    partial_diff: policy.partial_diff,
     gitignored: false,
-    patch_text,
-    patch_format,
-    encoding: canTextDiff ? "utf-8" : "binary",
+    patch_text: policy.partial_diff || policy.redacted ? undefined : patch_text,
+    patch_format: policy.redacted ? undefined : patch_format,
+    encoding: policy.redacted
+      ? undefined
+      : canTextDiff
+        ? "utf-8"
+        : "binary",
     bom: false,
     line_endings:
-      canTextDiff && lineEndingsBuf
+      canTextDiff && lineEndingsBuf && !policy.redacted
         ? detectLineEndings(lineEndingsBuf)
         : undefined,
-    size_before: beforeBuf?.length,
-    size_after: afterBuf?.length,
+    // Preserve ORIGINAL sizes even when the blob was dropped — the
+    // UI shows "5.2MB original" so the user understands the gate fired.
+    size_before: policy.size_before,
+    size_after: policy.size_after,
     line_count_before:
       beforeBuf && beforeIsText
         ? countLines(beforeBuf.toString("utf-8"))
@@ -644,11 +684,12 @@ async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
       afterBuf && afterIsText
         ? countLines(afterBuf.toString("utf-8"))
         : undefined,
-    lines_added,
-    lines_removed,
+    lines_added: policy.partial_diff || policy.redacted ? 0 : lines_added,
+    lines_removed:
+      policy.partial_diff || policy.redacted ? 0 : lines_removed,
     source_tool_name: tool,
     source_tool_input: args.toolUse.input,
-    redacted: false,
+    redacted: policy.redacted,
   };
 }
 

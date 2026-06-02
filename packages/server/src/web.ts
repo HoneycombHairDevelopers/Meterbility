@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import type { Annotation, Run, Step } from "@spool/shared";
@@ -36,6 +36,18 @@ import {
 import type { Store } from "@spool/collector";
 import { TRACE_FORMAT_VERSION } from "@spool/spec";
 import { diffRuns } from "./diff.ts";
+import { recordProbeIntervention } from "./probe_annotations.ts";
+import {
+  renderCacheKey,
+  renderHighlighted,
+  sniffMimeAndLang,
+} from "./blob_render.ts";
+import {
+  buildFileTree,
+  flattenForDefaultSelection,
+  renderFilesPage,
+  renderRightPane,
+} from "./file_view.ts";
 import { DECISION_PREVIEW_LIMIT } from "./pretty.ts";
 import {
   renderShell,
@@ -307,6 +319,63 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     return c.html(shell);
   });
 
+  /**
+   * v0.3 §8.3 — `/runs/:id/files` full-page browse view with two-pane
+   * layout (tree left, Final/History/Raw tabs right). Locked design
+   * decisions D3–D14 (see plan file Design Review section).
+   *
+   * URL fragment shape (D14):
+   *   #path=<selected>&open=<dir1>,<dir2>
+   * Server reads the fragment via client JS only — the initial
+   * server-rendered page picks the risk-first default (D8). Fragment
+   * is for sharing and refresh, not initial render (URL fragments
+   * don't reach the server).
+   */
+  app.get("/runs/:id/files", (c) => {
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    const fcs = listFileChanges(store, { runId: run.run_id });
+    const steps = listSteps(store, run.run_id);
+    const captureEnabled =
+      getSetting(store, "capture.files.enabled") !== "false";
+    const rendered = renderFilesPage({
+      run,
+      fileChanges: fcs,
+      steps,
+      captureEnabled,
+    });
+    const shell = renderShell(
+      `${run.title ?? run.run_id} · files`,
+      `${rendered.stylesHtml}${rendered.bodyHtml}${rendered.scriptsHtml}`,
+      shellOpts(),
+    );
+    return c.html(shell);
+  });
+
+  /**
+   * Fragment endpoint — returns just the right-pane HTML for one
+   * file, used by the page's JS click handler to swap content
+   * without a full page reload (P1: lazy-load right pane per click).
+   * Supports ?tab=final|history|raw to switch tab without changing
+   * the selected file.
+   */
+  app.get("/runs/:id/files/:path{.+}", (c) => {
+    const run = getRun(store, c.req.param("id"));
+    if (!run) return c.notFound();
+    const path = decodeURIComponent(c.req.param("path"));
+    const tabParam = c.req.query("tab");
+    const tab: "final" | "history" | "raw" =
+      tabParam === "history" || tabParam === "raw" ? tabParam : "final";
+    const fcs = listFileChanges(store, { runId: run.run_id });
+    if (fcs.length === 0) return c.notFound();
+    const tree = buildFileTree(fcs);
+    const flat = flattenForDefaultSelection(tree);
+    const node = flat.find((n) => n.path === path);
+    if (!node) return c.notFound();
+    c.header("Content-Type", "text/html; charset=utf-8");
+    return c.body(renderRightPane({ runId: run.run_id, node, tab }));
+  });
+
   // v0.3 §8.5 — file-change JSON APIs. Used by the web UI for ad-hoc
   // loads (e.g. the per-path diff view when no UI is open) and by
   // any external scripting that wants the same data without parsing
@@ -342,46 +411,77 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   // protocol (`@spool/shared/probe`), so both the web panel and the
   // terminal see the same state.
 
-  /** GET /api/probe/:run_id — read current probe state as JSON. */
-  app.get("/api/probe/:run_id", (c) => {
-    const run = getRun(store, c.req.param("run_id"));
+  // v0.3 canonical probe routes — per SPEC-V0_3 §4 + §8.4, probe lives
+  // under the run namespace at `/api/runs/:id/probe/*`. The legacy
+  // `/api/probe/:run_id/*` paths still work via HTTP 308 redirects
+  // below (with `Deprecation: true` per RFC 8594) — scheduled removal
+  // in v0.4. All new code MUST use `probeRoutes()` from
+  // ./probe_routes.ts rather than hardcoding paths.
+
+  /** GET /api/runs/:id/probe — read current probe state as JSON. */
+  app.get("/api/runs/:id/probe", (c) => {
+    const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
     return c.json(readProbeState(run.run_id));
   });
 
-  /** GET /api/probe/:run_id/panel — pre-rendered HTML fragment for
+  /** GET /api/runs/:id/probe/panel — pre-rendered HTML fragment for
    * the panel. The client polls this every 1.5s and replaces the panel
    * node in place when the markup changes. Returns 404 (so the client
    * skips the swap) if the run has been sealed. */
-  app.get("/api/probe/:run_id/panel", (c) => {
-    const run = getRun(store, c.req.param("run_id"));
+  app.get("/api/runs/:id/probe/panel", (c) => {
+    const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
     if (run.status !== "in_progress") return c.json({ error: "run sealed" }, 404);
     c.header("Content-Type", "text/html; charset=utf-8");
     return c.body(renderProbePanel(run.run_id, readProbeState(run.run_id)));
   });
 
-  /** POST /api/probe/:run_id/pause — request a graceful pause. */
-  app.post("/api/probe/:run_id/pause", (c) => {
-    const run = getRun(store, c.req.param("run_id"));
+  /** POST /api/runs/:id/probe/pause — request a graceful pause.
+   * Records a `probe_pause` annotation on the run (target_kind='run')
+   * per SPEC-V0_3 §4.4. */
+  app.post("/api/runs/:id/probe/pause", (c) => {
+    const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
-    return c.json(probeRequestPause(run.run_id));
+    const state = probeRequestPause(run.run_id);
+    recordProbeIntervention(store, run.run_id, "probe_pause", {
+      paused_at: new Date(state.requested_at_ms ?? Date.now()).toISOString(),
+    });
+    return c.json(state);
   });
 
-  /** POST /api/probe/:run_id/resume — release a pause. */
-  app.post("/api/probe/:run_id/resume", (c) => {
-    const run = getRun(store, c.req.param("run_id"));
+  /** POST /api/runs/:id/probe/resume — release a pause. If any injects
+   * were staged during the paused window, each one produces a
+   * `probe_edit` annotation against the next step that will run. */
+  app.post("/api/runs/:id/probe/resume", (c) => {
+    const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
-    return c.json(probeRequestResume(run.run_id));
+    // Snapshot any staged inject BEFORE resume so we can record the
+    // edit. Resume itself doesn't consume injects — the SDK does, on
+    // its next poll — but the operator's intent to ship this inject is
+    // recorded now. Step id is unknown at this point; we record at
+    // target_kind='run' and let the consumer attach to the next step.
+    const pre = readProbeState(run.run_id);
+    const state = probeRequestResume(run.run_id);
+    if (pre.inject !== null) {
+      recordProbeIntervention(store, run.run_id, "probe_edit", {
+        inject_bytes: pre.inject.length,
+        resumed_at: new Date(state.resumed_at_ms ?? Date.now()).toISOString(),
+      });
+    }
+    return c.json(state);
   });
 
-  /** POST /api/probe/:run_id/inject — queue an inject message OR clear
-   * the pending one. Body: { message: string, force?: boolean } to
-   * queue; { clear: true } to discard a queued message without
+  /** POST /api/runs/:id/probe/inject — queue an inject message OR
+   * clear the pending one. Body: { message: string, force?: boolean }
+   * to queue; { clear: true } to discard a queued message without
    * setting a new one. Refuses to clobber a queued message unless
-   * `force` is true (mirrors `spool probe inject --force`). */
-  app.post("/api/probe/:run_id/inject", async (c) => {
-    const run = getRun(store, c.req.param("run_id"));
+   * `force` is true (mirrors `spool probe inject --force`). The
+   * `probe_edit` annotation is emitted at resume time (see above), not
+   * at inject time, so a staged-then-discarded inject leaves no
+   * annotation trail. */
+  app.post("/api/runs/:id/probe/inject", async (c) => {
+    const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
     let body: { message?: string; force?: boolean; clear?: boolean };
     try {
@@ -390,11 +490,6 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       return c.json({ error: "invalid JSON body" }, 400);
     }
     if (body.clear) {
-      // Operator-driven discard. Use consumeInject (the SDK-side
-      // primitive) to atomically null the inject field — works in any
-      // probe state and preserves pause/resume timestamps. Returning
-      // the post-clear record so the panel re-renders without a stale
-      // "queued" preview.
       consumeProbeInject(run.run_id);
       return c.json(readProbeState(run.run_id));
     }
@@ -414,17 +509,59 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     return c.json(probeSetInject(run.run_id, body.message));
   });
 
-  /** POST /api/probe/:run_id/clear — remove the probe file (stale
+  /** POST /api/runs/:id/probe/clear — remove the probe file (stale
    * recovery). Pure file cleanup; does NOT require the run to exist
    * because an orphan probe file may outlive its run row deletion. */
-  app.post("/api/probe/:run_id/clear", (c) => {
-    // We DO still try to resolve the id (typo defense), but accept it
-    // raw if the run isn't found — clear is meant for recovery.
-    const run = getRun(store, c.req.param("run_id"));
-    const target = run?.run_id ?? c.req.param("run_id");
+  app.post("/api/runs/:id/probe/clear", (c) => {
+    const run = getRun(store, c.req.param("id"));
+    const target = run?.run_id ?? c.req.param("id");
     clearProbe(target);
     return c.json({ cleared: target });
   });
+
+  // ── Legacy probe routes — HTTP 308 redirects ──────────────────────
+  //
+  // Every old `/api/probe/:run_id/*` path 308-redirects to the
+  // canonical `/api/runs/:id/probe/*` shape. 308 (not 301/302) is
+  // required so POST → POST is preserved; some clients (curl, fetch
+  // without follow) downgrade 301 to GET on redirect. The
+  // `Deprecation: true` header (RFC 8594) signals to monitoring tools
+  // that the endpoint is on its way out. Scheduled removal: v0.4.
+
+  const redirectToCanonical = (newPath: string) => (c: Context) => {
+    c.header("Deprecation", "true");
+    c.header("Link", `<${newPath}>; rel="successor-version"`);
+    return c.redirect(newPath, 308);
+  };
+
+  app.get("/api/probe/:run_id", (c) =>
+    redirectToCanonical(`/api/runs/${encodeURIComponent(c.req.param("run_id"))}/probe`)(c),
+  );
+  app.get("/api/probe/:run_id/panel", (c) =>
+    redirectToCanonical(
+      `/api/runs/${encodeURIComponent(c.req.param("run_id"))}/probe/panel`,
+    )(c),
+  );
+  app.post("/api/probe/:run_id/pause", (c) =>
+    redirectToCanonical(
+      `/api/runs/${encodeURIComponent(c.req.param("run_id"))}/probe/pause`,
+    )(c),
+  );
+  app.post("/api/probe/:run_id/resume", (c) =>
+    redirectToCanonical(
+      `/api/runs/${encodeURIComponent(c.req.param("run_id"))}/probe/resume`,
+    )(c),
+  );
+  app.post("/api/probe/:run_id/inject", (c) =>
+    redirectToCanonical(
+      `/api/runs/${encodeURIComponent(c.req.param("run_id"))}/probe/inject`,
+    )(c),
+  );
+  app.post("/api/probe/:run_id/clear", (c) =>
+    redirectToCanonical(
+      `/api/runs/${encodeURIComponent(c.req.param("run_id"))}/probe/clear`,
+    )(c),
+  );
 
   // v0.3 — pre-rendered step-card HTML fragment. The live-update JS on
   // /runs/:id calls this when a `run:updated` event arrives, then
@@ -486,6 +623,105 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     if (!text) return c.notFound();
     c.header("Content-Type", "text/plain; charset=utf-8");
     return c.body(text);
+  });
+
+  /**
+   * v0.3 §8.4 — `/api/blob/:hash/render` — content-type-sniffed +
+   * (for text) Shiki syntax-highlighted blob viewer.
+   *
+   * Behaviour:
+   *  - image/png|jpeg|gif|webp → raw bytes with proper Content-Type
+   *    (the files page consumes this via `<img>` per D7).
+   *  - Other binary → application/octet-stream raw bytes (files page
+   *    shows a placard at the route-wrapper layer).
+   *  - Text → Shiki-rendered HTML in `<pre class="shiki">` cached
+   *    under `sha(blob_hash + lang + RENDER_VERSION)` in the blob
+   *    store. Subsequent identical requests skip Shiki.
+   *
+   * Query params:
+   *  ?lang=<id>  — force a specific Shiki language. Default: auto
+   *                (path-hint sniff, falls back to plaintext).
+   *  ?path=<p>   — optional pathHint for language detection. Helpful
+   *                when the URL is just a hash with no extension.
+   */
+  app.get("/api/blob/:hash/render", async (c) => {
+    const raw = c.req.param("hash");
+    const langOverride = c.req.query("lang");
+    const pathHint = c.req.query("path");
+    const ref = resolveSnapshotBlobRef(store, raw);
+    const buf = await store.blobs.tryGetBuffer(ref);
+    if (!buf) return c.notFound();
+
+    const sniff = sniffMimeAndLang(buf, pathHint);
+
+    // Images: serve raw bytes with the detected MIME. Content is
+    // content-addressed by hash, so it's immutable forever.
+    if (sniff.mime.startsWith("image/")) {
+      // Bypass Hono's body type narrowing — we want raw bytes with a
+      // specific Content-Type. TS's BodyInit definition is overly
+      // strict about ArrayBufferLike here (lib quirk on newer
+      // releases); cast through unknown so the runtime stays correct.
+      return new Response(
+        new Uint8Array(
+          buf.buffer,
+          buf.byteOffset,
+          buf.byteLength,
+        ) as unknown as BodyInit,
+        {
+          status: 200,
+          headers: {
+            "Content-Type": sniff.mime,
+            "Cache-Control": "public, max-age=31536000, immutable",
+          },
+        },
+      );
+    }
+
+    // Non-image binary: octet-stream fallback. The files page wraps
+    // this in a "Binary file · application/octet-stream · N bytes"
+    // placard per D7; raw consumers (curl, scripts) still get usable
+    // bytes.
+    if (sniff.binary) {
+      return new Response(
+        new Uint8Array(
+          buf.buffer,
+          buf.byteOffset,
+          buf.byteLength,
+        ) as unknown as BodyInit,
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Cache-Control": "public, max-age=31536000, immutable",
+          },
+        },
+      );
+    }
+
+    // Text path: resolve language, check the render cache, render
+    // on miss + populate cache, serve HTML.
+    const effLang =
+      langOverride && langOverride !== "auto"
+        ? langOverride
+        : sniff.lang ?? "plaintext";
+    const cacheKey = renderCacheKey(ref, effLang);
+    const cached = await store.blobs.tryGetString(cacheKey);
+    if (cached !== undefined) {
+      c.header("Content-Type", "text/html; charset=utf-8");
+      c.header("Cache-Control", "public, max-age=31536000, immutable");
+      return c.body(cached);
+    }
+    const html = await renderHighlighted(buf, effLang);
+    // Best-effort cache write — a failure here just means the next
+    // request re-renders (not a hard error for the user).
+    try {
+      await store.blobs.putWithKey(html, cacheKey);
+    } catch {
+      // ignore — render still served below
+    }
+    c.header("Content-Type", "text/html; charset=utf-8");
+    c.header("Cache-Control", "public, max-age=31536000, immutable");
+    return c.body(html);
   });
 
   /**

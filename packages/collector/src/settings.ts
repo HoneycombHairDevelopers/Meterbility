@@ -25,7 +25,14 @@ export type SettingKey =
   // When set, /api/* routes require `Authorization: Bearer <token>`.
   // Stored verbatim; `isSecret()` matches the `token$` suffix so the
   // settings UI masks it on display.
-  | "web.bind_token";
+  | "web.bind_token"
+  // v0.3 — file-capture controls per SPEC-V0_3 §3.5 + §11.1.
+  // Live-read per FileChange (A7) so an operator can flip them
+  // mid-run for incident response. `enabled` is the kill switch;
+  // the two byte thresholds tune the size policy.
+  | "capture.files.enabled"
+  | "capture.files.max_partial_bytes"
+  | "capture.files.max_skip_bytes";
 
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db

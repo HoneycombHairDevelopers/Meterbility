@@ -124,11 +124,16 @@ CREATE TABLE IF NOT EXISTS annotations (
   author TEXT NOT NULL,
   verdict TEXT,
   note TEXT,
+  kind TEXT NOT NULL DEFAULT 'comment'
+    CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped')),
   created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_annotations_target
   ON annotations(target_kind, target_id);
+-- idx_annotations_kind is created in ensure_schema() AFTER _ensure_column
+-- adds the kind column, so legacy Python DBs that pre-date the column
+-- don't trip on referencing a column that doesn't exist yet.
 
 CREATE TABLE IF NOT EXISTS ingest_progress (
   source_runtime TEXT NOT NULL,
@@ -188,6 +193,25 @@ def ensure_schema(db: sqlite3.Connection) -> None:
         "steps",
         "tokens_cache_creation_1h",
         "INTEGER NOT NULL DEFAULT 0",
+    )
+
+    # v0.3 schema v5 — annotation `kind` discriminator. Mirror of the
+    # TS migration in packages/collector/src/schema.ts. Pre-existing
+    # rows backfill to 'comment' via the DEFAULT clause. Note: SQLite
+    # ALTER TABLE ADD COLUMN does NOT accept an inline CHECK; the
+    # CHECK lives on the CREATE TABLE only. Application-level typing
+    # (AnnotationKind in TS) enforces the enum on new inserts.
+    # Per SPEC-V0_3 §4.4 (probe_pause / probe_edit) + §11.1
+    # (capture_skipped).
+    _ensure_column(
+        db,
+        "annotations",
+        "kind",
+        "TEXT NOT NULL DEFAULT 'comment'",
+    )
+    # Index AFTER the column exists.
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind)"
     )
 
     cur = db.execute("SELECT value FROM meta WHERE key = 'schema_version'")

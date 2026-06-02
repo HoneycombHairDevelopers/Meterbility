@@ -57,22 +57,29 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
   return cols.some((c) => c.name === column);
 }
 
-test("fresh apply lands schema v4 with all new tables + columns", () => {
+test("fresh apply lands schema v5 with all new tables + columns", () => {
   const db = freshDb();
   ensureSchema(db);
-  assert.equal(SCHEMA_VERSION, 4, "SCHEMA_VERSION constant must be 4");
+  assert.equal(SCHEMA_VERSION, 5, "SCHEMA_VERSION constant must be 5");
   const row = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string } | undefined;
-  assert.equal(row?.value, "4");
+  assert.equal(row?.value, "5");
 
   // New tables exist.
   assert.equal(tableExists(db, "file_change"), true, "file_change table missing");
   assert.equal(tableExists(db, "baseline_tree"), true, "baseline_tree table missing");
 
-  // New columns on runs exist.
+  // v4 columns on runs exist.
   assert.equal(hasColumn(db, "runs", "baseline_tree_id"), true);
   assert.equal(hasColumn(db, "runs", "probe_state"), true);
+
+  // v5: annotations.kind column exists (SPEC-V0_3 §4.4).
+  assert.equal(
+    hasColumn(db, "annotations", "kind"),
+    true,
+    "v5 migration: annotations.kind column missing",
+  );
 
   // Indexes are sanity-checked via the master table — the names must
   // match what queries.ts will rely on in Track A.
@@ -106,7 +113,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .all() as Array<{ value: string }>;
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.value, "4");
+  assert.equal(rows[0]!.value, "5");
   // Tables are still singular (the master table doesn't grow on re-apply).
   const fcCount = db
     .prepare(
@@ -117,7 +124,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
   db.close();
 });
 
-test("v3 → v4 migration: hand-built v3 db gets ALTER'd to v4 without data loss", () => {
+test("v3 → v5 migration: hand-built v3 db gets ALTER'd to v5 without data loss", () => {
   const db = freshDb();
   // Hand-shape a v3 database: enable WAL + FKs (production parity),
   // create the v3 subset of tables (projects, agents, runs without the
@@ -182,11 +189,12 @@ test("v3 → v4 migration: hand-built v3 db gets ALTER'd to v4 without data loss
   // Run the real migration.
   ensureSchema(db);
 
-  // After: v4 surface exists, legacy row still readable.
+  // After: v5 surface exists, legacy row still readable.
   assert.equal(tableExists(db, "file_change"), true);
   assert.equal(tableExists(db, "baseline_tree"), true);
   assert.equal(hasColumn(db, "runs", "baseline_tree_id"), true);
   assert.equal(hasColumn(db, "runs", "probe_state"), true);
+  assert.equal(hasColumn(db, "annotations", "kind"), true);
   const legacy = db
     .prepare("SELECT run_id, baseline_tree_id, probe_state FROM runs WHERE run_id=?")
     .get("run_legacy") as
@@ -200,7 +208,81 @@ test("v3 → v4 migration: hand-built v3 db gets ALTER'd to v4 without data loss
   const ver = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string };
-  assert.equal(ver.value, "4");
+  assert.equal(ver.value, "5");
+  db.close();
+});
+
+test("v4 → v5 migration: annotations.kind backfills to 'comment' and CHECK rejects bad kinds", () => {
+  const db = freshDb();
+  // Hand-shape a v4 database with one legacy annotation row that lacks
+  // the kind column. After migration, the row should backfill to
+  // 'comment' (via DEFAULT) and the CHECK should refuse 'random_kind'.
+  db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
+  db.pragma("foreign_keys = ON");
+  db.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE annotations (
+      annotation_id TEXT PRIMARY KEY,
+      target_kind TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      author TEXT NOT NULL,
+      verdict TEXT,
+      note TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+  db.prepare(
+    `INSERT INTO annotations(annotation_id,target_kind,target_id,author,note,created_at)
+     VALUES(?,?,?,?,?,?)`,
+  ).run("ann_legacy", "run", "run_x", "alice", "old comment", "2026-01-01T00:00:00Z");
+  db.prepare("INSERT INTO meta(key,value) VALUES(?,?)").run("schema_version", "4");
+
+  // Sanity: legacy v4 shape has no kind column.
+  assert.equal(hasColumn(db, "annotations", "kind"), false);
+
+  ensureSchema(db);
+
+  // After migration: column exists, legacy row backfilled to 'comment'.
+  assert.equal(hasColumn(db, "annotations", "kind"), true);
+  const legacy = db
+    .prepare("SELECT kind FROM annotations WHERE annotation_id=?")
+    .get("ann_legacy") as { kind: string };
+  assert.equal(legacy.kind, "comment", "legacy rows must backfill to 'comment'");
+
+  // All four defined kinds accept (the DB-level CHECK lives only on
+  // fresh-CREATE'd tables; legacy upgraded tables rely on TS-side
+  // typing in queries.ts insertAnnotation per the schema.ts comment).
+  for (const kind of ["comment", "probe_pause", "probe_edit", "capture_skipped"]) {
+    assert.doesNotThrow(() =>
+      db
+        .prepare(
+          `INSERT INTO annotations(annotation_id,target_kind,target_id,author,kind,created_at)
+           VALUES(?,?,?,?,?,?)`,
+        )
+        .run(`ann_${kind}`, "run", "run_x", "alice", kind, "2026-01-01T00:00:00Z"),
+    );
+  }
+  db.close();
+});
+
+test("v5 fresh-DB CHECK constraint rejects unknown annotation kinds", () => {
+  // On a fresh CREATE TABLE'd database (not migrated), the CHECK
+  // constraint IS active. This test pins that contract — anyone
+  // initializing a new spool DB gets the DB-level enum safety net.
+  const db = freshDb();
+  ensureSchema(db);
+  assert.throws(
+    () =>
+      db
+        .prepare(
+          `INSERT INTO annotations(annotation_id,target_kind,target_id,author,kind,created_at)
+           VALUES(?,?,?,?,?,?)`,
+        )
+        .run("ann_bad", "run", "run_x", "alice", "random_kind", "2026-01-01T00:00:00Z"),
+    /CHECK constraint failed/,
+    "fresh DB CHECK must reject unknown kinds",
+  );
   db.close();
 });
 
