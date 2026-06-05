@@ -2571,7 +2571,7 @@ export function renderRunList(
  * Render `r.cwd` as a short, scannable project label — the trailing
  * 1–2 path segments. Full path stays in the cell's `title=` attribute
  * for hover. Examples:
- *   /Users/me/development/Spool-demo  →  Spool-demo
+ *   /Users/me/development/spool        →  spool
  *   /Users/me/dev/agents/customer-bot →  agents/customer-bot
  *   (cursor)                          →  cursor
  *   (unknown) / undefined             →  —

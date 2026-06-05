@@ -12,8 +12,8 @@ issue or PR.
 ## TL;DR
 
 ```bash
-git clone https://github.com/HoneycombHairDevelopers/Spool-demo
-cd Spool-demo
+git clone https://github.com/HoneycombHairDevelopers/spool
+cd spool
 nvm use && npm install            # Node 20.6+ via .nvmrc
 npm test                          # TypeScript suite (~250 tests)
 cd packages/agent-py && python3 -m unittest discover tests   # Python suite (~50 tests)

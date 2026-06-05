@@ -27,8 +27,8 @@ Latest milestones (Tracks A–C of v0.3):
 Requires **Node 20.6+** (uses `node --import` for tsx loading; rebuilds `better-sqlite3` natively). Python SDK additionally requires **Python 3.9+** (stdlib only — no install-time deps).
 
 ```bash
-git clone https://github.com/HoneycombHairDevelopers/Spool-demo
-cd Spool-demo
+git clone https://github.com/HoneycombHairDevelopers/spool
+cd spool
 nvm use                      # picks up .nvmrc → Node 20
 npm install
 ./bin/spool doctor           # verify the Claude Code surface
@@ -172,8 +172,8 @@ Every dependency in the tree is permissive (MIT / ISC / Apache-2.0 / BSD). Zero 
 Read [CONTRIBUTING.md](CONTRIBUTING.md). The short version:
 
 ```bash
-git clone https://github.com/HoneycombHairDevelopers/Spool-demo
-cd Spool-demo && nvm use && npm install
+git clone https://github.com/HoneycombHairDevelopers/spool
+cd spool && nvm use && npm install
 npm test                                   # TypeScript suite
 cd packages/agent-py && python3 -m unittest discover tests
 ```

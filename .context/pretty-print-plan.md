@@ -108,7 +108,7 @@ outcome
   summary  edit applied · +4 −4 lines
   result   blob a7f3… · 1.2 kB · view raw   ← from opts.toolResultText (caller-resolved)
   state_delta
-    cwd  /Users/.../Spool-demo
+    cwd  /Users/.../spool
 ```
 
 Status color: red on error, yellow on pending, default on ok (CLI ANSI / web `.p-status-error`/`.p-status-pending`).
