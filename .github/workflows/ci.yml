@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fresh-laptop:
+    name: Fresh-laptop verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node (from .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      # Runs the exact same gate documented in the README: clones into a
+      # throwaway tempdir, installs, runs the license audit, the TypeScript
+      # and Python suites, the CLI smoke commands, and the cross-language
+      # probe interop check. See scripts/fresh-laptop-test.sh.
+      - name: Run fresh-laptop test
+        run: ./scripts/fresh-laptop-test.sh

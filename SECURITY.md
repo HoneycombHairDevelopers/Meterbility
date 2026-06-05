@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-**Email:** security@spool.dev *(placeholder — replace before launch)*
+**Email:** security@honeycombhair.co
 
 **Please do not** open a public GitHub issue, discussion, or PR for an
 exploitable security bug. Email first; we'll acknowledge within 2

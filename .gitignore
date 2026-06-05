@@ -6,6 +6,10 @@ dist/
 data/
 .env
 .env.local
+
+# Stray run/step scratch files (CLI working dirs, never source)
+/runs
+/steps
 .claude/worktrees/stupefied-mestorf-bc1ac8/
 /.claude/worktrees
 

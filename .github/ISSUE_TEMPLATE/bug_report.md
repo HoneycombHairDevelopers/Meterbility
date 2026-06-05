@@ -8,7 +8,7 @@ assignees: ""
 
 <!--
 For SECURITY vulnerabilities, do NOT open a public issue.
-Email security@spool.dev instead — see SECURITY.md.
+Email security@honeycombhair.co instead — see SECURITY.md.
 -->
 
 ## What happened
