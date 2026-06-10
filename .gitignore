@@ -27,3 +27,4 @@ packages/server/src/e2e/fixture.json
 # python build artifacts
 *.egg-info/
 build/
+.gstack/
