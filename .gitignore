@@ -19,3 +19,7 @@ playwright-report/
 packages/server/src/e2e/fixture.json
 /packages/agent-py/src/spool_agent/__pycache__
 /packages/agent-py/tests/__pycache__
+
+# local working context
+.context/
+.DS_Store
