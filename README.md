@@ -10,7 +10,7 @@ Spool turns AI agent runs into a queryable, replayable, forkable corpus and surf
 
 ## Status
 
-**v0.3 — file capture + Live Probe.** Working end-to-end. Not on npm yet — run from a clone.
+**v0.3 — file capture + Live Probe.** Working end-to-end. On npm as [`@spool-ai/cli`](https://www.npmjs.com/package/@spool-ai/cli) and friends.
 
 Latest milestones (Tracks A–C of v0.3):
 
@@ -22,19 +22,31 @@ Latest milestones (Tracks A–C of v0.3):
 
 ---
 
-## Install (from this repo)
+## Install
 
-Requires **Node 20.6+** (uses `node --import` for tsx loading; rebuilds `better-sqlite3` natively). Python SDK additionally requires **Python 3.9+** (stdlib only — no install-time deps).
+Requires **Node 20.6+** (rebuilds `better-sqlite3` natively). Python SDK additionally requires **Python 3.9+** (stdlib only — no install-time deps).
+
+```bash
+npm install -g @spool-ai/cli
+
+spool doctor                 # verify the Claude Code surface
+spool ingest claude-code --limit 5
+spool list
+spool web                    # open the inspector at http://127.0.0.1:4317
+```
+
+Instrumenting your own agent? Add the SDK to your project instead: `npm install @spool-ai/agent`. (The Python SDK isn't on PyPI yet — install it from a clone: `pip install -e packages/agent-py`.)
+
+### From a clone
+
+For development, or to run ahead of the latest release:
 
 ```bash
 git clone https://github.com/HoneycombHairDevelopers/spool
 cd spool
 nvm use                      # picks up .nvmrc → Node 20
 npm install
-./bin/spool doctor           # verify the Claude Code surface
-./bin/spool ingest claude-code --limit 5
-./bin/spool list
-./bin/spool web              # open the inspector at http://127.0.0.1:4317
+./bin/spool doctor           # same CLI, run from source
 ```
 
 `./bin/spool` is the launcher. To put it on `$PATH`, symlink it into `~/.local/bin/` or wherever you keep scripts.
