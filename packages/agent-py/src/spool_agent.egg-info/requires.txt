@@ -1,6 +1,0 @@
-
-[anthropic]
-anthropic>=0.40.0
-
-[dev]
-pytest>=7.0

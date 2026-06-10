@@ -52,5 +52,18 @@ done
 # every @spool-ai/* name to its local tarball, and run `spool doctor`.
 ```
 
-The Python SDK (`packages/agent-py`) is published separately to PyPI as
-`spool-agent` and is not part of this pipeline.
+## Python SDK (PyPI)
+
+The Python SDK publishes separately to PyPI as **`spool-agent`** via the
+[publish-pypi workflow](../.github/workflows/publish-pypi.yml), which runs on
+the same GitHub-release trigger (plus manual dispatch). Auth is PyPI
+**trusted publishing** — no token secret. One-time setup on pypi.org:
+Account → Publishing → "Add a new pending publisher" with project
+`spool-agent`, owner `HoneycombHairDevelopers`, repository `Spool`, workflow
+`publish-pypi.yml`, environment `pypi`. Also create a `pypi` environment in
+the GitHub repo settings (Settings → Environments) — it can be empty; it just
+scopes the OIDC claim.
+
+The distribution version lives in `packages/agent-py/pyproject.toml` and
+`src/spool_agent/__init__.py` (`__version__`) — bump both in lockstep with
+the npm packages.
