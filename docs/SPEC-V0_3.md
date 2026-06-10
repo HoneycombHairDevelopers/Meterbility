@@ -180,7 +180,7 @@ What "v0.3 shipped" means, all three features:
 **OSS launch:**
 
 - Public GitHub repo with MIT license. Issues enabled. Contributing.md.
-- `npm install -g @spool/cli && spool web` works on a fresh
+- `npm install -g @spool-ai/cli && spool web` works on a fresh
   Node 20+ machine with no Spool-internal knowledge.
 - README has a < 5-minute "first run captured" path that doesn't require
   reading more than the README.
@@ -512,7 +512,7 @@ next model call fires.
 Live Probe only ships for **SDK-mode runs** in v0.3. Proxy and hook
 modes are out:
 
-- **SDK mode** (`@spool/agent`, `spool-agent`): Spool owns the loop. The
+- **SDK mode** (`@spool-ai/agent`, `spool-agent`): Spool owns the loop. The
   SDK can block before the next `tracer.startStep()` call. Pause is real.
 - **Hook mode** (Claude Code, Codex, Cursor): Spool is a passive
   observer of someone else's runtime. We can't pause Claude Code from
@@ -579,7 +579,7 @@ free-form text in v0.2.
 **TypeScript:**
 
 ```ts
-import { SpoolTracer } from "@spool/agent";
+import { SpoolTracer } from "@spool-ai/agent";
 
 const tracer = new SpoolTracer({
   project: "my-app",
@@ -672,7 +672,7 @@ slips, it slips with the rest of v0.3, not independently.
 | Item | Scope |
 |---|---|
 | **Public repo** | `github.com/<org>/spool`. MIT license. Issues + Discussions enabled. PR template, issue templates (bug / feature / security). |
-| **Install story** | `npm install -g @spool/cli` works on a fresh Node 20+ install. `pip install spool-agent` works in a clean venv. Documented in README; tested in CI on macOS 14+ and Ubuntu 22+. |
+| **Install story** | `npm install -g @spool-ai/cli` works on a fresh Node 20+ install. `pip install spool-agent` works in a clean venv. Documented in README; tested in CI on macOS 14+ and Ubuntu 22+. |
 | **README** | < 5-minute "first run captured" path. No prior Spool knowledge. Demo gif. Architecture diagram (the v0.2 §13 package map, lightly edited). |
 | **CONTRIBUTING.md** | Local dev setup, test commands, coding conventions (TypeScript style, Python style, the additive-only schema rule, the redaction-required-on-blob-write rule, the "one accent color" rule). |
 | **SECURITY.md** | Responsible disclosure email, the redaction posture (v0.2 §5.3 + this spec §10.1), the network-bind warning (§10.5). |
@@ -1131,7 +1131,7 @@ other section appears to contradict this table, this table wins.
 |---|---|
 | Track A — File capture | Binary-safety fix (PR 1) · schema v4 (file_change, baseline_tree, runs.baseline_tree_id) · Claude Code hook adapter for Edit/MultiEdit/Write/NotebookEdit · Bash stubs · lazy baseline capture · `working_tree_at` library · Files tab on step card · `/runs/:run_id/files` page · `spool files` CLI · trace format 0.3.0 · redaction extensions · `.spoolignore` defaults · `spool init` |
 | Track B — Live Probe | `runs.probe_state` column · SDK pause/inject/resume in TS + Python · `spool probe` CLI · Probe panel on run detail page · SSE events · annotation conventions for probe_edit / probe_pause |
-| Track C — OSS launch | Public repo · MIT license · `npm install -g @spool/cli` works on fresh machines · CONTRIBUTING + SECURITY · README < 5-min path · "fresh laptop" test by 3 outside reviewers · versioning + tagged releases · CI on macOS + Linux |
+| Track C — OSS launch | Public repo · MIT license · `npm install -g @spool-ai/cli` works on fresh machines · CONTRIBUTING + SECURITY · README < 5-min path · "fresh laptop" test by 3 outside reviewers · versioning + tagged releases · CI on macOS + Linux |
 
 ### 13.2 v0.4 — "Cross-vendor capture" (weeks 9–14)
 

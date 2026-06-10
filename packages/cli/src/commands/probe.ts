@@ -8,14 +8,14 @@ import {
   requestPause,
   requestResume,
   setInject,
-} from "@spool/shared";
-import { getRun } from "@spool/collector";
+} from "@spool-ai/shared";
+import { getRun } from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 /**
  * `spool probe` — Live Probe operator surface. Track B / Turn 8 chunk 4.
  *
- * Talks to the file-based probe protocol (`@spool/shared`/probe.ts).
+ * Talks to the file-based probe protocol (`@spool-ai/shared`/probe.ts).
  * The SDK side runs inside the agent's process when
  * `tracer.probeEnabled` is on; this CLI is what the human types to
  * pause, inject a nudge, and resume.
@@ -48,7 +48,7 @@ import { openStore } from "../util.ts";
  *     to exist in the store — pure file cleanup.
  *
  * Run-id resolution mirrors `spool inspect`: full id or unique 6+-char
- * prefix. Inherited from `getRun()` in @spool/collector.
+ * prefix. Inherited from `getRun()` in @spool-ai/collector.
  */
 export function registerProbeCommand(program: Command): void {
   const probe = program

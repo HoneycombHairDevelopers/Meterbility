@@ -10,7 +10,7 @@ import type {
   ForkEdit,
   ForkEditType,
   Step,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import {
   Store,
   insertFork,
@@ -20,8 +20,8 @@ import {
   listSteps,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import { SpoolTracer } from "@spool/agent";
+} from "@spool-ai/collector";
+import { SpoolTracer } from "@spool-ai/agent";
 import {
   anthropicResponder,
   fakeResponder,

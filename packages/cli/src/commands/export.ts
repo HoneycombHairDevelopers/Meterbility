@@ -8,8 +8,8 @@ import {
   listFileChanges,
   listSteps,
   resolveSnapshotBlobRef,
-} from "@spool/collector";
-import { TRACE_FORMAT_VERSION } from "@spool/spec";
+} from "@spool-ai/collector";
+import { TRACE_FORMAT_VERSION } from "@spool-ai/spec";
 import { openStore } from "../util.ts";
 
 /**

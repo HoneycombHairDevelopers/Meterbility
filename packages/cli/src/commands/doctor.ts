@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Command } from "commander";
 import pc from "picocolors";
-import { claudeHome, claudeProjectsRoot, dbPath, spoolHome } from "@spool/shared";
-import { discoverSessions } from "@spool/claude-code-adapter";
+import { claudeHome, claudeProjectsRoot, dbPath, spoolHome } from "@spool-ai/shared";
+import { discoverSessions } from "@spool-ai/claude-code-adapter";
 
 type CheckStatus = "ok" | "warn" | "fail";
 interface CheckResult {
@@ -93,7 +93,7 @@ export function registerDoctorCommand(program: Command): void {
 
       // DB writable
       try {
-        const { Store } = await import("@spool/collector");
+        const { Store } = await import("@spool-ai/collector");
         const store = Store.open();
         store.close();
         const s = await stat(dbPath());

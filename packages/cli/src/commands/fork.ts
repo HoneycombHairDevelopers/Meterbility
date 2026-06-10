@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 import pc from "picocolors";
-import type { ForkEdit, ForkEditType } from "@spool/shared";
+import type { ForkEdit, ForkEditType } from "@spool-ai/shared";
 import {
   forkRun,
   anthropicResponder,
@@ -9,8 +9,8 @@ import {
   fakeResponder,
   type ContinuationModelCaller,
   type ToolExecutor,
-} from "@spool/server";
-import { getSetting } from "@spool/collector";
+} from "@spool-ai/server";
+import { getSetting } from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 const EDIT_TYPES: ForkEditType[] = [
@@ -212,7 +212,7 @@ function buildContinuationCaller(model: string): ContinuationModelCaller {
       };
     }
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const { Store } = await import("@spool/collector");
+    const { Store } = await import("@spool-ai/collector");
     const store = Store.open();
     try {
       const client = new Anthropic({ apiKey });
@@ -371,8 +371,8 @@ function buildAnthropicResponder(model: string) {
   return (() => {
     // Lazy: build responder inside the call so we don't load the SDK
     // until a fork actually wants live suffix.
-    return async (args: import("@spool/server").LiveResponderArgs) => {
-      const { Store } = await import("@spool/collector");
+    return async (args: import("@spool-ai/server").LiveResponderArgs) => {
+      const { Store } = await import("@spool-ai/collector");
       const store = Store.open();
       try {
         const fn = anthropicResponder(store, { apiKey, model });

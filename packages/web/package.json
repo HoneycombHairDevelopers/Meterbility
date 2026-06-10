@@ -1,5 +1,5 @@
 {
-  "name": "@spool/web",
+  "name": "@spool-ai/web",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@spool/shared": "*",
-    "@spool/spec": "*"
+    "@spool-ai/shared": "*",
+    "@spool-ai/spec": "*"
   }
 }

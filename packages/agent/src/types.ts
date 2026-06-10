@@ -3,7 +3,7 @@ import type {
   ContextComponent,
   Outcome,
   TokenUsage,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 
 /**
  * Public SDK types for custom TS agents. The shape is deliberately small

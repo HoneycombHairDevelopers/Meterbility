@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { listRuns } from "@spool/collector";
+import { listRuns } from "@spool-ai/collector";
 import { fmtCents, openStore, runSummaryLine, statusColor } from "../util.ts";
 
 export function registerListCommand(program: Command): void {

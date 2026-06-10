@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Run, Step } from "@spool/shared";
+import type { Run, Step } from "@spool-ai/shared";
 import { Store } from "./store.ts";
 import {
   upsertProjectByCwd,

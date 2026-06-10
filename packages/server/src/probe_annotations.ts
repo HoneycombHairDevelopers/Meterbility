@@ -1,5 +1,5 @@
-import type { AnnotationKind } from "@spool/shared";
-import { insertAnnotation, type Store } from "@spool/collector";
+import type { AnnotationKind } from "@spool-ai/shared";
+import { insertAnnotation, type Store } from "@spool-ai/collector";
 
 /**
  * Probe-intervention annotation emission. Single helper called by

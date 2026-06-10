@@ -455,7 +455,7 @@ test("export v0.3: file_changes[] surfaces inserted FileChange rows", async () =
   try {
     // Seed a FileChange into the fixture store directly. Re-open with
     // the same SPOOL_HOME so the subprocess sees it.
-    const { Store, insertFileChange } = await import("@spool/collector");
+    const { Store, insertFileChange } = await import("@spool-ai/collector");
     const store = Store.open({ path: join(fx.home, "spool.db") });
     try {
       const after = await store.blobs.putString("created\n");
@@ -494,7 +494,7 @@ test("export v0.3: file_changes[] surfaces inserted FileChange rows", async () =
 test("export v0.3: --include-file-blobs OFF by default, ON inlines file blobs", async () => {
   const fx = setupFixture({ stepCount: 1 });
   try {
-    const { Store, insertFileChange } = await import("@spool/collector");
+    const { Store, insertFileChange } = await import("@spool-ai/collector");
     const store = Store.open({ path: join(fx.home, "spool.db") });
     let afterRef = "";
     try {
@@ -557,7 +557,7 @@ test("export v0.3: baseline_trees[] surfaces the run's attached baseline", async
   const fx = setupFixture({ stepCount: 1 });
   try {
     const { Store, insertBaselineTree, setRunBaselineTree, serializeManifest } =
-      await import("@spool/collector");
+      await import("@spool-ai/collector");
     const store = Store.open({ path: join(fx.home, "spool.db") });
     let manifestRef = "";
     let baselineId = "";

@@ -1,25 +1,56 @@
 {
-  "name": "@spool/cli",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@spool-ai/cli",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "bin": {
-    "spool": "src/index.ts"
+    "spool": "dist/index.js"
   },
   "dependencies": {
-    "@spool/shared": "*",
-    "@spool/spec": "*",
-    "@spool/collector": "*",
-    "@spool/server": "*",
-    "@spool/claude-code-adapter": "*",
-    "@spool/codex-cli-adapter": "*",
-    "@spool/cursor-adapter": "*",
-    "@spool/agent": "*",
-    "@spool/proxy": "*",
-    "@spool/store-postgres": "*",
+    "@spool-ai/shared": "^0.3.0",
+    "@spool-ai/spec": "^0.3.0",
+    "@spool-ai/collector": "^0.3.0",
+    "@spool-ai/server": "^0.3.0",
+    "@spool-ai/claude-code-adapter": "^0.3.0",
+    "@spool-ai/codex-cli-adapter": "^0.3.0",
+    "@spool-ai/cursor-adapter": "^0.3.0",
+    "@spool-ai/agent": "^0.3.0",
+    "@spool-ai/proxy": "^0.3.0",
+    "@spool-ai/store-postgres": "^0.3.0",
     "commander": "^12.1.0",
-    "picocolors": "^1.0.0"
+    "picocolors": "^1.0.0",
+    "@anthropic-ai/sdk": "^0.30.0"
+  },
+  "description": "Spool: the debugger for AI agents — capture, inspect, fork, replay, live-probe",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Spool.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/HoneycombHairDevelopers/Spool#readme",
+  "bugs": {
+    "url": "https://github.com/HoneycombHairDevelopers/Spool/issues"
+  },
+  "engines": {
+    "node": ">=20.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "tsup": {
+    "entry": [
+      "src/index.ts"
+    ],
+    "format": [
+      "esm"
+    ],
+    "clean": true
+  },
+  "scripts": {
+    "build": "tsup"
   }
 }

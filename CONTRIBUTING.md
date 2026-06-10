@@ -89,7 +89,7 @@ See the [README §Repo layout](README.md#repo-layout). The mental model:
 - `ee/` — Enterprise Edition modules. Empty today. **Different
   license** (ELv2) than the rest of the repo.
 
-Workspace deps are wired through npm workspaces — `@spool/*` packages
+Workspace deps are wired through npm workspaces — `@spool-ai/*` packages
 import each other by name without a build step.
 
 ---
@@ -189,7 +189,7 @@ If you need a dep that doesn't fit, open an issue first.
 
 1. Test diff (matches the source diff?)
 2. Surface change (any new export? backwards-incompatible?)
-3. Cross-package coupling (new `@spool/*` import that creates a cycle?)
+3. Cross-package coupling (new `@spool-ai/*` import that creates a cycle?)
 4. The actual logic
 
 ---

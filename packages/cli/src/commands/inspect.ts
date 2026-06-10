@@ -9,14 +9,14 @@ import {
   listForks,
   listSteps,
   resolveSnapshotBlobRef,
-} from "@spool/collector";
+} from "@spool-ai/collector";
 import type {
   ContextSnapshot,
   ConversationMessage,
   FileOp,
   RetrievedDocument,
   Step,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import {
   actionLabel,
   fmtCents,
@@ -24,7 +24,7 @@ import {
   openStore,
   statusColor,
 } from "../util.ts";
-import { reformatJsonString, prettyTab, type PrettyMode } from "@spool/server";
+import { reformatJsonString, prettyTab, type PrettyMode } from "@spool-ai/server";
 
 export function registerInspectCommand(program: Command): void {
   program
@@ -149,7 +149,7 @@ async function printStepSummary(s: Step): Promise<void> {
 }
 
 async function printStep(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   step: Step,
   show: string,
   withDiff = false,
@@ -260,7 +260,7 @@ async function printStep(
  * the `spool files --diff` view uses, so the muscle memory transfers.
  */
 async function printStepFiles(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   step: Step,
   withDiff: boolean,
 ): Promise<void> {
@@ -319,7 +319,7 @@ function opTagInline(op: FileOp): string {
 }
 
 async function printResolvedContext(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   step: Step,
 ): Promise<void> {
   const ref = resolveSnapshotBlobRef(store, step.context_snapshot_id);

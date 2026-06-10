@@ -8,8 +8,8 @@ import type {
   Outcome,
   Run,
   Step,
-} from "@spool/shared";
-import { hashJson } from "@spool/shared";
+} from "@spool-ai/shared";
+import { hashJson } from "@spool-ai/shared";
 import {
   getIngestOffset,
   getRunBySessionId,
@@ -21,8 +21,8 @@ import {
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import type { Store } from "@spool/collector";
+} from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
 import {
   endOffset,
   readCodexSession,

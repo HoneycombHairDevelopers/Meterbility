@@ -7,7 +7,7 @@ import {
   Store,
   listFileChanges,
   listSteps,
-} from "@spool/collector";
+} from "@spool-ai/collector";
 import { ingestSession } from "./ingest.ts";
 import { applyEdit, parseRmCommand } from "./file_changes.ts";
 import { diffLines } from "./diff.ts";

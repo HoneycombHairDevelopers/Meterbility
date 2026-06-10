@@ -4,8 +4,8 @@ import {
   claudeProjectsRoot,
   probeFilePath,
   readState as readProbeState,
-} from "@spool/shared";
-import type { ProbeFsmState } from "@spool/shared";
+} from "@spool-ai/shared";
+import type { ProbeFsmState } from "@spool-ai/shared";
 import {
   ingestSession,
   discoverSessions,
@@ -13,15 +13,15 @@ import {
   probeRecords,
   formatWarning,
   type ShapeWarning,
-} from "@spool/claude-code-adapter";
+} from "@spool-ai/claude-code-adapter";
 import {
   getRun,
   listFileChanges,
   listRuns,
   listSteps,
-} from "@spool/collector";
-import type { Store } from "@spool/collector";
-import type { Run, Step } from "@spool/shared";
+} from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
+import type { Run, Step } from "@spool-ai/shared";
 import {
   classifyRunStatus,
   contextUtilization,

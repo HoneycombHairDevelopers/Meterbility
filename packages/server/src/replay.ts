@@ -9,9 +9,9 @@ import type {
   Run,
   Step,
   TokenUsage,
-} from "@spool/shared";
-import { hashJson } from "@spool/shared";
-import { costCents } from "@spool/spec";
+} from "@spool-ai/shared";
+import { hashJson } from "@spool-ai/shared";
+import { costCents } from "@spool-ai/spec";
 import {
   getRun,
   getStep,
@@ -24,8 +24,8 @@ import {
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import type { Store } from "@spool/collector";
+} from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
 
 /**
  * Replay engine. v0 implements two modes:

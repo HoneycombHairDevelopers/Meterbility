@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { resolveSetting } from "@spool/collector";
+import { resolveSetting } from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 /**
@@ -9,7 +9,7 @@ import { openStore } from "../util.ts";
  * throw a clear error).
  */
 function resolvePostgresUrl(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   flag?: string,
 ): string | undefined {
   if (flag) return flag;
@@ -31,7 +31,7 @@ export function registerDbCommand(program: Command): void {
       "Postgres connection URL (defaults to SPOOL_DB_URL or postgres.url setting)",
     )
     .action(async (opts: { url?: string }) => {
-      const { PostgresStore } = await import("@spool/store-postgres");
+      const { PostgresStore } = await import("@spool-ai/store-postgres");
       const sqlite = openStore();
       let store: Awaited<ReturnType<typeof PostgresStore.open>>;
       try {
@@ -69,7 +69,7 @@ export function registerDbCommand(program: Command): void {
     )
     .action(async (opts: { url?: string; limit?: number }) => {
       const { PostgresStore, syncSqliteToPostgres } = await import(
-        "@spool/store-postgres"
+        "@spool-ai/store-postgres"
       );
       const sqlite = openStore();
       const postgres = await PostgresStore.open({

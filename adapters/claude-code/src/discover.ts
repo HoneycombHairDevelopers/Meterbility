@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { claudeProjectsRoot, encodeCwdForClaude } from "@spool/shared";
+import { claudeProjectsRoot, encodeCwdForClaude } from "@spool-ai/shared";
 
 export interface DiscoveredSession {
   path: string;

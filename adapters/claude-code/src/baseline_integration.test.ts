@@ -9,7 +9,7 @@ import {
   getRun,
   listFileChanges,
   workingTreeAt,
-} from "@spool/collector";
+} from "@spool-ai/collector";
 import { ingestSession } from "./ingest.ts";
 
 /**

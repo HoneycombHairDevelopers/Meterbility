@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { Store, listRuns, listSteps } from "@spool/collector";
+import { Store, listRuns, listSteps } from "@spool-ai/collector";
 import { ingestCursorGlobal } from "./ingest.ts";
 
 function freshSpoolHome(): string {

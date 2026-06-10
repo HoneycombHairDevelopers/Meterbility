@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import { dbPath, spoolHome } from "@spool/shared";
+import { dbPath, spoolHome } from "@spool-ai/shared";
 import { ensureSchema } from "./schema.ts";
 import { BlobStore } from "./blobs.ts";
 

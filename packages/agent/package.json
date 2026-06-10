@@ -1,15 +1,51 @@
 {
-  "name": "@spool/agent",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@spool-ai/agent",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "dependencies": {
-    "@spool/shared": "*",
-    "@spool/spec": "*"
+    "@spool-ai/shared": "^0.3.0",
+    "@spool-ai/spec": "^0.3.0",
+    "@spool-ai/collector": "^0.3.0"
+  },
+  "description": "TypeScript SDK for tracing custom agents with Spool, including Live Probe",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Spool.git",
+    "directory": "packages/agent"
+  },
+  "homepage": "https://github.com/HoneycombHairDevelopers/Spool#readme",
+  "bugs": {
+    "url": "https://github.com/HoneycombHairDevelopers/Spool/issues"
+  },
+  "engines": {
+    "node": ">=20.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "types": "dist/index.d.ts",
+  "tsup": {
+    "entry": [
+      "src/index.ts"
+    ],
+    "format": [
+      "esm"
+    ],
+    "dts": true,
+    "clean": true
+  },
+  "scripts": {
+    "build": "tsup"
   }
 }

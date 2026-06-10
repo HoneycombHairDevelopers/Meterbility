@@ -1,4 +1,4 @@
-import type { Annotation, FileChange, FileOp, ProbeRecord, Run, Step } from "@spool/shared";
+import type { Annotation, FileChange, FileOp, ProbeRecord, Run, Step } from "@spool-ai/shared";
 import type { DiffResult } from "./diff.ts";
 import type { FleetEntry } from "./live.ts";
 import type { RegressionResult, RegressionTest } from "./regression.ts";
@@ -3371,7 +3371,7 @@ export function renderContext(
            <strong>Note on fidelity.</strong> Spool captures what Claude Code writes
            to its session log: conversation history. The system prompt, tool definitions,
            and any RAG context Anthropic injects server-side aren't in the log and
-           aren't shown here. SDK-captured runs (<code>@spool/agent</code>) carry the
+           aren't shown here. SDK-captured runs (<code>@spool-ai/agent</code>) carry the
            full context.
          </div>`
       : "";

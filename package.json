@@ -12,15 +12,19 @@
   "scripts": {
     "spool": "node --import tsx/esm packages/cli/src/index.ts",
     "test": "node --import tsx/esm scripts/run-tests.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build": "npm run build -w packages/shared -w packages/spec && npm run build -w packages/collector && npm run build -w packages/store-postgres -w adapters/claude-code -w adapters/codex-cli -w adapters/cursor -w packages/agent -w packages/proxy && npm run build -w packages/server && npm run build -w packages/cli"
   },
   "engines": {
     "node": ">=20.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.0",
+    "@types/pg": "^8.20.0",
     "fast-check": "^4.8.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"
   }

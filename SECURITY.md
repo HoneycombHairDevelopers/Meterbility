@@ -62,7 +62,7 @@ We won't pursue legal action against good-faith security research that:
 - Anything in this repository: the OSS core (MIT) under `packages/`,
   `adapters/`, `scripts/`, `bin/`; the ELv2 modules under `ee/` (when
   present); the docs.
-- Distributed artifacts published from this repo (npm `@spool/*`
+- Distributed artifacts published from this repo (npm `@spool-ai/*`
   packages when we publish, the `spool-agent` PyPI package).
 - The reference Spool web server when run locally per the documented
   install instructions.

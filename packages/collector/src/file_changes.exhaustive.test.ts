@@ -12,7 +12,7 @@ import type {
   FileOp,
   Run,
   Step,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import { Store } from "./store.ts";
 import {
   FileChangeInvariantError,

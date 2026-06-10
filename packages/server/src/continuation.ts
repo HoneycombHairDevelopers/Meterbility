@@ -6,9 +6,9 @@ import type {
   Outcome,
   Step,
   TokenUsage,
-} from "@spool/shared";
-import { hashJson } from "@spool/shared";
-import { costCents } from "@spool/spec";
+} from "@spool-ai/shared";
+import { hashJson } from "@spool-ai/shared";
+import { costCents } from "@spool-ai/spec";
 import {
   getRun,
   insertStep,
@@ -17,8 +17,8 @@ import {
   resolveSnapshotBlobRef,
   setRunStatus,
   updateRunTotals,
-} from "@spool/collector";
-import type { Store } from "@spool/collector";
+} from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
 import { randomUUID } from "node:crypto";
 
 /**

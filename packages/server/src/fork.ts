@@ -5,15 +5,15 @@ import type {
   ForkEditType,
   Outcome,
   TokenUsage,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import {
   getRun,
   getStep,
   getStepBySequence,
   insertFork,
   listSteps,
-} from "@spool/collector";
-import type { Store } from "@spool/collector";
+} from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
 import { appendLiveStep, materializePrefix } from "./replay.ts";
 
 export interface ForkArgs {
@@ -118,7 +118,7 @@ function validateEdit(edit: ForkEdit): void {
 }
 
 export interface LiveResponderArgs {
-  origin_step: import("@spool/shared").Step;
+  origin_step: import("@spool-ai/shared").Step;
   context_snapshot_id: string;
   edit: ForkEdit;
 }
@@ -211,18 +211,22 @@ export function anthropicResponder(
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("\n");
-    // Split 5m / 1h cache writes when the API exposes the breakdown.
-    const cc = (resp.usage as
+    // Split 5m / 1h cache writes when the API exposes the breakdown. The SDK's
+    // Usage type predates the cache fields, so the whole block is cast.
+    const usage = resp.usage as
       | {
           cache_creation?: {
             ephemeral_5m_input_tokens?: number;
             ephemeral_1h_input_tokens?: number;
           };
+          cache_creation_input_tokens?: number;
+          cache_read_input_tokens?: number;
         }
-      | undefined)?.cache_creation;
+      | undefined;
+    const cc = usage?.cache_creation;
     const tokens5m = cc
       ? cc.ephemeral_5m_input_tokens ?? 0
-      : (resp.usage?.cache_creation_input_tokens ?? 0);
+      : (usage?.cache_creation_input_tokens ?? 0);
     const tokens1h = cc?.ephemeral_1h_input_tokens ?? 0;
     return {
       model: resp.model,
@@ -231,7 +235,7 @@ export function anthropicResponder(
       tokens: {
         input: resp.usage?.input_tokens ?? 0,
         output: resp.usage?.output_tokens ?? 0,
-        cached_read: resp.usage?.cache_read_input_tokens ?? 0,
+        cached_read: usage?.cache_read_input_tokens ?? 0,
         cache_creation: tokens5m,
         cache_creation_1h: tokens1h,
       },

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listRuns, listSteps } from "@spool/collector";
-import { SpoolTracer } from "@spool/agent";
+import { Store, listRuns, listSteps } from "@spool-ai/collector";
+import { SpoolTracer } from "@spool-ai/agent";
 import { forkRun, fakeResponder } from "./fork.ts";
 import {
   continueFork,

@@ -4,8 +4,8 @@ import {
   LiveInspector,
   type LiveEvent,
   type FleetEntry,
-} from "@spool/server";
-import { getSetting } from "@spool/collector";
+} from "@spool-ai/server";
+import { getSetting } from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 /**

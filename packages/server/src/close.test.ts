@@ -10,8 +10,8 @@ import {
   upsertAgent,
   upsertProjectByCwd,
   getRun,
-} from "@spool/collector";
-import type { Run } from "@spool/shared";
+} from "@spool-ai/collector";
+import type { Run } from "@spool-ai/shared";
 import { buildApp } from "./web.ts";
 
 function fresh(): string {

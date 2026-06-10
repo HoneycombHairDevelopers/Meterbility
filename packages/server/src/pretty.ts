@@ -11,7 +11,7 @@
  * `opts.toolResultText`.
  */
 
-import { fmtCents, fmtTokens } from "@spool/shared";
+import { fmtCents, fmtTokens } from "@spool-ai/shared";
 
 export type PrettyMode = "ansi" | "plain" | "html";
 
@@ -366,7 +366,7 @@ function renderAction(a: ActionShape, opts: PrettyOptions): string {
     // Unknown kinds: render whatever extra fields exist after kind.
     for (const k of Object.keys(a)) {
       if (k === "kind") continue;
-      const v = (a as Record<string, unknown>)[k];
+      const v = (a as unknown as Record<string, unknown>)[k];
       if (v !== undefined) fields.push({ key: k, value: v });
     }
   }
@@ -376,7 +376,8 @@ function renderAction(a: ActionShape, opts: PrettyOptions): string {
 
 function renderOutcome(o: OutcomeShape, opts: PrettyOptions): string {
   const mode = resolveMode(opts.mode);
-  const fields: Array<{ key: string; value: unknown; meta?: string }> = [];
+  const fields: Array<{ key: string; value: unknown; meta?: string; metaPainted?: string }> =
+    [];
 
   const statusColor: Color =
     o.status === "error" ? "error" : o.status === "pending" ? "pending" : "ok";

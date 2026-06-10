@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { Store } from "@spool/collector";
+import { Store } from "@spool-ai/collector";
 import {
   insertRun,
   setRunStatus,
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import { clearProbe, type Run } from "@spool/shared";
+} from "@spool-ai/collector";
+import { clearProbe, type Run } from "@spool-ai/shared";
 import { SpoolStep } from "./step.ts";
 import type { StartStepOptions, TracerOptions } from "./types.ts";
 import { DEFAULT_PROBE_RUNTIME, type ProbeRuntime } from "./probe.ts";

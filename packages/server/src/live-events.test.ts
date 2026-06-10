@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store } from "@spool/collector";
+import { Store } from "@spool-ai/collector";
 import { LiveInspector, type LiveEvent } from "./live.ts";
 
 /**

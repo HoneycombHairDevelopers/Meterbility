@@ -1,7 +1,7 @@
 import pc from "picocolors";
-import { Store } from "@spool/collector";
-import { fmtCents, fmtTokens } from "@spool/shared";
-import type { Run, Step } from "@spool/shared";
+import { Store } from "@spool-ai/collector";
+import { fmtCents, fmtTokens } from "@spool-ai/shared";
+import type { Run, Step } from "@spool-ai/shared";
 
 export { fmtCents, fmtTokens };
 

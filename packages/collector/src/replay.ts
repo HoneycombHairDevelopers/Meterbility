@@ -2,7 +2,7 @@ import type {
   BaselineTree,
   ManifestEntry,
   WorkingTree,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import {
   getBaselineTree,
   getRun,

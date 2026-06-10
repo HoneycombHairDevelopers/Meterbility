@@ -1,4 +1,4 @@
-# Custom-agent SDK (`@spool/agent`)
+# Custom-agent SDK (`@spool-ai/agent`)
 
 Instrument any TypeScript agent so its runs land in Spool alongside Claude Code and Codex captures. Two flavors:
 
@@ -8,7 +8,7 @@ Instrument any TypeScript agent so its runs land in Spool alongside Claude Code 
 ## Imperative tracer
 
 ```ts
-import { SpoolTracer, helpers } from "@spool/agent";
+import { SpoolTracer, helpers } from "@spool-ai/agent";
 
 const tracer = new SpoolTracer({
   project: "/abs/path/to/repo",       // becomes the Project
@@ -54,7 +54,7 @@ If you're already calling the Anthropic SDK and just want trace capture for free
 
 ```ts
 import Anthropic from "@anthropic-ai/sdk";
-import { SpoolTracer, traceAnthropic } from "@spool/agent";
+import { SpoolTracer, traceAnthropic } from "@spool-ai/agent";
 
 const client = new Anthropic();
 const tracer = new SpoolTracer({ project: "/repo", agent: "ops" });

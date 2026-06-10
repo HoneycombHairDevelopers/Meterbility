@@ -146,7 +146,7 @@ The main app runs a watcher daemon that persists even when no window is visible.
 ### 6.1 What the daemon does
 
 - Watches `~/.claude/projects/` via `fs.watch` (FSEvents on macOS, `inotify` on Linux, `ReadDirectoryChangesW` on Windows) — replaces the current 1500ms polling
-- Runs `LiveInspector` from the existing `@spool/server` package
+- Runs `LiveInspector` from the existing `@spool-ai/server` package
 - Fires native OS notifications for alerts (loop / stall / context-threshold / tool-watched)
 - Routes notifications to Slack if configured
 - Tracks SPOOL_HOME health (disk space, file integrity)

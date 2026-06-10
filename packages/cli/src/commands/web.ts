@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { serveApp, SlackNotifier, type SlackEventKind } from "@spool/server";
-import { resolveSetting, getSetting } from "@spool/collector";
+import { serveApp, SlackNotifier, type SlackEventKind } from "@spool-ai/server";
+import { resolveSetting, getSetting } from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 export function registerWebCommand(program: Command): void {

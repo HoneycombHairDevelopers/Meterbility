@@ -1,6 +1,6 @@
 # spool-agent (Python SDK)
 
-The Python counterpart to `@spool/agent`. Wire any Python LLM agent into
+The Python counterpart to `@spool-ai/agent`. Wire any Python LLM agent into
 Spool by capturing one **Step** per model call. Runs land in the same
 `~/.spool/spool.db` store the TypeScript SDK, the CLI, and the web UI
 read from — so a Python agent shows up in `spool list` and `spool web`

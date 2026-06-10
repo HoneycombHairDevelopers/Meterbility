@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { SlackNotifier } from "@spool/server";
+import { SlackNotifier } from "@spool-ai/server";
 
 export function registerSlackCommand(program: Command): void {
   const slack = program

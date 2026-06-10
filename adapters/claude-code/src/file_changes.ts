@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { FileChange, FileOp } from "@spool/shared";
-import { claudeFileHistoryDir } from "@spool/shared";
+import type { FileChange, FileOp } from "@spool-ai/shared";
+import { claudeFileHistoryDir } from "@spool-ai/shared";
 import type { ParsedRecord } from "./parser.ts";
 import {
   isAssistant,
@@ -9,7 +9,7 @@ import {
   type ClaudeContentBlock,
 } from "./types.ts";
 import { diffLines } from "./diff.ts";
-import { enforceFileSizePolicy, isProbablyText } from "@spool/collector";
+import { enforceFileSizePolicy, isProbablyText } from "@spool-ai/collector";
 
 /**
  * v0.3 Track A — Claude Code file-history-snapshot parser.

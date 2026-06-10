@@ -8,8 +8,8 @@ import type {
   Run,
   Step,
   TokenUsage,
-} from "@spool/shared";
-import { hashJson } from "@spool/shared";
+} from "@spool-ai/shared";
+import { hashJson } from "@spool-ai/shared";
 import {
   getRunBySessionId,
   insertRun,
@@ -19,8 +19,8 @@ import {
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import type { Store } from "@spool/collector";
+} from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
 import { CursorDb, isMeaningfulComposer } from "./parser.ts";
 import {
   bubbleText,

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fc from "fast-check";
-import type { Run, Step, TokenUsage } from "@spool/shared";
+import type { Run, Step, TokenUsage } from "@spool-ai/shared";
 import {
   classifyRunStatus,
   contextUtilization,

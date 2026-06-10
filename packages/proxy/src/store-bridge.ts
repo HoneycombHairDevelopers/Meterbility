@@ -8,7 +8,7 @@ import {
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
+} from "@spool-ai/collector";
 import type {
   Action,
   ContextComponent,
@@ -18,13 +18,13 @@ import type {
   Run,
   Step,
   TokenUsage,
-} from "@spool/shared";
-import { hashJson } from "@spool/shared";
-import { costCents } from "@spool/spec";
+} from "@spool-ai/shared";
+import { hashJson } from "@spool-ai/shared";
+import { costCents } from "@spool-ai/spec";
 
 /**
  * Thin write layer between captured exchanges and the Spool store.
- * Mirrors the same insert pipeline `@spool/agent`'s SpoolStep uses:
+ * Mirrors the same insert pipeline `@spool-ai/agent`'s SpoolStep uses:
  *
  *   1. Persist context blobs (system prompt, tool defs, history msgs).
  *   2. Hash + insert the snapshot row.

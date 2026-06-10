@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { Store, insertRun, upsertAgent, upsertProjectByCwd } from "@spool/collector";
+import { Store, insertRun, upsertAgent, upsertProjectByCwd } from "@spool-ai/collector";
 import {
   probeFilePath,
   readState,
   requestPause,
   setInject,
-} from "@spool/shared";
-import type { Run } from "@spool/shared";
+} from "@spool-ai/shared";
+import type { Run } from "@spool-ai/shared";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const CLI_ENTRY = resolve(TEST_DIR, "index.ts");

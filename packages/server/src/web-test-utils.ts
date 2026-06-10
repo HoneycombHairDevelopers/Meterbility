@@ -23,8 +23,8 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import type { Run, Step } from "@spool/shared";
+} from "@spool-ai/collector";
+import type { Run, Step } from "@spool-ai/shared";
 
 export interface ServerTestCtx {
   /** Test-scoped SPOOL_HOME directory (mkdtemp). */
