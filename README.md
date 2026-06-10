@@ -35,7 +35,7 @@ spool list
 spool web                    # open the inspector at http://127.0.0.1:4317
 ```
 
-Instrumenting your own agent? Add the SDK to your project instead: `npm install @spool-ai/agent`. (The Python SDK isn't on PyPI yet — install it from a clone: `pip install -e packages/agent-py`.)
+Instrumenting your own agent? Add the SDK to your project instead: `npm install @spool-ai/agent` (TypeScript) or `pip install spool-agent` (Python).
 
 ### From a clone
 
