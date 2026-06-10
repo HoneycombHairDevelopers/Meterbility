@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { getRun } from "@spool/collector";
-import { diffRuns, type DiffResult } from "@spool/server";
+import { getRun } from "@spool-ai/collector";
+import { diffRuns, type DiffResult } from "@spool-ai/server";
 import { openStore } from "../util.ts";
 
 export function registerDiffCommand(program: Command): void {

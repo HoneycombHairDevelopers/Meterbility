@@ -1,4 +1,4 @@
-import type { FileChange, FileOp, Run, Step } from "@spool/shared";
+import type { FileChange, FileOp, Run, Step } from "@spool-ai/shared";
 
 /**
  * `/runs/:run_id/files` page renderer.

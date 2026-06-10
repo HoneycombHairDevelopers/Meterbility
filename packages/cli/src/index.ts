@@ -27,7 +27,7 @@ const program = new Command();
 program
   .name("spool")
   .description(pc.bold("Spool ") + pc.dim("— the debugger for AI agents"))
-  .version("0.1.0");
+  .version("0.3.0");
 
 registerDoctorCommand(program);
 registerIngestCommand(program);

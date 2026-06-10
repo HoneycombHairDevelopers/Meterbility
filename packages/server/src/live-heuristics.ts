@@ -1,4 +1,4 @@
-import type { Run, Step } from "@spool/shared";
+import type { Run, Step } from "@spool-ai/shared";
 
 export type LiveStatus =
   | "progressing"

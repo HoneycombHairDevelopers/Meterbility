@@ -25,8 +25,8 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import type { Run, Step } from "@spool/shared";
+} from "@spool-ai/collector";
+import type { Run, Step } from "@spool-ai/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI_ENTRY = resolve(__dirname, "index.ts");

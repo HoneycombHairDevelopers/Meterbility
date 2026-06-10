@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
-import type { Annotation, Run, Step } from "@spool/shared";
+import type { Annotation, Run, Step } from "@spool-ai/shared";
 import {
   clearProbe,
   consumeInject as consumeProbeInject,
@@ -9,7 +9,7 @@ import {
   requestPause as probeRequestPause,
   requestResume as probeRequestResume,
   setInject as probeSetInject,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import {
   getBaselineTree,
   getFileChange,
@@ -32,9 +32,9 @@ import {
   isSecret,
   maskSecret,
   type SettingKey,
-} from "@spool/collector";
-import type { Store } from "@spool/collector";
-import { TRACE_FORMAT_VERSION } from "@spool/spec";
+} from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
+import { TRACE_FORMAT_VERSION } from "@spool-ai/spec";
 import { diffRuns } from "./diff.ts";
 import { recordProbeIntervention } from "./probe_annotations.ts";
 import {
@@ -66,7 +66,7 @@ import type {
   ContextSnapshot,
   ConversationMessage,
   RetrievedDocument,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import {
   LiveController,
   LiveInspector,
@@ -408,7 +408,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   // operations to actually pause the agent; the panel surfaces that
   // requirement so a confused operator knows why their pause did
   // nothing. The CLI (`spool probe ...`) goes through the same probe
-  // protocol (`@spool/shared/probe`), so both the web panel and the
+  // protocol (`@spool-ai/shared/probe`), so both the web panel and the
   // terminal see the same state.
 
   // v0.3 canonical probe routes — per SPEC-V0_3 §4 + §8.4, probe lives
@@ -980,7 +980,9 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
             .filter((b): b is { type: "text"; text: string } => b.type === "text")
             .map((b) => b.text)
             .join("\n");
-          const cc = (resp.usage as { cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } } | undefined)?.cache_creation;
+          // SDK's Usage type predates the cache fields, so the whole block is cast.
+          const usage = resp.usage as { cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number }; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } | undefined;
+          const cc = usage?.cache_creation;
           return {
             model: resp.model,
             decision_content: resp.content,
@@ -995,10 +997,10 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
             tokens: {
               input: resp.usage?.input_tokens ?? 0,
               output: resp.usage?.output_tokens ?? 0,
-              cached_read: resp.usage?.cache_read_input_tokens ?? 0,
+              cached_read: usage?.cache_read_input_tokens ?? 0,
               cache_creation:
                 cc?.ephemeral_5m_input_tokens ??
-                resp.usage?.cache_creation_input_tokens ??
+                usage?.cache_creation_input_tokens ??
                 0,
               cache_creation_1h: cc?.ephemeral_1h_input_tokens ?? 0,
             },
@@ -1193,9 +1195,9 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const { existsSync } = await import("node:fs");
     const { stat } = await import("node:fs/promises");
     const { claudeHome, claudeProjectsRoot, dbPath, spoolHome } = await import(
-      "@spool/shared"
+      "@spool-ai/shared"
     );
-    const { discoverSessions } = await import("@spool/claude-code-adapter");
+    const { discoverSessions } = await import("@spool-ai/claude-code-adapter");
     const checks: Array<{
       name: string;
       status: "ok" | "warn" | "fail";
@@ -1273,7 +1275,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       let composers = 0;
       if (body.runtime === "claude-code") {
         const { discoverSessions, ingestSession } = await import(
-          "@spool/claude-code-adapter"
+          "@spool-ai/claude-code-adapter"
         );
         let paths: string[] = [];
         if (body.path) paths = [body.path];
@@ -1292,7 +1294,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         }
       } else if (body.runtime === "codex-cli") {
         const { discoverCodexSessions, ingestCodexSession } = await import(
-          "@spool/codex-cli-adapter"
+          "@spool-ai/codex-cli-adapter"
         );
         let paths: string[] = [];
         if (body.path) paths = [body.path];
@@ -1310,7 +1312,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
           }
         }
       } else if (body.runtime === "cursor") {
-        const { ingestCursorGlobal } = await import("@spool/cursor-adapter");
+        const { ingestCursorGlobal } = await import("@spool-ai/cursor-adapter");
         const r = await ingestCursorGlobal(store, { limit: body.limit });
         if (r.status === "ok") {
           composers = r.composers_ingested;
@@ -1359,7 +1361,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       body.url ?? resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
     if (!url) return c.json({ error: "missing url" }, 400);
     try {
-      const { PostgresStore } = await import("@spool/store-postgres");
+      const { PostgresStore } = await import("@spool-ai/store-postgres");
       const pg = await PostgresStore.open({ url });
       try {
         const r = await pg.client.query<{ value: string }>(
@@ -1386,7 +1388,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     if (!url) return c.json({ error: "missing url" }, 400);
     try {
       const { PostgresStore, syncSqliteToPostgres } = await import(
-        "@spool/store-postgres"
+        "@spool-ai/store-postgres"
       );
       const pg = await PostgresStore.open({ url });
       try {

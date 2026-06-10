@@ -1,5 +1,5 @@
-import type { Store as SqliteStore } from "@spool/collector";
-import { listRuns, listSteps, resolveSnapshotBlobRef } from "@spool/collector";
+import type { Store as SqliteStore } from "@spool-ai/collector";
+import { listRuns, listSteps, resolveSnapshotBlobRef } from "@spool-ai/collector";
 import {
   pgInsertRun,
   pgInsertStep,

@@ -4,16 +4,16 @@ import pc from "picocolors";
 import {
   discoverSessions,
   ingestSession,
-} from "@spool/claude-code-adapter";
+} from "@spool-ai/claude-code-adapter";
 import {
   discoverCodexSessions,
   ingestCodexSession,
-} from "@spool/codex-cli-adapter";
+} from "@spool-ai/codex-cli-adapter";
 import {
   defaultGlobalDbPath,
   discoverCursorWorkspaces,
   ingestCursorGlobal,
-} from "@spool/cursor-adapter";
+} from "@spool-ai/cursor-adapter";
 import { openStore } from "../util.ts";
 
 export function registerIngestCommand(program: Command): void {

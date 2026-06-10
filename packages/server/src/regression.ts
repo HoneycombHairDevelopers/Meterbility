@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { Run, Step, StepStatus } from "@spool/shared";
-import { getRun, listRuns, listSteps } from "@spool/collector";
-import type { Store } from "@spool/collector";
+import type { Run, Step, StepStatus } from "@spool-ai/shared";
+import { getRun, listRuns, listSteps } from "@spool-ai/collector";
+import type { Store } from "@spool-ai/collector";
 
 /**
  * Regression suite (v0.1).

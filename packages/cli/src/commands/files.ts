@@ -7,8 +7,8 @@ import {
   getStepBySequence,
   listFileChanges,
   listSteps,
-} from "@spool/collector";
-import type { FileChange, FileOp, Run, Step } from "@spool/shared";
+} from "@spool-ai/collector";
+import type { FileChange, FileOp, Run, Step } from "@spool-ai/shared";
 import { openStore } from "../util.ts";
 
 /**
@@ -102,7 +102,7 @@ export function registerFilesCommand(program: Command): void {
 // ─── Mode 1: default cumulative summary ──────────────────────────────
 
 async function runSummaryMode(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   run: Run,
   opts: { json?: boolean },
 ): Promise<void> {
@@ -189,7 +189,7 @@ async function runSummaryMode(
 // ─── Mode 2: per-step ────────────────────────────────────────────────
 
 async function runAtMode(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   run: Run,
   opts: { at?: string; json?: boolean },
 ): Promise<void> {
@@ -229,7 +229,7 @@ async function runAtMode(
 // ─── Mode 3: --diff for one path ─────────────────────────────────────
 
 async function runDiffMode(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   run: Run,
   opts: { diff?: string; from?: string; to?: string; json?: boolean },
 ): Promise<void> {
@@ -482,7 +482,7 @@ function rowToJson(arg: CollapsedRow | FileChange): unknown {
  * the muscle memory is shared. Strict: a missing step is an error.
  */
 function resolveStep(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   run: Run,
   needle: string,
 ): Step {
@@ -505,7 +505,7 @@ function resolveStep(
  * error on miss — passing a bogus step-id is always a user mistake.
  */
 function resolveStepSeqLoose(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   run: Run,
   needle: string,
 ): number {
@@ -526,7 +526,7 @@ function resolveStepSeqLoose(
  * steps already loaded.
  */
 function filterByStepSeq(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   fcs: FileChange[],
   fromSeq: number,
   toSeq: number,

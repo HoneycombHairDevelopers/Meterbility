@@ -51,8 +51,8 @@ Each alert fires once per (run, signature) pair so you don't get spammed. Alerts
 The same machinery is exposed programmatically:
 
 ```ts
-import { Store } from "@spool/collector";
-import { LiveInspector } from "@spool/server";
+import { Store } from "@spool-ai/collector";
+import { LiveInspector } from "@spool-ai/server";
 
 const store = Store.open();
 const live = new LiveInspector(store, {

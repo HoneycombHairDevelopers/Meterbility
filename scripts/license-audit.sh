@@ -71,7 +71,7 @@ for f in [pathlib.Path("package.json")] + list(pathlib.Path("packages").glob("*/
     d = json.loads(f.read_text())
     for k in ("dependencies", "devDependencies", "peerDependencies"):
         for name in (d.get(k) or {}):
-            if name.startswith("@spool/"):
+            if name.startswith("@spool-ai/"):
                 continue
             direct_deps.add(name)
 

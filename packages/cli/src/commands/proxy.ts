@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { startProxy, type ProxyOptions } from "@spool/proxy";
+import { startProxy, type ProxyOptions } from "@spool-ai/proxy";
 
 /**
  * `spool proxy` — long-running local LLM-API forward proxy.

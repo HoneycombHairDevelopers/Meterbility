@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { Store, listRuns, listSteps } from "@spool/collector";
+import { Store, listRuns, listSteps } from "@spool-ai/collector";
 import { startProxy } from "./server.ts";
 
 function freshHome(): string {

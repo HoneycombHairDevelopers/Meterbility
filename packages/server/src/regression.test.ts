@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listRuns } from "@spool/collector";
-import { SpoolTracer } from "@spool/agent";
+import { Store, listRuns } from "@spool-ai/collector";
+import { SpoolTracer } from "@spool-ai/agent";
 import {
   createTest,
   deriveAssertionsFromRun,
@@ -12,7 +12,7 @@ import {
   listTests,
   runTest,
 } from "./regression.ts";
-import { listSteps } from "@spool/collector";
+import { listSteps } from "@spool-ai/collector";
 
 function fresh(): string {
   const dir = mkdtempSync(join(tmpdir(), "spool-regression-"));

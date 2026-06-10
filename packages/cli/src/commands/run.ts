@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { Command } from "commander";
 import pc from "picocolors";
-import { startProxy } from "@spool/proxy";
+import { startProxy } from "@spool-ai/proxy";
 
 /**
  * `spool run -- <command...>` — one-command zero-instrumentation capture.

@@ -5,8 +5,8 @@ import {
   insertFileChange,
   setRunBaselineTree,
   setSetting,
-} from "@spool/collector";
-import { serializeManifest } from "@spool/collector";
+} from "@spool-ai/collector";
+import { serializeManifest } from "@spool-ai/collector";
 import { buildApp } from "./web.ts";
 import { freshCtx, scaffoldRun, jsonReq } from "./web-test-utils.ts";
 

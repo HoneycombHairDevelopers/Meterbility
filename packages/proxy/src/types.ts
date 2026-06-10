@@ -1,4 +1,4 @@
-import type { Action, ContextComponent, TokenUsage } from "@spool/shared";
+import type { Action, ContextComponent, TokenUsage } from "@spool-ai/shared";
 
 /**
  * Per-provider capture interface. Each capture module knows how to:

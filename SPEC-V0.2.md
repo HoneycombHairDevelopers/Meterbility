@@ -71,7 +71,7 @@ backend exists for team-tier scenarios.
 1. **Hook adapters** — read existing session logs from disk. Zero code change.
    Adapters: `claude-code`, `codex-cli`, `cursor`.
 2. **SDK adapters** — wrap your model calls explicitly. TypeScript
-   (`@spool/agent`) and Python (`spool-agent`).
+   (`@spool-ai/agent`) and Python (`spool-agent`).
 3. **HTTP proxy** — `spool proxy` or `spool run -- <cmd>`. Local forward
    proxy that captures the wire payload. **Anthropic + OpenAI from day one.**
    Streaming + non-streaming. No code change required from the agent author.
@@ -108,9 +108,9 @@ contained PR; nothing in the core packages needs to change.
 
 ### 2.2 SDK mode
 
-**TypeScript** (`@spool/agent`):
+**TypeScript** (`@spool-ai/agent`):
 ```ts
-import { SpoolTracer, helpers } from "@spool/agent";
+import { SpoolTracer, helpers } from "@spool-ai/agent";
 
 const tracer = new SpoolTracer({ project: "my-app", agent: "support" });
 const step = tracer.startStep({
@@ -128,7 +128,7 @@ await tracer.end();
 
 A convenience wrapper exists for the Anthropic SDK case:
 ```ts
-import { traceAnthropic } from "@spool/agent";
+import { traceAnthropic } from "@spool-ai/agent";
 const traced = traceAnthropic(tracer, (req) => client.messages.create(req));
 ```
 
@@ -456,7 +456,7 @@ handles the lookup.
 
 ### 5.5 Postgres backend (optional)
 
-`@spool/store-postgres` mirrors the SQLite schema in Postgres (DDL in
+`@spool-ai/store-postgres` mirrors the SQLite schema in Postgres (DDL in
 `packages/store-postgres/src/schema.ts`). `spool db postgres-sync` copies
 runs/steps/blobs from local SQLite into Postgres for team-tier scenarios.
 Not the default — local SQLite is the day-one experience.
@@ -1203,7 +1203,7 @@ revisit something.
 - **Hook mode.** Capture by reading runtime-published session logs from
   disk (Claude Code, Codex, Cursor).
 - **SDK mode.** Capture by wrapping model and tool calls at instrumentation
-  points (`@spool/agent`, `spool-agent`).
+  points (`@spool-ai/agent`, `spool-agent`).
 - **Proxy mode.** Capture by intercepting HTTP requests to LLM provider
   APIs (`spool proxy`, `spool run`).
 - **Source runtime.** The capture origin: `claude-code | codex-cli | cursor

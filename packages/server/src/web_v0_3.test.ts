@@ -11,8 +11,8 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import type { Run, Step } from "@spool/shared";
+} from "@spool-ai/collector";
+import type { Run, Step } from "@spool-ai/shared";
 import { buildApp } from "./web.ts";
 
 /**
@@ -322,7 +322,7 @@ test("/runs/:id stamps data-run-id, exposes #steps-anchor, and renders the Live 
     // Add one FileChange so the Files tab + run-level "Files changed"
     // section both render — gives us a more complete check of the
     // wiring than the bare run page.
-    const { listSteps } = await import("@spool/collector");
+    const { listSteps } = await import("@spool-ai/collector");
     const step = listSteps(store, runId)[0]!;
     insertFileChange(store, {
       run_id: runId, step_id: step.step_id, sequence: 0,

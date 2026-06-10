@@ -1,7 +1,7 @@
 import { writeFile, readFile } from "node:fs/promises";
 import { Command } from "commander";
 import pc from "picocolors";
-import { getRun, listSteps, listRuns } from "@spool/collector";
+import { getRun, listSteps, listRuns } from "@spool-ai/collector";
 import {
   addAssertion,
   createTest,
@@ -13,7 +13,7 @@ import {
   runTest,
   type Assertion,
   type AssertionKind,
-} from "@spool/server";
+} from "@spool-ai/server";
 import { openStore } from "../util.ts";
 
 const KINDS: AssertionKind[] = [

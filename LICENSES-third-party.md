@@ -13,20 +13,20 @@
 ## Direct dependencies
 
 The 11 third-party packages explicitly named in one of our `package.json`
-files. (Workspace-internal `@spool/*` packages are not listed; they all
+files. (Workspace-internal `@spool-ai/*` packages are not listed; they all
 ship under our MIT/ELv2 split — see [`LICENSE`](LICENSE).)
 
 | Package | Version | License | Consumed by |
 |---|---|---|---|
-| `@anthropic-ai/sdk` | 0.30.1 | MIT | `@spool/server` |
-| `@hono/node-server` | 1.19.14 | MIT | `@spool/proxy`, `@spool/server` |
+| `@anthropic-ai/sdk` | 0.30.1 | MIT | `@spool-ai/server` |
+| `@hono/node-server` | 1.19.14 | MIT | `@spool-ai/proxy`, `@spool-ai/server` |
 | `@types/node` | 20.19.40 | MIT | root |
-| `@types/pg` | 8.20.0 | MIT | `@spool/store-postgres` |
-| `better-sqlite3` | 11.10.0 | MIT | `@spool/collector`, `@spool/cursor-adapter` |
-| `commander` | 12.1.0 | MIT | `@spool/cli` |
-| `hono` | 4.12.18 | MIT | `@spool/proxy`, `@spool/server` |
-| `pg` | 8.20.0 | MIT | `@spool/store-postgres` |
-| `picocolors` | 1.1.1 | ISC | `@spool/cli` |
+| `@types/pg` | 8.20.0 | MIT | `@spool-ai/store-postgres` |
+| `better-sqlite3` | 11.10.0 | MIT | `@spool-ai/collector`, `@spool-ai/cursor-adapter` |
+| `commander` | 12.1.0 | MIT | `@spool-ai/cli` |
+| `hono` | 4.12.18 | MIT | `@spool-ai/proxy`, `@spool-ai/server` |
+| `pg` | 8.20.0 | MIT | `@spool-ai/store-postgres` |
+| `picocolors` | 1.1.1 | ISC | `@spool-ai/cli` |
 | `tsx` | 4.21.0 | MIT | root (dev) |
 | `typescript` | 5.9.3 | Apache-2.0 | root (dev) |
 

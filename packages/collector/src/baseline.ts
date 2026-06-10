@@ -2,8 +2,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { availableParallelism } from "node:os";
 import { join, relative, sep } from "node:path";
-import type { BaselineTree, ManifestEntry } from "@spool/shared";
-import { IgnoreMatcher } from "@spool/shared";
+import type { BaselineTree, ManifestEntry } from "@spool-ai/shared";
+import { IgnoreMatcher } from "@spool-ai/shared";
 import {
   findBaselineByManifest,
   insertBaselineTree,

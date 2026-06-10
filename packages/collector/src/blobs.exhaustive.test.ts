@@ -12,7 +12,7 @@ import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import fc from "fast-check";
-import { blobPath } from "@spool/shared";
+import { blobPath } from "@spool-ai/shared";
 import { Store } from "./store.ts";
 import { isProbablyText } from "./blobs.ts";
 

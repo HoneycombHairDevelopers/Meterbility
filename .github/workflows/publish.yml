@@ -1,0 +1,49 @@
+name: Publish to npm
+
+# Publishes every @spool-ai/* workspace package when a GitHub release is
+# published (or manually via workflow_dispatch). Requires the NPM_TOKEN
+# repository secret: an npm automation token with publish rights on the
+# @spool-ai org.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm --provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node (from .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # Same topological order as the root build script. npm skips nothing
+      # silently here: a version that already exists on the registry fails
+      # the job, which is the safe default for a release gate.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for w in packages/shared packages/spec packages/collector \
+                   packages/store-postgres adapters/claude-code \
+                   adapters/codex-cli adapters/cursor packages/agent \
+                   packages/proxy packages/server packages/cli; do
+            npm publish -w "$w" --provenance --access public
+          done

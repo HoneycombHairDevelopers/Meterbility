@@ -9,8 +9,8 @@ import {
   requestPause,
   requestResume,
   setInject,
-} from "@spool/shared";
-import { Store, listSteps, listRuns } from "@spool/collector";
+} from "@spool-ai/shared";
+import { Store, listSteps, listRuns } from "@spool-ai/collector";
 import { SpoolTracer, traceAnthropic } from "./index.ts";
 import { applyProbeToRequest, type ProbeRuntime } from "./probe.ts";
 

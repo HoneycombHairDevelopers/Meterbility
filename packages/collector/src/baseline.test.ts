@@ -7,7 +7,7 @@ import { Store } from "./store.ts";
 import { upsertProjectByCwd, getBaselineTree } from "./queries.ts";
 import { captureBaseline } from "./baseline.ts";
 import { parseManifest } from "./replay.ts";
-import { IgnoreMatcher } from "@spool/shared";
+import { IgnoreMatcher } from "@spool-ai/shared";
 
 /**
  * v0.3 Turn 5 — captureBaseline tests.

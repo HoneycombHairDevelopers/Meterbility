@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sha256 } from "@spool/shared";
+import { sha256 } from "@spool-ai/shared";
 import type { ParsedRequest } from "./types.ts";
 
 /**

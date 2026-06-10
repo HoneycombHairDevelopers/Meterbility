@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
-import { DEFAULT_SPOOLIGNORE } from "@spool/shared";
+import { DEFAULT_SPOOLIGNORE } from "@spool-ai/shared";
 
 /**
  * `spool init` — scaffolds the per-project opt-in for v0.3 file capture

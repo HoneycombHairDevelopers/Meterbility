@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listRuns, listSteps } from "@spool/collector";
+import { Store, listRuns, listSteps } from "@spool-ai/collector";
 import { ingestSession } from "./ingest.ts";
 
 function fresh(): Store {

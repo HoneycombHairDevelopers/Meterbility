@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import fc from "fast-check";
-import type { Run, Step, TokenUsage } from "@spool/shared";
+import type { Run, Step, TokenUsage } from "@spool-ai/shared";
 import { Store } from "./store.ts";
 import {
   aggregateTokens,

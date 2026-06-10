@@ -8,7 +8,7 @@ import {
   maskSecret,
   setSetting,
   type SettingKey,
-} from "@spool/collector";
+} from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 const KNOWN_KEYS: SettingKey[] = [

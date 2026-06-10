@@ -1,7 +1,7 @@
 import type { Client } from "pg";
 
 /**
- * Postgres schema mirroring `@spool/collector` (SQLite). Same column
+ * Postgres schema mirroring `@spool-ai/collector` (SQLite). Same column
  * names, same semantics. Differences:
  *   - JSON columns use `jsonb` (queryable + indexable later).
  *   - Timestamps use `timestamptz` rather than free-form text.
@@ -13,7 +13,7 @@ import type { Client } from "pg";
  * multiple operators share a project's run history.
  */
 /**
- * Version history (mirrors `@spool/collector` SCHEMA_VERSION):
+ * Version history (mirrors `@spool-ai/collector` SCHEMA_VERSION):
  *   v3 → v4 — file_change + baseline_tree tables, runs.baseline_tree_id,
  *             runs.probe_state. Per v0.3 §3.3, full enum coverage in
  *             CHECK constraints up front so v0.4 / v0.5 don't need

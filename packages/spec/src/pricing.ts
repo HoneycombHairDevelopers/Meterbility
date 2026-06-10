@@ -1,4 +1,4 @@
-import type { ModelPricing } from "@spool/shared";
+import type { ModelPricing } from "@spool-ai/shared";
 
 /**
  * Cents per million tokens. Source: Anthropic public pricing as of May 2026.

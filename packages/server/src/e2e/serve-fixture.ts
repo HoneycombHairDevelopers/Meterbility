@@ -28,8 +28,8 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool/collector";
-import type { Run, Step } from "@spool/shared";
+} from "@spool-ai/collector";
+import type { Run, Step } from "@spool-ai/shared";
 import { buildApp } from "../web.ts";
 import { LiveController } from "../live.ts";
 import type { LiveEvent } from "../live.ts";

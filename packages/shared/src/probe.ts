@@ -149,7 +149,7 @@ export function readState(runId: string, now: () => number = Date.now): ProbeRec
  *
  * @internal — exported only so `probe.exhaustive.test.ts` can hit
  *   every coercion branch directly without disk I/O ceremony.
- *   `@spool/shared` is a workspace-private package (`"private": true`
+ *   `@spool-ai/shared` is a workspace-private package (`"private": true`
  *   in package.json) and isn't published to npm, so no external
  *   consumer can depend on this surface.
  */

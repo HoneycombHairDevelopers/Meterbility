@@ -60,7 +60,7 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Anthropic + OpenAI proxy capture (`spool proxy`) | ✅ v0.2 |
 | Claude Code file-change capture (Write/Edit/MultiEdit/Bash-rm) | ✅ v0.3 |
 | **SDK** | |
-| TypeScript SDK (`@spool/agent`) | ✅ v0.1 |
+| TypeScript SDK (`@spool-ai/agent`) | ✅ v0.1 |
 | Python SDK (`spool-agent`) | ✅ v0.3 |
 | `traceAnthropic` / `trace_anthropic` helpers | ✅ v0.1 / v0.3 |
 | Live Probe in SDK (pause / inject / resume) | ✅ v0.3 |

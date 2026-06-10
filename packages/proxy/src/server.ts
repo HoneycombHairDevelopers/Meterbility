@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { serve, type ServerType } from "@hono/node-server";
-import { Store, getStep } from "@spool/collector";
+import { Store, getStep } from "@spool-ai/collector";
 import { anthropicCapture } from "./capture-anthropic.ts";
 import { openaiCapture } from "./capture-openai.ts";
 import { RunGrouper } from "./grouping.ts";

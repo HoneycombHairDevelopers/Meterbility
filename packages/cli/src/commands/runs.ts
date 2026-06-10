@@ -5,7 +5,7 @@ import {
   listRuns,
   setRunStatus,
   updateRunTotals,
-} from "@spool/collector";
+} from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 /**
@@ -105,9 +105,9 @@ export function registerRunsCommand(program: Command): void {
 }
 
 function singleTarget(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   id: string,
-): Array<import("@spool/shared").Run> {
+): Array<import("@spool-ai/shared").Run> {
   const run = getRun(store, id);
   if (!run) {
     console.error(pc.red(`run not found: ${id}`));
@@ -125,9 +125,9 @@ function singleTarget(
 }
 
 function bulkTargets(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   opts: { olderThan?: number; source?: string },
-): Array<import("@spool/shared").Run> {
+): Array<import("@spool-ai/shared").Run> {
   const all = listRuns(store, { limit: 1000 });
   const cutoffMs = opts.olderThan
     ? Date.now() - opts.olderThan * 60_000

@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fc from "fast-check";
-import { Store, getStep, listSteps, listRuns } from "@spool/collector";
+import { Store, getStep, listSteps, listRuns } from "@spool-ai/collector";
 import { SpoolTracer } from "./tracer.ts";
 
 /**
@@ -277,7 +277,7 @@ test("end: persists a context snapshot blob (decision_ref + snapshot_id populate
   assert.ok(persisted.decision_ref, "decision ref set");
   // Verify the snapshot blob is actually retrievable from the store.
   const inspect = Store.open();
-  const { resolveSnapshotBlobRef } = await import("@spool/collector");
+  const { resolveSnapshotBlobRef } = await import("@spool-ai/collector");
   const ref = resolveSnapshotBlobRef(inspect, persisted.context_snapshot_id);
   const text = await inspect.blobs.tryGetString(ref);
   assert.ok(text, "snapshot blob fetched back");
@@ -472,7 +472,7 @@ async function readContext(stepId: string): Promise<unknown[]> {
   const inspect = Store.open();
   try {
     const step = getStep(inspect, stepId)!;
-    const { resolveSnapshotBlobRef } = await import("@spool/collector");
+    const { resolveSnapshotBlobRef } = await import("@spool-ai/collector");
     const ref = resolveSnapshotBlobRef(inspect, step.context_snapshot_id);
     const text = await inspect.blobs.getString(ref);
     const snapshot = JSON.parse(text) as { components: unknown[] };

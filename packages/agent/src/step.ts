@@ -7,10 +7,10 @@ import type {
   Outcome,
   Step,
   TokenUsage,
-} from "@spool/shared";
-import { hashJson } from "@spool/shared";
-import { costCents } from "@spool/spec";
-import { insertStep, recordContextSnapshot } from "@spool/collector";
+} from "@spool-ai/shared";
+import { hashJson } from "@spool-ai/shared";
+import { costCents } from "@spool-ai/spec";
+import { insertStep, recordContextSnapshot } from "@spool-ai/collector";
 import type { SpoolTracer } from "./tracer.ts";
 import type {
   RecordDecisionOptions,
@@ -220,7 +220,7 @@ export class SpoolStep {
 }
 
 async function buildContextComponents(
-  store: import("@spool/collector").Store,
+  store: import("@spool-ai/collector").Store,
   opts: StartStepOptions,
 ): Promise<ContextComponent[]> {
   const components: ContextComponent[] = [];

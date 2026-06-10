@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { Store, listRuns } from "@spool/collector";
-import { ingestSession } from "@spool/claude-code-adapter";
+import { Store, listRuns } from "@spool-ai/collector";
+import { ingestSession } from "@spool-ai/claude-code-adapter";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -342,7 +342,7 @@ test("spool files <run> on a baseline-less run with no FileChanges gives a helpf
   // Need a real run row. Use the queries layer directly to keep the
   // fixture minimal.
   const { upsertProjectByCwd, upsertAgent, insertRun } = await import(
-    "@spool/collector"
+    "@spool-ai/collector"
   );
   const project = upsertProjectByCwd(store, "/tmp/empty-proj", "empty");
   const agent = upsertAgent(store, project.project_id, "claude-code");

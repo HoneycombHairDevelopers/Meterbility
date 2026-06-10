@@ -1,4 +1,4 @@
-import type { Action } from "@spool/shared";
+import type { Action } from "@spool-ai/shared";
 import type { SpoolTracer } from "./tracer.ts";
 import { applyProbeToRequest } from "./probe.ts";
 

@@ -6,7 +6,7 @@ import {
   hashJson,
   redactBuffer,
   sha256,
-} from "@spool/shared";
+} from "@spool-ai/shared";
 import type Database from "better-sqlite3";
 
 /**

@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { getRun, getStep, insertAnnotation } from "@spool/collector";
-import type { AnnotationVerdict } from "@spool/shared";
+import { getRun, getStep, insertAnnotation } from "@spool-ai/collector";
+import type { AnnotationVerdict } from "@spool-ai/shared";
 import { openStore } from "../util.ts";
 
 const VERDICTS: AnnotationVerdict[] = [

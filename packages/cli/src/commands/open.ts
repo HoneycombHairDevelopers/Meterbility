@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import http from "node:http";
 import { Command } from "commander";
 import pc from "picocolors";
-import { getRun, getStep, getStepBySequence } from "@spool/collector";
+import { getRun, getStep, getStepBySequence } from "@spool-ai/collector";
 import { openStore } from "../util.ts";
 
 /**

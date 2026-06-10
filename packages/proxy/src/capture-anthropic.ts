@@ -1,4 +1,4 @@
-import type { Action, ContextComponent } from "@spool/shared";
+import type { Action, ContextComponent } from "@spool-ai/shared";
 import { parseSseStream, type SseEvent } from "./sse.ts";
 import type { CapturedExchange, ProviderCapture } from "./types.ts";
 
