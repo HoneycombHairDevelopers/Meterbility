@@ -23,3 +23,7 @@ packages/server/src/e2e/fixture.json
 # local working context
 .context/
 .DS_Store
+
+# python build artifacts
+*.egg-info/
+build/
