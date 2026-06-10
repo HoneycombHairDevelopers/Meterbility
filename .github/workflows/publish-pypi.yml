@@ -1,0 +1,47 @@
+name: Publish to PyPI
+
+# Publishes packages/agent-py (the spool-agent distribution) when a GitHub
+# release is published, or manually via workflow_dispatch.
+#
+# Auth is PyPI *trusted publishing* (OIDC) — no token secret. One-time setup
+# on pypi.org: Account → Publishing → "Add a new pending publisher" with
+#   project:     spool-agent
+#   owner:       HoneycombHairDevelopers
+#   repository:  Spool
+#   workflow:    publish-pypi.yml
+#   environment: pypi
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write # PyPI trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run tests
+        working-directory: packages/agent-py
+        run: python3 -m unittest discover -s tests
+
+      - name: Build sdist + wheel
+        working-directory: packages/agent-py
+        run: |
+          python3 -m pip install --upgrade build
+          python3 -m build
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/agent-py/dist
