@@ -2920,7 +2920,7 @@ function renderStepCard(
     <span class="pill">${esc(s.model)}</span>
     <button class="copy-btn" title="copy step id" onclick="copyText('${esc(s.step_id)}', this)">${esc(s.step_id.slice(0, 12))}</button>
     <span class="row-actions" style="margin-left:auto">
-      <button onclick="openForkModal('${esc(s.run_id)}', ${s.sequence}, ${JSON.stringify(defaultText)})">Fork from here</button>
+      <button onclick="openForkModal('${esc(s.run_id)}', ${s.sequence}, ${esc(JSON.stringify(defaultText))})">Fork from here</button>
       <button onclick="openAnnotateModal('step', '${esc(s.step_id)}')">Annotate</button>
       <button class="pretty-toggle" data-step-id="${esc(s.step_id)}" data-run-id="${esc(s.run_id)}" aria-pressed="false" onclick="togglePretty(this)">Pretty (all tabs)</button>
     </span>
