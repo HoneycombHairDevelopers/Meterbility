@@ -228,3 +228,60 @@ test("pre-existing run growing post-boot fires run:updated, not run:created", as
   live.stop();
   store.close();
 });
+
+test("fleet entries carry descriptive alert messages, not dedup keys", async () => {
+  // Regression: buildFleetEntries used to render the internal dedup key
+  // ("tool:Bash:stp_x", "ctx:80") as both kind and message, so fleet
+  // cards showed raw keys and the stall styling (kind === "stall")
+  // never matched.
+  const { claude } = freshHome();
+
+  const store = Store.open();
+  const live = new LiveInspector(store, {
+    scanIntervalMs: 999_999,
+    watchTools: ["Bash"],
+  });
+  await live.start();
+
+  writeFakeSession(claude, "alert-proj", "sess-alert", [
+    {
+      type: "user",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: "sess-alert",
+      timestamp: "2026-05-12T00:00:00.000Z",
+      cwd: "/tmp/alerts",
+      message: { role: "user", content: "clean up" },
+    },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parentUuid: "u1",
+      sessionId: "sess-alert",
+      timestamp: "2026-05-12T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu1",
+            name: "Bash",
+            input: { command: "rm -rf node_modules" },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    },
+  ]);
+  await live.tick();
+
+  const entry = live.fleetEntries().find((e) => e.run.title === "clean up");
+  assert.ok(entry, "fleet entry exists for the session");
+  const alert = entry!.alerts.find((a) => a.kind === "tool_called");
+  assert.ok(alert, "tool_called alert present with a real kind, not a key");
+  assert.match(alert!.message, /watched tool Bash called at step #/);
+  assert.match(alert!.message, /rm -rf node_modules/, "message includes the command");
+  live.stop();
+  store.close();
+});

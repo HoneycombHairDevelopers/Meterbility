@@ -99,6 +99,12 @@ export interface FleetEntry {
   alerts: Array<{ kind: string; message: string }>;
 }
 
+/** What the fleet view renders for a fired alert. */
+interface FiredAlert {
+  kind: string;
+  message: string;
+}
+
 export interface LiveOptions {
   projectsRoot?: string;
   /** Polling interval (ms) for the projects-root scan. Defaults to 1500. */
@@ -134,7 +140,7 @@ export function buildFleetEntries(
   opts: {
     limit?: number;
     stallSeconds?: number;
-    firedAlerts?: Map<string, Set<string>>;
+    firedAlerts?: Map<string, Map<string, { kind: string; message: string }>>;
   } = {},
 ): FleetEntry[] {
   const limit = opts.limit ?? 50;
@@ -151,9 +157,10 @@ export function buildFleetEntries(
       .map((s) => s.action.tool_name)
       .filter((x): x is string => !!x);
     const alerts = firedAlerts
-      ? Array.from(firedAlerts.get(run.run_id) ?? new Set<string>()).map(
-          (kind) => ({ kind, message: kind }),
-        )
+      ? Array.from(
+          firedAlerts.get(run.run_id)?.values() ??
+            ([] as Array<{ kind: string; message: string }>),
+        ).map((a) => ({ kind: a.kind, message: a.message }))
       : [];
     return {
       run,
@@ -202,7 +209,9 @@ export class LiveInspector extends EventEmitter {
   private store: Store;
   private opts: Required<LiveOptions>;
   private knownPaths = new Set<string>();
-  private firedAlerts = new Map<string, Set<string>>(); // run_id → alert keys
+  // run_id → (dedup key → display info). The key prevents re-fires; the
+  // value is what fleet entries render, so it must be human-readable.
+  private firedAlerts = new Map<string, Map<string, FiredAlert>>();
   private lastSizes = new Map<string, number>(); // path → size at last poll
   private lastStepCounts = new Map<string, number>(); // run_id → step count
   private lastStatus = new Map<string, Run["status"]>(); // run_id → last seen status
@@ -540,10 +549,10 @@ export class LiveInspector extends EventEmitter {
     newSteps: Step[],
     silent = false,
   ): Promise<void> {
-    const fired = this.firedAlerts.get(run.run_id) ?? new Set<string>();
-    const fireOrSeed = (key: string, event: LiveEvent) => {
+    const fired = this.firedAlerts.get(run.run_id) ?? new Map<string, FiredAlert>();
+    const fireOrSeed = (key: string, event: LiveEvent & { type: "alert" }) => {
       if (fired.has(key)) return;
-      fired.add(key);
+      fired.set(key, { kind: event.kind, message: event.message });
       if (!silent) this.emit("data", event);
     };
 
@@ -558,7 +567,7 @@ export class LiveInspector extends EventEmitter {
           type: "alert",
           run_id: run.run_id,
           kind: "tool_called",
-          message: `agent called ${s.action.tool_name}`,
+          message: `watched tool ${s.action.tool_name} called at step #${s.sequence}${describeToolInput(s.action.tool_input)}`,
           meta: { step_id: s.step_id, sequence: s.sequence },
         });
       }
@@ -573,7 +582,7 @@ export class LiveInspector extends EventEmitter {
             type: "alert",
             run_id: run.run_id,
             kind: "context_threshold",
-            message: `context utilization ≥ ${t}%`,
+            message: `context window ${pct}% full — crossed the ${t}% threshold at step #${s.sequence}`,
             meta: { sequence: s.sequence, percent: pct },
           });
         }
@@ -588,7 +597,7 @@ export class LiveInspector extends EventEmitter {
         type: "alert",
         run_id: run.run_id,
         kind: "loop",
-        message: `${loop.repeats}× ${loop.tool} with same args`,
+        message: `possible loop: last ${loop.repeats} steps all called ${loop.tool} with identical input (${loop.signature.slice(0, 48)}…)`,
         meta: { window: this.opts.loopWindow },
       });
     }
@@ -604,11 +613,22 @@ export class LiveInspector extends EventEmitter {
       const ageS = (Date.now() - lastTs) / 1000;
       const HOUR = 3600;
       if (ageS > this.opts.stallSeconds && ageS < HOUR) {
+        // One stall line per card: the dedup key advances every minute
+        // (so SSE re-alerts as the stall deepens), but stale minute-keys
+        // are dropped so the fleet entry shows only the current figure.
+        for (const k of fired.keys()) {
+          if (k.startsWith("stall:")) fired.delete(k);
+        }
+        const lastStep = allSteps[allSteps.length - 1]!;
+        const doing =
+          lastStep.action.kind === "tool_call" && lastStep.action.tool_name
+            ? `after calling ${lastStep.action.tool_name}`
+            : `after a ${lastStep.action.kind} step`;
         fireOrSeed(`stall:${Math.floor(ageS / 60)}`, {
           type: "alert",
           run_id: run.run_id,
           kind: "stall",
-          message: `no activity for ${Math.round(ageS)}s`,
+          message: `stalled at step #${lastStep.sequence} ${doing} — no activity for ${formatDuration(ageS)}`,
         });
       }
     }
@@ -625,6 +645,33 @@ function collectNewSteps(
   const last = lastCounts.get(run.run_id) ?? 0;
   const all = listSteps(store, run.run_id);
   return all.slice(last);
+}
+
+/** "312s" reads worse than "5m 12s" on a fleet card. */
+function formatDuration(seconds: number): string {
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
+}
+
+/**
+ * One-line summary of a watched tool's input for the alert message,
+ * e.g. ` — command: "rm -rf node_modules"`. Picks the single most
+ * identifying field; falls back to nothing rather than dumping JSON.
+ */
+function describeToolInput(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const obj = input as Record<string, unknown>;
+  for (const field of ["command", "file_path", "path", "url", "pattern", "query"]) {
+    const v = obj[field];
+    if (typeof v === "string" && v.length > 0) {
+      const preview = v.length > 60 ? `${v.slice(0, 60)}…` : v;
+      return ` — ${field}: "${preview}"`;
+    }
+  }
+  return "";
 }
 
 /**
