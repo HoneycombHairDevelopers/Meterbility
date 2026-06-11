@@ -174,3 +174,114 @@ test("duplicate path processing fixed: a brand-new file is ingested once per tic
   live.stop();
   store.close();
 });
+
+test("pre-existing run growing post-boot fires run:updated, not run:created", async () => {
+  // Regression: the silent backfill `continue`d on ingest status
+  // "empty" (offset already at EOF for sessions ingested before the
+  // inspector started) without seeding lastStepCounts. The first
+  // growth of any such run then emitted run:created — which the run
+  // detail page ignores, so live step append never started.
+  const { claude } = freshHome();
+  const path = writeFakeSession(
+    claude, "seed-proj", "sess-seed", basicSession("sess-seed", "/tmp/seed"),
+  );
+
+  const store = Store.open();
+  // Ingest BEFORE the inspector exists — run row + EOF offset in store.
+  const { ingestSession } = await import("@spool-ai/claude-code-adapter");
+  const pre = await ingestSession(store, path);
+  assert.equal(pre.status, "ok", "precondition: session ingested before boot");
+
+  const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+  await live.start(); // backfill sees "empty" for this path
+  const events: LiveEvent[] = [];
+  live.on("data", (e: LiveEvent) => events.push(e));
+
+  // Grow the session with a fresh assistant turn → one new step.
+  const grown = [
+    ...basicSession("sess-seed", "/tmp/seed"),
+    {
+      type: "assistant",
+      uuid: "a2",
+      parentUuid: "a1",
+      sessionId: "sess-seed",
+      timestamp: "2026-05-12T00:00:05.000Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "more" }],
+        usage: { input_tokens: 12, output_tokens: 3 },
+      },
+    },
+  ];
+  writeFakeSession(claude, "seed-proj", "sess-seed", grown);
+  await live.tick();
+
+  const created = events.filter((e) => e.type === "run:created");
+  const updated = events.filter((e) => e.type === "run:updated");
+  assert.equal(created.length, 0, "known run must not re-fire run:created");
+  assert.equal(updated.length, 1, "growth fires run:updated");
+  assert.ok(
+    updated[0]!.type === "run:updated" && updated[0]!.new_steps.length >= 1,
+    "run:updated carries the newly ingested steps",
+  );
+  live.stop();
+  store.close();
+});
+
+test("fleet entries carry descriptive alert messages, not dedup keys", async () => {
+  // Regression: buildFleetEntries used to render the internal dedup key
+  // ("tool:Bash:stp_x", "ctx:80") as both kind and message, so fleet
+  // cards showed raw keys and the stall styling (kind === "stall")
+  // never matched.
+  const { claude } = freshHome();
+
+  const store = Store.open();
+  const live = new LiveInspector(store, {
+    scanIntervalMs: 999_999,
+    watchTools: ["Bash"],
+  });
+  await live.start();
+
+  writeFakeSession(claude, "alert-proj", "sess-alert", [
+    {
+      type: "user",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: "sess-alert",
+      timestamp: "2026-05-12T00:00:00.000Z",
+      cwd: "/tmp/alerts",
+      message: { role: "user", content: "clean up" },
+    },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parentUuid: "u1",
+      sessionId: "sess-alert",
+      timestamp: "2026-05-12T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu1",
+            name: "Bash",
+            input: { command: "rm -rf node_modules" },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    },
+  ]);
+  await live.tick();
+
+  const entry = live.fleetEntries().find((e) => e.run.title === "clean up");
+  assert.ok(entry, "fleet entry exists for the session");
+  const alert = entry!.alerts.find((a) => a.kind === "tool_called");
+  assert.ok(alert, "tool_called alert present with a real kind, not a key");
+  assert.match(alert!.message, /watched tool Bash called at step #/);
+  assert.match(alert!.message, /rm -rf node_modules/, "message includes the command");
+  live.stop();
+  store.close();
+});

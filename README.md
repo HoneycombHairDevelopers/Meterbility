@@ -10,7 +10,7 @@ Spool turns AI agent runs into a queryable, replayable, forkable corpus and surf
 
 ## Status
 
-**v0.3 — file capture + Live Probe.** Working end-to-end. On npm as [`@spool-ai/cli`](https://www.npmjs.com/package/@spool-ai/cli) and friends.
+**v0.3 — file capture + Live Probe.** Working end-to-end. On npm as [`@spool-ai/cli`](https://www.npmjs.com/package/@spool-ai/cli).
 
 Latest milestones (Tracks A–C of v0.3):
 
