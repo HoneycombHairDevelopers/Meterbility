@@ -174,3 +174,57 @@ test("duplicate path processing fixed: a brand-new file is ingested once per tic
   live.stop();
   store.close();
 });
+
+test("pre-existing run growing post-boot fires run:updated, not run:created", async () => {
+  // Regression: the silent backfill `continue`d on ingest status
+  // "empty" (offset already at EOF for sessions ingested before the
+  // inspector started) without seeding lastStepCounts. The first
+  // growth of any such run then emitted run:created — which the run
+  // detail page ignores, so live step append never started.
+  const { claude } = freshHome();
+  const path = writeFakeSession(
+    claude, "seed-proj", "sess-seed", basicSession("sess-seed", "/tmp/seed"),
+  );
+
+  const store = Store.open();
+  // Ingest BEFORE the inspector exists — run row + EOF offset in store.
+  const { ingestSession } = await import("@spool-ai/claude-code-adapter");
+  const pre = await ingestSession(store, path);
+  assert.equal(pre.status, "ok", "precondition: session ingested before boot");
+
+  const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+  await live.start(); // backfill sees "empty" for this path
+  const events: LiveEvent[] = [];
+  live.on("data", (e: LiveEvent) => events.push(e));
+
+  // Grow the session with a fresh assistant turn → one new step.
+  const grown = [
+    ...basicSession("sess-seed", "/tmp/seed"),
+    {
+      type: "assistant",
+      uuid: "a2",
+      parentUuid: "a1",
+      sessionId: "sess-seed",
+      timestamp: "2026-05-12T00:00:05.000Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "more" }],
+        usage: { input_tokens: 12, output_tokens: 3 },
+      },
+    },
+  ];
+  writeFakeSession(claude, "seed-proj", "sess-seed", grown);
+  await live.tick();
+
+  const created = events.filter((e) => e.type === "run:created");
+  const updated = events.filter((e) => e.type === "run:updated");
+  assert.equal(created.length, 0, "known run must not re-fire run:created");
+  assert.equal(updated.length, 1, "growth fires run:updated");
+  assert.ok(
+    updated[0]!.type === "run:updated" && updated[0]!.new_steps.length >= 1,
+    "run:updated carries the newly ingested steps",
+  );
+  live.stop();
+  store.close();
+});
