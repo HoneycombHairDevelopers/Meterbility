@@ -99,6 +99,33 @@ test("page: GET /runs/:id with unknown id returns 404", async () => {
   }
 });
 
+test("page: step card fork button has a well-formed onclick (quotes entity-escaped)", async () => {
+  // Regression: JSON.stringify(defaultText) emits raw double quotes,
+  // which terminate the double-quoted onclick attribute and leave
+  // `openForkModal('run_x', 0, ` as dead JS — the modal never opens.
+  // The JSON must pass through esc() so quotes render as &quot;.
+  const c = freshCtx();
+  try {
+    const r = scaffoldRun(c.store, { stepCount: 1 });
+    const app = buildApp(c.store);
+    const res = await app.fetch(new Request(`http://x/runs/${r.runId}`));
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(
+      html,
+      /openForkModal\('run_[^']+', \d+, &quot;.*&quot;\)">Fork from here/,
+      "fork onclick survives HTML attribute parsing",
+    );
+    assert.doesNotMatch(
+      html,
+      /openForkModal\('run_[^']+', \d+, "/,
+      "raw double quote must not appear inside the onclick attribute",
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
 test("page: GET /diff without ?a=&b= returns 400 with usage hint", async () => {
   const c = freshCtx();
   try {
