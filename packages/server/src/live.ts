@@ -220,6 +220,18 @@ export class LiveInspector extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    // Seed run bookkeeping from the store BEFORE the backfill tick. The
+    // backfill alone can't do this: sessions whose ingest offset is
+    // already at EOF return status "empty", and the tick `continue`s
+    // before recording lastStepCounts/lastStatus. Post-boot, the first
+    // growth of such a run would then emit run:created instead of
+    // run:updated — and the run detail page only appends on
+    // run:updated, so live append silently never started for any run
+    // ingested before `spool web` launched.
+    for (const run of listRuns(this.store, { limit: 100_000 })) {
+      this.lastStepCounts.set(run.run_id, run.step_count);
+      this.lastStatus.set(run.run_id, run.status);
+    }
     // First tick = silent backfill. Populate every internal map (knownPaths,
     // lastSizes, lastStepCounts, lastStatus, firedAlerts) without firing
     // run:created / run:completed / alert events. Otherwise startup floods
