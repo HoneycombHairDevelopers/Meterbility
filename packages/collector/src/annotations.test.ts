@@ -14,8 +14,8 @@ import {
 } from "./queries.ts";
 
 function fresh(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-ann-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-ann-"));
+  process.env.METERBILITY_HOME = dir;
   return Store.open();
 }
 

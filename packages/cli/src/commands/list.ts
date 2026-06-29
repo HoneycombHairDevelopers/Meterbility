@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { listRuns } from "@spool-ai/collector";
+import { listRuns } from "@meterbility/collector";
 import { fmtCents, openStore, runSummaryLine, statusColor } from "../util.ts";
 
 export function registerListCommand(program: Command): void {
@@ -27,7 +27,7 @@ export function registerListCommand(program: Command): void {
         if (runs.length === 0) {
           console.log(
             pc.dim(
-              "no runs found. Try: spool ingest claude-code --limit 1",
+              "no runs found. Try: meter ingest claude-code --limit 1",
             ),
           );
           return;

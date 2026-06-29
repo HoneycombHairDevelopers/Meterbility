@@ -25,7 +25,7 @@ Email security@honeycombhair.co instead — see SECURITY.md.
 
 ## Environment
 
-- Spool version / commit SHA: `<run ./bin/spool --version then git rev-parse HEAD>`
+- Meterbility version / commit SHA: `<run ./bin/meter --version then git rev-parse HEAD>`
 - OS: `<macOS 14 / Ubuntu 22 / etc.>`
 - Node: `<node --version>`
 - Python (if relevant): `<python3 --version>`

@@ -1,4 +1,4 @@
-import type { Annotation, FileChange, FileOp, ProbeRecord, Run, Step } from "@spool-ai/shared";
+import type { Annotation, FileChange, FileOp, ProbeRecord, Run, Step } from "@meterbility/shared";
 import type { DiffResult } from "./diff.ts";
 import type { FleetEntry } from "./live.ts";
 import type { RegressionResult, RegressionTest } from "./regression.ts";
@@ -6,7 +6,7 @@ import { reformatJsonString, prettyTab, DECISION_PREVIEW_LIMIT } from "./pretty.
 
 /**
  * Server-rendered HTML. Single bundle of styles + tiny vanilla JS for
- * interactivity. v0 is deliberately framework-free — Spool's web UI
+ * interactivity. v0 is deliberately framework-free — Meterbility's web UI
  * needs to feel like a DevTools panel, and a single-file render is
  * fastest to iterate on.
  */
@@ -1232,7 +1232,7 @@ const STYLES = `
   /* ─── API-metered cost disclosure ──────────────────────────────── */
   /* Tooltip-style marker rendered inline next to every $cost figure.
      Subscription users (Claude Pro / Max) don't pay these dollars —
-     Spool's number is the API-equivalent rate, and the API rate itself
+     Meterbility's number is the API-equivalent rate, and the API rate itself
      reflects VC-subsidized 2026 pricing. Tooltip on the chip spells
      this out; the cost-footnote block at the page bottom expands. */
   .cost-mark {
@@ -1333,7 +1333,7 @@ function tickAges() {
   });
 }
 function isLiveMode() {
-  const meta = document.querySelector('meta[name="spool-live-mode"]');
+  const meta = document.querySelector('meta[name="meter-live-mode"]');
   return meta && meta.getAttribute('content') === '1';
 }
 function startLive() {
@@ -1376,7 +1376,7 @@ function showTab(stepId, tab) {
 /* ─── Per-step pretty toggle ──────────────────────────────────────
  * One button per step card flips all four tab bodies between raw
  * and pretty. State persists in localStorage under
- * spool:pretty:<run_id>:<step_id>. Live-appended step cards check
+ * meter:pretty:<run_id>:<step_id>. Live-appended step cards check
  * this key when they mount so reload + SSE both restore correctly.
  */
 function togglePretty(btn) {
@@ -1384,7 +1384,7 @@ function togglePretty(btn) {
   if (!card) return;
   const runId = btn.dataset.runId;
   const stepId = btn.dataset.stepId;
-  const key = 'spool:pretty:' + runId + ':' + stepId;
+  const key = 'meter:pretty:' + runId + ':' + stepId;
   const turningOn = btn.getAttribute('aria-pressed') !== 'true';
   applyPrettyState(card, turningOn);
   try {
@@ -1409,7 +1409,7 @@ function restorePrettyForCard(card) {
   if (!btn) return;
   const runId = btn.dataset.runId;
   const stepId = btn.dataset.stepId;
-  const key = 'spool:pretty:' + runId + ':' + stepId;
+  const key = 'meter:pretty:' + runId + ':' + stepId;
   try {
     if (localStorage.getItem(key) === '1') applyPrettyState(card, true);
   } catch (e) { /* localStorage unavailable — leave default raw */ }
@@ -1575,7 +1575,7 @@ window.addEventListener('DOMContentLoaded', () => {
  * Click handler for the header button. Hits POST /api/live/start or
  * /api/live/stop, then mirrors the response into the data-live
  * attribute so the CSS picks up the new state. On success we also
- * flip the meta tag so other components polling spool-live-mode
+ * flip the meta tag so other components polling meter-live-mode
  * see the change.
  *
  * The button is disabled during the request to prevent double-fire,
@@ -1617,11 +1617,11 @@ function applyLiveState(isLive) {
       ? 'Click to stop live capture'
       : 'Click to start watching ~/.claude/projects for live agent activity';
   }
-  const meta = document.querySelector('meta[name="spool-live-mode"]');
+  const meta = document.querySelector('meta[name="meter-live-mode"]');
   if (meta) meta.setAttribute('content', isLive ? '1' : '0');
   // Tell any subscribed page features to react to the state change.
   document.dispatchEvent(
-    new CustomEvent('spool:live-state', { detail: { live: !!isLive } }),
+    new CustomEvent('meter:live-state', { detail: { live: !!isLive } }),
   );
 }
 
@@ -1741,9 +1741,9 @@ function initLiveRunUpdates() {
   function maybeSubscribe(isLive) {
     if (isLive) ensureSubscribed();
   }
-  const meta = document.querySelector('meta[name="spool-live-mode"]');
+  const meta = document.querySelector('meta[name="meter-live-mode"]');
   maybeSubscribe(meta && meta.getAttribute('content') === '1');
-  document.addEventListener('spool:live-state', (e) => {
+  document.addEventListener('meter:live-state', (e) => {
     maybeSubscribe(e.detail && e.detail.live);
   });
 }
@@ -2257,7 +2257,7 @@ async function postgresSync() {
 `;
 
 export interface ShellOptions {
-  /** True when `spool web --live` is on. Controls the SSE EventSource
+  /** True when `meter web --live` is on. Controls the SSE EventSource
    *  startup and the small "live" badge in the nav. */
   liveMode?: boolean;
 }
@@ -2276,8 +2276,8 @@ export function renderShell(
       title="${opts.liveMode ? "Click to stop live capture" : "Click to start watching ~/.claude/projects for live agent activity"}"
       onclick="toggleLive(event)"><span class="dot dot--${opts.liveMode ? "success" : "muted"}"></span><span class="live-toggle-label">${opts.liveMode ? "LIVE" : "GO LIVE"}</span></button>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>${esc(title)} · Spool</title>
-<meta name="spool-live-mode" content="${opts.liveMode ? "1" : "0"}">
+<title>${esc(title)} · Meterbility</title>
+<meta name="meter-live-mode" content="${opts.liveMode ? "1" : "0"}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2286,7 +2286,7 @@ export function renderShell(
 <header>
   <a class="brand" href="/">
     <span class="brand-mark"></span>
-    <span class="brand-name">Spool</span>
+    <span class="brand-name">Meterbility</span>
   </a>
   <nav class="topnav">
     <a href="/">Fleet</a>
@@ -2399,14 +2399,14 @@ export function renderFleet(
     ? ""
     : `<div class="static-banner">
          <strong>Static snapshot.</strong> Status, context %, and recent tools are computed from captured data — no auto-updates.
-         For live monitoring + alerts (Slack, loop / stall / context-threshold), restart with <code>spool web --live</code>.
+         For live monitoring + alerts (Slack, loop / stall / context-threshold), restart with <code>meter web --live</code>.
        </div>`;
   const subtitle = opts.liveMode
     ? "live · auto-updating via SSE"
     : "static snapshot of last 50 runs · click any card to drill in";
   const empty = opts.liveMode
-    ? `<div class="empty">No active runs yet. Open a Claude Code session and Spool will pick it up within a couple of seconds.</div>`
-    : `<div class="empty">No runs captured. Run <code>spool ingest claude-code --limit 5</code>.</div>`;
+    ? `<div class="empty">No active runs yet. Open a Claude Code session and Meterbility will pick it up within a couple of seconds.</div>`
+    : `<div class="empty">No runs captured. Run <code>meter ingest claude-code --limit 5</code>.</div>`;
   return `<div id="alert-banner" style="margin-bottom:var(--space-3)"></div>
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--space-5)">
       <div>
@@ -2503,7 +2503,7 @@ export function renderRunList(
 
   const empty = isFiltered
     ? `<div class="empty">No runs match the current filter. <a href="/runs">Clear filter</a>.</div>`
-    : `<div class="empty">No runs captured yet. Run <code>spool ingest claude-code</code> to import sessions, or open the <a href="/settings">Settings page</a>.</div>`;
+    : `<div class="empty">No runs captured yet. Run <code>meter ingest claude-code</code> to import sessions, or open the <a href="/settings">Settings page</a>.</div>`;
 
   const rows = runs
     .map((r) => {
@@ -2571,7 +2571,7 @@ export function renderRunList(
  * Render `r.cwd` as a short, scannable project label — the trailing
  * 1–2 path segments. Full path stays in the cell's `title=` attribute
  * for hover. Examples:
- *   /Users/me/development/spool        →  spool
+ *   /Users/me/development/meter        →  meter
  *   /Users/me/dev/agents/customer-bot →  agents/customer-bot
  *   (cursor)                          →  cursor
  *   (unknown) / undefined             →  —
@@ -2630,8 +2630,8 @@ export function renderRun(
       <button class="copy-btn" title="copy full run id" onclick="copyText('${esc(run.run_id)}', this)">copy</button>
     </div>
     <div class="kv"><strong>Export</strong>
-      <a class="val mono" href="/api/runs/${esc(run.run_id)}/export" download="${esc(run.run_id)}.spool.json"
-         title="Download as Spool Trace Format v0.2 JSON (with inlined blobs)">trace.json</a>
+      <a class="val mono" href="/api/runs/${esc(run.run_id)}/export" download="${esc(run.run_id)}.meter.json"
+         title="Download as Meterbility Trace Format v0.2 JSON (with inlined blobs)">trace.json</a>
       <a class="copy-btn" href="/api/runs/${esc(run.run_id)}/export?blobs=0" download="${esc(run.run_id)}.thin.json"
          title="Trace without inlined blobs (smaller)">thin</a>
     </div>
@@ -3040,7 +3040,7 @@ function renderStepFilesPanel(fcs: FileChange[]): string {
       const body = expandable
         ? `<pre class="file-diff" style="display:none">${renderColorizedPatch(fc.patch_text!)}</pre>`
         : fc.partial_diff
-          ? `<div class="file-diff-empty">partial — this change ran outside captured tools (e.g. Bash). Enable <code>spool watch --files</code> in v0.4 for full fidelity.</div>`
+          ? `<div class="file-diff-empty">partial — this change ran outside captured tools (e.g. Bash). Enable <code>meter watch --files</code> in v0.4 for full fidelity.</div>`
           : fc.patch_format === "binary"
             ? `<div class="file-diff-empty">binary file — ${esc(fc.path)} (${fc.size_before ?? "?"} → ${fc.size_after ?? "?"} bytes). <a href="/api/blob/${esc(fc.after_blob_ref ?? "")}" target="_blank">raw bytes</a></div>`
             : "";
@@ -3283,7 +3283,7 @@ export function renderTests(tests: RegressionTest[], recent: RegressionResult[])
 
 /** Render a cost figure with the API-metered marker + tooltip. */
 function costEl(cents: number): string {
-  return `${costStr(cents)}<span class="cost-mark" title="Spool computes cost from token counts × Anthropic public per-token API rates. Two caveats: (1) Claude Pro/Max users pay a flat subscription — this is API-equivalent, NOT money out of your account. (2) Current API rates reflect VC-subsidized 2026 frontier-model economics: they cover inference with margin, but training runs (>$1B per Opus-class model) and cluster CapEx are funded by equity, not per-token revenue. If labs ever have to be cash-flow positive on a fully-loaded basis, expect these numbers to rise. Use for relative comparison between runs.">api·metered</span>`;
+  return `${costStr(cents)}<span class="cost-mark" title="Meterbility computes cost from token counts × Anthropic public per-token API rates. Two caveats: (1) Claude Pro/Max users pay a flat subscription — this is API-equivalent, NOT money out of your account. (2) Current API rates reflect VC-subsidized 2026 frontier-model economics: they cover inference with margin, but training runs (>$1B per Opus-class model) and cluster CapEx are funded by equity, not per-token revenue. If labs ever have to be cash-flow positive on a fully-loaded basis, expect these numbers to rise. Use for relative comparison between runs.">api·metered</span>`;
 }
 /**
  * Format a cost (stored in cents) as dollars. Uses 2 decimal places for
@@ -3368,10 +3368,10 @@ export function renderContext(
   const fidelityNote =
     ctx.runtime === "claude-code"
       ? `<div class="static-banner" style="margin-top:var(--space-6)">
-           <strong>Note on fidelity.</strong> Spool captures what Claude Code writes
+           <strong>Note on fidelity.</strong> Meterbility captures what Claude Code writes
            to its session log: conversation history. The system prompt, tool definitions,
            and any RAG context Anthropic injects server-side aren't in the log and
-           aren't shown here. SDK-captured runs (<code>@spool-ai/agent</code>) carry the
+           aren't shown here. SDK-captured runs (<code>@meterbility/agent</code>) carry the
            full context.
          </div>`
       : "";
@@ -3519,7 +3519,7 @@ export interface SettingsPageData {
  */
 export function renderSettings(data: SettingsPageData): string {
   const slackVal = data.slackWebhookFromEnv
-    ? "(from $SPOOL_SLACK_WEBHOOK)"
+    ? "(from $METERBILITY_SLACK_WEBHOOK)"
     : data.slackWebhook ?? "";
   const apiKeyDisplay = data.apiKeyFromEnv
     ? "(from $ANTHROPIC_API_KEY)"
@@ -3527,14 +3527,14 @@ export function renderSettings(data: SettingsPageData): string {
       ? "•".repeat(48)
       : "";
   const pgVal = data.postgresUrlFromEnv
-    ? "(from $SPOOL_DB_URL)"
+    ? "(from $METERBILITY_DB_URL)"
     : data.postgresUrl ?? "";
 
   return `<div style="margin-bottom:24px">
     <div class="section-label">Configuration</div>
     <h2 style="margin:0">Settings</h2>
     <div style="font-size:12.5px;color:var(--fg-mute);margin-top:6px">
-      Stored in <code>$SPOOL_HOME/spool.db</code>. Environment variables override stored values.
+      Stored in <code>$METERBILITY_HOME/meterbility.db</code>. Environment variables override stored values.
     </div>
   </div>
 
@@ -3543,7 +3543,7 @@ export function renderSettings(data: SettingsPageData): string {
     <div class="section-label">Ingest</div>
     <h3 style="margin-bottom:8px">Capture sessions from disk</h3>
     <p style="color:var(--fg-mute);font-size:12.5px;margin:0 0 12px">
-      Replaces <code>spool ingest claude-code/codex-cli/cursor</code> from the terminal.
+      Replaces <code>meter ingest claude-code/codex-cli/cursor</code> from the terminal.
     </p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--fg-mute)">
@@ -3567,7 +3567,7 @@ export function renderSettings(data: SettingsPageData): string {
       </span>
     </h3>
     <p style="color:var(--fg-mute);font-size:12.5px;margin:0 0 12px">
-      Equivalent to <code>spool doctor</code>: Node version, capture surface, store integrity.
+      Equivalent to <code>meter doctor</code>: Node version, capture surface, store integrity.
     </p>
     <div id="doctor-results" style="font-family:ui-monospace,Menlo,monospace;font-size:12px"></div>
   </div>
@@ -3628,7 +3628,7 @@ export function renderSettings(data: SettingsPageData): string {
     </p>
     <div style="display:flex;gap:8px;align-items:center">
       <input id="pg-url" type="password"
-        placeholder="postgres://user:pass@host:5432/spool"
+        placeholder="postgres://user:pass@host:5432/meter"
         value="${esc(pgVal)}"
         ${data.postgresUrlFromEnv ? "disabled" : ""}
         style="flex:1;font-family:ui-monospace,Menlo,monospace">

@@ -2,27 +2,27 @@ import { spawn } from "node:child_process";
 import http from "node:http";
 import { Command } from "commander";
 import pc from "picocolors";
-import { getRun, getStep, getStepBySequence } from "@spool-ai/collector";
+import { getRun, getStep, getStepBySequence } from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 /**
- * `spool open` — terminal-to-browser bridge. Resolves a short run id
+ * `meter open` — terminal-to-browser bridge. Resolves a short run id
  * (or run+step) against the local store, then launches the system browser
- * on the matching web URL. Optionally boots `spool web` first if it isn't
+ * on the matching web URL. Optionally boots `meter web` first if it isn't
  * already listening on the chosen port.
  *
  * Common flow:
- *   $ spool list
- *   $ spool open run_abc123
+ *   $ meter list
+ *   $ meter open run_abc123
  *
  * With --at it deep-links into the step view (and into the context tab when
  * the user passes --context):
- *   $ spool open run_abc123 --at 5 --context
+ *   $ meter open run_abc123 --at 5 --context
  */
 export function registerOpenCommand(program: Command): void {
   program
     .command("open <run-id>")
-    .description("Open a run in the local Spool web UI (auto-starts the server if needed)")
+    .description("Open a run in the local Meterbility web UI (auto-starts the server if needed)")
     .option("--at <seq-or-step-id>", "Deep-link to a specific step")
     .option(
       "--context",
@@ -86,7 +86,7 @@ export function registerOpenCommand(program: Command): void {
         if (!alive) {
           console.log(
             pc.dim(
-              `no server on ${opts.host}:${opts.port} — starting \`spool web\` in the background…`,
+              `no server on ${opts.host}:${opts.port} — starting \`meter web\` in the background…`,
             ),
           );
           await launchDetachedWeb(opts.host, opts.port);
@@ -96,7 +96,7 @@ export function registerOpenCommand(program: Command): void {
             console.error(
               pc.red("server didn't become reachable in time. ") +
                 pc.dim(
-                  `try \`spool web --port ${opts.port}\` in another terminal, then re-run.`,
+                  `try \`meter web --port ${opts.port}\` in another terminal, then re-run.`,
                 ),
             );
             process.exit(1);
@@ -141,9 +141,9 @@ async function waitForServer(
 }
 
 async function launchDetachedWeb(host: string, port: number): Promise<void> {
-  // Re-invoke the same `spool` binary in the background. Inheriting argv[0]
-  // (node) and argv[1] (the spool entry) keeps us robust to local installs,
-  // global installs, and `npx spool` flows alike.
+  // Re-invoke the same `meter` binary in the background. Inheriting argv[0]
+  // (node) and argv[1] (the meter entry) keeps us robust to local installs,
+  // global installs, and `npx meter` flows alike.
   const proc = spawn(
     process.execPath,
     [process.argv[1]!, "web", "--no-open", "--host", host, "--port", String(port)],

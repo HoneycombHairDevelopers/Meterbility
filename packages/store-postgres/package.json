@@ -1,5 +1,5 @@
 {
-  "name": "@spool-ai/store-postgres",
+  "name": "@meterbility/store-postgres",
   "version": "0.3.1",
   "license": "MIT",
   "type": "module",
@@ -11,23 +11,23 @@
     }
   },
   "dependencies": {
-    "@spool-ai/shared": "^0.3.0",
-    "@spool-ai/spec": "^0.3.0",
+    "@meterbility/shared": "^0.3.0",
+    "@meterbility/spec": "^0.3.0",
     "pg": "^8.13.0",
-    "@spool-ai/collector": "^0.3.0"
+    "@meterbility/collector": "^0.3.0"
   },
   "devDependencies": {
     "@types/pg": "^8.11.0"
   },
-  "description": "Postgres backend for Spool (single-operator multi-machine sync)",
+  "description": "Postgres backend for Meterbility (single-operator multi-machine sync)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HoneycombHairDevelopers/Spool.git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Meterbility.git",
     "directory": "packages/store-postgres"
   },
-  "homepage": "https://github.com/HoneycombHairDevelopers/Spool#readme",
+  "homepage": "https://github.com/HoneycombHairDevelopers/Meterbility#readme",
   "bugs": {
-    "url": "https://github.com/HoneycombHairDevelopers/Spool/issues"
+    "url": "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
   },
   "engines": {
     "node": ">=20.6"

@@ -1,5 +1,5 @@
 /**
- * Spool trace format — entity types per SPEC §6.
+ * Meterbility trace format — entity types per SPEC §6.
  *
  * Stable across replay. Content-addressed blobs referenced by SHA256.
  */

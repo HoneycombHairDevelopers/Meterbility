@@ -9,7 +9,7 @@ import { ensurePostgresSchema } from "./schema.ts";
  *
  * Connection URL precedence:
  *   1. opts.url
- *   2. process.env.SPOOL_DB_URL
+ *   2. process.env.METERBILITY_DB_URL
  *   3. process.env.DATABASE_URL
  *   4. throw
  */
@@ -22,11 +22,11 @@ export class PostgresStore {
   static async open(opts?: { url?: string }): Promise<PostgresStore> {
     const url =
       opts?.url ??
-      process.env.SPOOL_DB_URL ??
+      process.env.METERBILITY_DB_URL ??
       process.env.DATABASE_URL;
     if (!url) {
       throw new Error(
-        "PostgresStore requires a connection URL. Pass opts.url or set SPOOL_DB_URL.",
+        "PostgresStore requires a connection URL. Pass opts.url or set METERBILITY_DB_URL.",
       );
     }
     const client = new pg.Client({ connectionString: url });

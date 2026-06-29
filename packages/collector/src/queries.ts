@@ -19,7 +19,7 @@ import type {
   Step,
   StepStatus,
   TokenUsage,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import type { Store } from "./store.ts";
 
 interface RunRow {

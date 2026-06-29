@@ -5,15 +5,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { Store, listRuns } from "@spool-ai/collector";
-import { ingestSession } from "@spool-ai/claude-code-adapter";
+import { Store, listRuns } from "@meterbility/collector";
+import { ingestSession } from "@meterbility/claude-code-adapter";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const CLI_ENTRY = resolve(TEST_DIR, "index.ts");
 const REPO_ROOT = resolve(TEST_DIR, "../../..");
 
 /**
- * Regression guard for `spool inspect` rendering. The DEFAULT path
+ * Regression guard for `meter inspect` rendering. The DEFAULT path
  * (without --pretty-print) must remain byte-stable so existing grep/jq
  * pipelines keep working. The --pretty-print path must emit the new
  * schema-aware layout for action/outcome/decision/cost while leaving
@@ -47,11 +47,11 @@ async function setupFixture(): Promise<{
   runId: string;
   claudeHome: string;
 }> {
-  const home = mkdtempSync(join(tmpdir(), "spool-inspect-cli-"));
-  process.env.SPOOL_HOME = home;
-  const store = Store.open({ path: join(home, "spool.db") });
+  const home = mkdtempSync(join(tmpdir(), "meter-inspect-cli-"));
+  process.env.METERBILITY_HOME = home;
+  const store = Store.open({ path: join(home, "meterbility.db") });
 
-  const sessionDir = mkdtempSync(join(tmpdir(), "spool-inspect-sess-"));
+  const sessionDir = mkdtempSync(join(tmpdir(), "meter-inspect-sess-"));
   const sessionPath = join(sessionDir, "session.jsonl");
   const records = [
     {
@@ -75,14 +75,14 @@ async function setupFixture(): Promise<{
   const runs = listRuns(store);
   const runId = runs[0]!.run_id;
   store.close();
-  const claudeHome = mkdtempSync(join(tmpdir(), "spool-inspect-claude-"));
+  const claudeHome = mkdtempSync(join(tmpdir(), "meter-inspect-claude-"));
   return { home, runId, claudeHome };
 }
 
 test("default inspect output (no --pretty-print) emits raw JSON for action/outcome/cost", async () => {
   const fx = await setupFixture();
   const r = runCli(["inspect", fx.runId, "--at", "0", "--show", "all"], {
-    SPOOL_HOME: fx.home,
+    METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     NO_COLOR: "1",
   });
@@ -102,7 +102,7 @@ test("--pretty-print routes action/outcome/decision/cost through schema-aware re
   const r = runCli(
     ["inspect", fx.runId, "--at", "0", "--show", "all", "--pretty-print"],
     {
-      SPOOL_HOME: fx.home,
+      METERBILITY_HOME: fx.home,
       CLAUDE_HOME: fx.claudeHome,
       NO_COLOR: "1",
     },
@@ -129,7 +129,7 @@ test("--pretty-print --show context is a no-op for the context tab (bespoke rend
   const r = runCli(
     ["inspect", fx.runId, "--at", "0", "--show", "context", "--pretty-print"],
     {
-      SPOOL_HOME: fx.home,
+      METERBILITY_HOME: fx.home,
       CLAUDE_HOME: fx.claudeHome,
       NO_COLOR: "1",
     },

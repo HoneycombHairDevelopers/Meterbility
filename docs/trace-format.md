@@ -1,6 +1,6 @@
-# Spool Trace Format v0.1
+# Meterbility Trace Format v0.1
 
-The on-wire/on-disk format Spool emits via `spool export` and consumes via future ingest paths. Plain JSON, base64-inlined blobs, no native bindings required to read.
+The on-wire/on-disk format Meterbility emits via `meter export` and consumes via future ingest paths. Plain JSON, base64-inlined blobs, no native bindings required to read.
 
 JSON Schema: [`packages/spec/schemas/trace-format.v0.1.json`](../packages/spec/schemas/trace-format.v0.1.json).
 
@@ -8,7 +8,7 @@ JSON Schema: [`packages/spec/schemas/trace-format.v0.1.json`](../packages/spec/s
 
 ```json
 {
-  "spool_trace_version": "0.1.0",
+  "meter_trace_version": "0.1.0",
   "run": { ... },
   "steps": [ ... ],
   "blobs": {
@@ -17,7 +17,7 @@ JSON Schema: [`packages/spec/schemas/trace-format.v0.1.json`](../packages/spec/s
 }
 ```
 
-`blobs` is optional — pass `--no-blobs` to `spool export` for a refs-only file (suitable for diffing structure when content is huge).
+`blobs` is optional — pass `--no-blobs` to `meter export` for a refs-only file (suitable for diffing structure when content is huge).
 
 ## Entities
 
@@ -42,9 +42,9 @@ These often differ. In trace-format documents the `blobs` map keys are always re
 ## Compatibility
 
 - `0.1.x` is the v0 format.
-- Backward-incompatible changes bump the minor version (`0.2.0`) and Spool will refuse to ingest the older format until a migration ships.
+- Backward-incompatible changes bump the minor version (`0.2.0`) and Meterbility will refuse to ingest the older format until a migration ships.
 - Forward-compatible additions (new optional fields) keep the same version.
 
 ## Why not OpenLLMetry / OpenInference?
 
-[SPEC §16.3](../SPEC.md) and §26 q10: open question. v0 ships a clean schema sized for the debugging workflow (forks, snapshots, outcomes); v0.2 considers either adopting the winning OpenInference dialect or proposing an extension. We deliberately don't yet emit OTel spans on the wire — Spool's value sits one layer above tracing.
+[SPEC §16.3](../SPEC.md) and §26 q10: open question. v0 ships a clean schema sized for the debugging workflow (forks, snapshots, outcomes); v0.2 considers either adopting the winning OpenInference dialect or proposing an extension. We deliberately don't yet emit OTel spans on the wire — Meterbility's value sits one layer above tracing.

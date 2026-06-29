@@ -12,7 +12,7 @@ import type {
   FileOp,
   Run,
   Step,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import { Store } from "./store.ts";
 import {
   FileChangeInvariantError,
@@ -45,7 +45,7 @@ import {
  * replay-from-DB equivalence, and four fast-check properties.
  *
  * Test-context helper: every test uses `ctx()`, which mkdtemps a
- * SPOOL_HOME-scoped Store and pre-inserts a run + N empty steps so
+ * METERBILITY_HOME-scoped Store and pre-inserts a run + N empty steps so
  * FCs have valid FKs. Per the Tier 3 / Tier 4 pattern; replaces ~10
  * lines of fixture boilerplate per test with 1.
  */
@@ -62,9 +62,9 @@ interface TestCtx {
 
 function ctx(opts: { stepCount?: number } = {}): TestCtx {
   const stepCount = opts.stepCount ?? 3;
-  const dir = mkdtempSync(join(tmpdir(), "spool-fc-exhaustive-"));
-  process.env.SPOOL_HOME = dir;
-  const store = Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-fc-exhaustive-"));
+  process.env.METERBILITY_HOME = dir;
+  const store = Store.open({ path: join(dir, "meterbility.db") });
   const project = upsertProjectByCwd(store, "/tmp/fcex", "fcex");
   const agent = upsertAgent(store, project.project_id, "claude-code");
   const runId = `run_${randomUUID()}`;

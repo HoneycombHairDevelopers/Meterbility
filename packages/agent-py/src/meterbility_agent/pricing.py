@@ -2,7 +2,7 @@
 Per-million-token pricing in cents — mirror packages/spec/src/pricing.ts.
 
 Kept in sync with the TS table on purpose: a step priced by the Python
-SDK should match the same step priced by ``spool inspect`` to the cent.
+SDK should match the same step priced by ``meter inspect`` to the cent.
 Unknown models fall back to ``PRICING_FALLBACK`` and the step is tagged
 ``cost:approx``.
 """

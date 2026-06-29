@@ -1,4 +1,4 @@
-import type { Action } from "@spool-ai/shared";
+import type { Action } from "@meterbility/shared";
 import { parseSseStream, type SseEvent } from "./sse.ts";
 import type { CapturedExchange, ProviderCapture } from "./types.ts";
 

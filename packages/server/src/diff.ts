@@ -1,6 +1,6 @@
-import type { Step } from "@spool-ai/shared";
-import { listSteps } from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
+import type { Step } from "@meterbility/shared";
+import { listSteps } from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
 
 /**
  * Structural diff. Walks both runs in sequence order, aligning steps by

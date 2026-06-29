@@ -1,6 +1,6 @@
 # Architecture
 
-A walkthrough of the v0 data plane: how a Claude Code session turns into a Spool Run, where the bytes live, and how the fork primitive replays them.
+A walkthrough of the v0 data plane: how a Claude Code session turns into a Meterbility Run, where the bytes live, and how the fork primitive replays them.
 
 For the product-shaped picture, see [SPEC §12](../SPEC.md). This doc is the implementation map.
 
@@ -19,7 +19,7 @@ For the product-shaped picture, see [SPEC §12](../SPEC.md). This doc is the imp
     rebuild Context Snapshot via parentUuid chain
                 │
                 ▼  (packages/collector: blobs.ts)
-    redact ▶ hash ▶ write to $SPOOL_HOME/blobs/<aa>/<bb>/<sha>
+    redact ▶ hash ▶ write to $METERBILITY_HOME/blobs/<aa>/<bb>/<sha>
                 │
                 ▼  (packages/collector: queries.ts)
     SQLite rows: runs, steps, context_snapshots, redaction_log
@@ -49,8 +49,8 @@ The Claude Code adapter v0 only fills `conversation_history` — Claude Code inj
 
 | Layer        | Backend                              | What's there                                 |
 | ------------ | ------------------------------------ | -------------------------------------------- |
-| Metadata     | SQLite (`$SPOOL_HOME/spool.db`)      | Runs, steps, forks, annotations, indexes     |
-| Blob content | Filesystem (`$SPOOL_HOME/blobs/...`) | Decision bodies, context snapshots, results  |
+| Metadata     | SQLite (`$METERBILITY_HOME/meterbility.db`)      | Runs, steps, forks, annotations, indexes     |
+| Blob content | Filesystem (`$METERBILITY_HOME/blobs/...`) | Decision bodies, context snapshots, results  |
 | Redaction log| SQLite (`redaction_log` table)       | Which rules fired on which blob              |
 
 WAL mode + foreign keys on. Two-level shard (`<aa>/<bb>/<sha>`) keeps any single dir under a few thousand files even after months of capture.
@@ -89,7 +89,7 @@ Both append via `appendLiveStep` which materializes the new bytes and recomputes
 5. Insert a `forks` row recording the parent-child relationship.
 6. (Optional) Run the responder, append one suffix step.
 
-The fork relationship is part of the data model — `spool inspect <origin>` lists every fork derived from it, and `spool diff <origin> <fork>` shows where the two trajectories diverge.
+The fork relationship is part of the data model — `meter inspect <origin>` lists every fork derived from it, and `meter diff <origin> <fork>` shows where the two trajectories diverge.
 
 ## Diff
 
@@ -107,7 +107,7 @@ This is **structural diff**. v1 adds **semantic diff** — embedding-based align
 
 ## Web UI
 
-`spool web` mounts a Hono app over the local Store on `127.0.0.1:4317`:
+`meter web` mounts a Hono app over the local Store on `127.0.0.1:4317`:
 
 - `/` — run list (HTML).
 - `/runs/:id` — run detail with timeline + per-step tabs.
@@ -122,7 +122,7 @@ The HTML is a single-file render (no framework, no bundler). Styles + tiny vanil
 
 Two surfaces care about this:
 
-1. **Ingest** keeps a per-file `ingest_progress` row with the last byte offset. Re-running `spool ingest claude-code` only processes the tail of each session — adapter cost grows with new bytes, not total bytes.
+1. **Ingest** keeps a per-file `ingest_progress` row with the last byte offset. Re-running `meter ingest claude-code` only processes the tail of each session — adapter cost grows with new bytes, not total bytes.
 2. **Blob writes** are content-addressed and write-once. Re-ingest cannot duplicate content; the blob store is naturally a Merkle DAG.
 
 ## Test strategy

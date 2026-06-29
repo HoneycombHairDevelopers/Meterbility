@@ -6,7 +6,7 @@ import type { Store } from "./store.ts";
  * watched tools, default fork model, etc. without re-typing per
  * session.
  *
- * Secrets warning: values are stored in plaintext in `~/.spool/spool.db`.
+ * Secrets warning: values are stored in plaintext in `~/.meterbility/meterbility.db`.
  * The Settings UI surfaces this clearly. For Keychain-backed storage,
  * see SPEC-DESKTOP.md (the desktop app's job, not the web UI's).
  */
@@ -21,7 +21,7 @@ export type SettingKey =
   | "anthropic.api_key"
   | "postgres.url"
   | "export.include_file_blobs"
-  // v0.3 §11 — defense-in-depth for non-loopback `spool web` binds.
+  // v0.3 §11 — defense-in-depth for non-loopback `meter web` binds.
   // When set, /api/* routes require `Authorization: Bearer <token>`.
   // Stored verbatim; `isSecret()` matches the `token$` suffix so the
   // settings UI masks it on display.

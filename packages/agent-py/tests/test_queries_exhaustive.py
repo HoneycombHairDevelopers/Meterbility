@@ -1,6 +1,6 @@
 """
-Tier 12 — exhaustive coverage of ``spool_agent.queries`` and
-``spool_agent.schema``. Mirrors TS Tier 8
+Tier 12 — exhaustive coverage of ``meterbility_agent.queries`` and
+``meterbility_agent.schema``. Mirrors TS Tier 8
 (``packages/collector/src/queries.exhaustive.test.ts``) for the subset
 of functions the Python SDK exposes (writes only — reads are TS-side).
 
@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent.parent
 sys.path.insert(0, str(HERE.parent / "src"))
 
-from spool_agent.queries import (  # noqa: E402
+from meterbility_agent.queries import (  # noqa: E402
     insert_run,
     insert_step,
     now_iso,
@@ -50,17 +50,17 @@ from spool_agent.queries import (  # noqa: E402
     upsert_agent,
     upsert_project_by_cwd,
 )
-from spool_agent.schema import SCHEMA_VERSION, ensure_schema  # noqa: E402
-from spool_agent.store import Store  # noqa: E402
+from meterbility_agent.schema import SCHEMA_VERSION, ensure_schema  # noqa: E402
+from meterbility_agent.store import Store  # noqa: E402
 
 
 class IsolatedDB(unittest.TestCase):
-    """Per-test SPOOL_HOME + a fresh Store opened against it."""
+    """Per-test METERBILITY_HOME + a fresh Store opened against it."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self._prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = self._tmp.name
+        self._prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = self._tmp.name
         self.store = Store.open()
         self.db = self.store.db
 
@@ -70,9 +70,9 @@ class IsolatedDB(unittest.TestCase):
         except Exception:
             pass
         if self._prev_home is None:
-            os.environ.pop("SPOOL_HOME", None)
+            os.environ.pop("METERBILITY_HOME", None)
         else:
-            os.environ["SPOOL_HOME"] = self._prev_home
+            os.environ["METERBILITY_HOME"] = self._prev_home
         self._tmp.cleanup()
 
     def _commit(self) -> None:

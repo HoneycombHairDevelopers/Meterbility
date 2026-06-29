@@ -7,11 +7,11 @@ import type {
   Outcome,
   Step,
   TokenUsage,
-} from "@spool-ai/shared";
-import { hashJson } from "@spool-ai/shared";
-import { costCents } from "@spool-ai/spec";
-import { insertStep, recordContextSnapshot } from "@spool-ai/collector";
-import type { SpoolTracer } from "./tracer.ts";
+} from "@meterbility/shared";
+import { hashJson } from "@meterbility/shared";
+import { costCents } from "@meterbility/spec";
+import { insertStep, recordContextSnapshot } from "@meterbility/collector";
+import type { MeterbilityTracer } from "./tracer.ts";
 import type {
   RecordDecisionOptions,
   RecordOutcomeOptions,
@@ -27,23 +27,23 @@ import type {
  * tool, get result"), and forcing them into a different shape costs more
  * than it earns.
  *
- * Internally a SpoolStep buffers up the context snapshot, decision,
+ * Internally a MeterbilityStep buffers up the context snapshot, decision,
  * action, outcome, and tokens; persists once `end()` is called. That
  * keeps async I/O off the agent's critical path until the step is over.
  */
 export interface StepInit {
-  tracer: SpoolTracer;
+  tracer: MeterbilityTracer;
   sequence: number;
   parent_step_id?: string;
   startedAtMs: number;
   options: StartStepOptions;
 }
 
-export class SpoolStep {
+export class MeterbilityStep {
   readonly step_id = `stp_${randomUUID()}`;
   readonly sequence: number;
   readonly parent_step_id?: string;
-  private tracer: SpoolTracer;
+  private tracer: MeterbilityTracer;
   private model: string;
   private startedAtMs: number;
   private startedAtIso = new Date().toISOString();
@@ -134,7 +134,7 @@ export class SpoolStep {
    */
   async end(): Promise<Step> {
     if (this.ended) {
-      throw new Error("SpoolStep.end() called twice");
+      throw new Error("MeterbilityStep.end() called twice");
     }
     this.ended = true;
 
@@ -220,7 +220,7 @@ export class SpoolStep {
 }
 
 async function buildContextComponents(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   opts: StartStepOptions,
 ): Promise<ContextComponent[]> {
   const components: ContextComponent[] = [];

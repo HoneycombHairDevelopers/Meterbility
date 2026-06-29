@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 import pc from "picocolors";
-import type { ForkEdit, ForkEditType } from "@spool-ai/shared";
+import type { ForkEdit, ForkEditType } from "@meterbility/shared";
 import {
   forkRun,
   anthropicResponder,
@@ -9,8 +9,8 @@ import {
   fakeResponder,
   type ContinuationModelCaller,
   type ToolExecutor,
-} from "@spool-ai/server";
-import { getSetting } from "@spool-ai/collector";
+} from "@meterbility/server";
+import { getSetting } from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 const EDIT_TYPES: ForkEditType[] = [
@@ -169,8 +169,8 @@ export function registerForkCommand(program: Command): void {
 
         console.log(
           pc.dim(
-            `\nopen with:  spool inspect ${result.fork_run_id.slice(0, 12)}` +
-              `\ndiff vs origin:  spool diff ${runId.slice(0, 12)} ${result.fork_run_id.slice(0, 12)}`,
+            `\nopen with:  meter inspect ${result.fork_run_id.slice(0, 12)}` +
+              `\ndiff vs origin:  meter diff ${runId.slice(0, 12)} ${result.fork_run_id.slice(0, 12)}`,
           ),
         );
       } finally {
@@ -212,7 +212,7 @@ function buildContinuationCaller(model: string): ContinuationModelCaller {
       };
     }
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const { Store } = await import("@spool-ai/collector");
+    const { Store } = await import("@meterbility/collector");
     const store = Store.open();
     try {
       const client = new Anthropic({ apiKey });
@@ -289,7 +289,7 @@ function buildBashOnlyExecutor(allowList: string[]): ToolExecutor {
     if (!allowSet.has(call.tool_name)) {
       return {
         output: {
-          spool_note: `tool '${call.tool_name}' not in --allow-tool set; skipped`,
+          meter_note: `tool '${call.tool_name}' not in --allow-tool set; skipped`,
         },
         is_error: false,
         summary: `skipped (not allowed): ${call.tool_name}`,
@@ -330,7 +330,7 @@ function buildBashOnlyExecutor(allowList: string[]): ToolExecutor {
     }
     // Allowed but unhandled — return a no-op so the loop can continue.
     return {
-      output: { spool_note: `tool '${call.tool_name}' has no live executor; no-op` },
+      output: { meter_note: `tool '${call.tool_name}' has no live executor; no-op` },
       is_error: false,
       summary: `no-op: ${call.tool_name}`,
     };
@@ -371,8 +371,8 @@ function buildAnthropicResponder(model: string) {
   return (() => {
     // Lazy: build responder inside the call so we don't load the SDK
     // until a fork actually wants live suffix.
-    return async (args: import("@spool-ai/server").LiveResponderArgs) => {
-      const { Store } = await import("@spool-ai/collector");
+    return async (args: import("@meterbility/server").LiveResponderArgs) => {
+      const { Store } = await import("@meterbility/collector");
       const store = Store.open();
       try {
         const fn = anthropicResponder(store, { apiKey, model });

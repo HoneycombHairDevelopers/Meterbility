@@ -1,13 +1,13 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { serveApp, SlackNotifier, type SlackEventKind } from "@spool-ai/server";
-import { resolveSetting, getSetting } from "@spool-ai/collector";
+import { serveApp, SlackNotifier, type SlackEventKind } from "@meterbility/server";
+import { resolveSetting, getSetting } from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 export function registerWebCommand(program: Command): void {
   program
     .command("web")
-    .description("Serve the Spool web UI on a local port")
+    .description("Serve the Meterbility web UI on a local port")
     .option("-p, --port <n>", "Port", (v) => parseInt(v, 10), 4317)
     .option("-h, --host <addr>", "Host", "127.0.0.1")
     .option("--no-open", "Do not auto-open the browser")
@@ -29,7 +29,7 @@ export function registerWebCommand(program: Command): void {
     )
     .option(
       "--slack-webhook <url>",
-      "Slack incoming-webhook URL (or set SPOOL_SLACK_WEBHOOK)",
+      "Slack incoming-webhook URL (or set METERBILITY_SLACK_WEBHOOK)",
     )
     .option(
       "--slack-event <kind>",
@@ -86,7 +86,7 @@ export function registerWebCommand(program: Command): void {
                 "  Anyone on this network would be able to read every run " +
                   "and step blob via /api/*.\n" +
                   "  Fix either:\n" +
-                  "    • spool config set web.bind_token <random-string>\n" +
+                  "    • meter config set web.bind_token <random-string>\n" +
                   "    • or re-run with --allow-unauth-bind to opt into the " +
                   "insecure config.\n" +
                   "  See SPEC-V0_3 §11.",
@@ -145,7 +145,7 @@ export function registerWebCommand(program: Command): void {
           stallSeconds: stallSecondsEffective,
         },
       });
-      console.log(pc.green("Spool running at ") + pc.cyan(url));
+      console.log(pc.green("Meterbility running at ") + pc.cyan(url));
       if (live) {
         console.log(
           pc.dim(
@@ -154,7 +154,7 @@ export function registerWebCommand(program: Command): void {
         );
         const webhook =
           opts.slackWebhook ??
-          resolveSetting(store, "slack.webhook", "SPOOL_SLACK_WEBHOOK") ??
+          resolveSetting(store, "slack.webhook", "METERBILITY_SLACK_WEBHOOK") ??
           "";
         const slackEventsFromSetting = getSetting(
           store,

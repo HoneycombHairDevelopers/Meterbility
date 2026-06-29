@@ -1,9 +1,9 @@
-# spool-agent (Python SDK)
+# meterbility-agent (Python SDK)
 
-The Python counterpart to `@spool-ai/agent`. Wire any Python LLM agent into
-Spool by capturing one **Step** per model call. Runs land in the same
-`~/.spool/spool.db` store the TypeScript SDK, the CLI, and the web UI
-read from — so a Python agent shows up in `spool list` and `spool web`
+The Python counterpart to `@meterbility/agent`. Wire any Python LLM agent into
+Meterbility by capturing one **Step** per model call. Runs land in the same
+`~/.meterbility/meterbility.db` store the TypeScript SDK, the CLI, and the web UI
+read from — so a Python agent shows up in `meter list` and `meter web`
 immediately, with no separate ingest step.
 
 ## Install
@@ -19,9 +19,9 @@ Requires Python 3.9+. Core has zero runtime dependencies (it uses
 ## Minimal usage
 
 ```python
-from spool_agent import SpoolTracer
+from meterbility_agent import MeterbilityTracer
 
-with SpoolTracer(project="my-app", agent="support") as tracer:
+with MeterbilityTracer(project="my-app", agent="support") as tracer:
     step = tracer.start_step(
         model="claude-opus-4-7",
         system_prompt="you are helpful",
@@ -37,9 +37,9 @@ with SpoolTracer(project="my-app", agent="support") as tracer:
 Then in another terminal:
 
 ```bash
-spool list
-spool inspect <run-id>
-spool web   # see it live alongside any Claude Code / Codex runs
+meter list
+meter inspect <run-id>
+meter web   # see it live alongside any Claude Code / Codex runs
 ```
 
 ## Anthropic shortcut
@@ -49,9 +49,9 @@ once and every `messages.create()` call is captured automatically:
 
 ```python
 from anthropic import Anthropic
-from spool_agent import SpoolTracer, trace_anthropic
+from meterbility_agent import MeterbilityTracer, trace_anthropic
 
-with SpoolTracer(project="my-app", agent="support") as tracer:
+with MeterbilityTracer(project="my-app", agent="support") as tracer:
     client = trace_anthropic(tracer, Anthropic())  # API-compatible wrapper
 
     resp = client.messages.create(
@@ -60,7 +60,7 @@ with SpoolTracer(project="my-app", agent="support") as tracer:
         system="you are helpful",
         messages=[{"role": "user", "content": "hello"}],
     )
-    # one Spool Step captured per call — including tool_use, tokens, latency.
+    # one Meterbility Step captured per call — including tool_use, tokens, latency.
 ```
 
 The wrapped client behaves identically to the underlying `Anthropic`
@@ -73,9 +73,9 @@ attributes, and re-raises the same exceptions (recording them as
 For multi-step agents that call tools, drive each step manually:
 
 ```python
-from spool_agent import SpoolTracer, tool_call_action
+from meterbility_agent import MeterbilityTracer, tool_call_action
 
-with SpoolTracer(project="my-app", agent="rag") as tracer:
+with MeterbilityTracer(project="my-app", agent="rag") as tracer:
     history = [{"role": "user", "content": "what's the weather in NYC?"}]
 
     # turn 1: model picks a tool
@@ -115,8 +115,8 @@ with SpoolTracer(project="my-app", agent="rag") as tracer:
 
 | Env var | Effect |
 |---------|--------|
-| `SPOOL_HOME` | Override the data directory (default `~/.spool`) |
-| `SPOOL_REDACT=off` | Disable regex redaction of API keys / bearer tokens / private keys |
+| `METERBILITY_HOME` | Override the data directory (default `~/.meterbility`) |
+| `METERBILITY_REDACT=off` | Disable regex redaction of API keys / bearer tokens / private keys |
 
 ## Run the tests
 
@@ -125,5 +125,5 @@ cd packages/agent-py
 python -m unittest discover -s tests -v
 ```
 
-Tests redirect `SPOOL_HOME` to a tempdir per test, so they never touch
-your real `~/.spool` store.
+Tests redirect `METERBILITY_HOME` to a tempdir per test, so they never touch
+your real `~/.meterbility` store.

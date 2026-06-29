@@ -1,17 +1,17 @@
-import type { Action } from "@spool-ai/shared";
-import type { SpoolTracer } from "./tracer.ts";
+import type { Action } from "@meterbility/shared";
+import type { MeterbilityTracer } from "./tracer.ts";
 import { applyProbeToRequest } from "./probe.ts";
 
 /**
  * Convenience wrapper for the common "I'm calling the Anthropic SDK"
  * case. Captures one Step per messages.create() invocation, mapping the
- * SDK's request/response into Spool's data model.
+ * SDK's request/response into Meterbility's data model.
  *
  * Usage:
  *
  *   import Anthropic from "@anthropic-ai/sdk";
  *   const client = new Anthropic();
- *   const tracer = new SpoolTracer({ project, agent });
+ *   const tracer = new MeterbilityTracer({ project, agent });
  *   const traced = traceAnthropic(tracer, (req) => client.messages.create(req));
  *
  *   const resp = await traced({
@@ -27,7 +27,7 @@ export function traceAnthropic<
   Req extends AnthropicMessagesRequest,
   Resp extends AnthropicMessagesResponse,
 >(
-  tracer: SpoolTracer,
+  tracer: MeterbilityTracer,
   call: (req: Req) => Promise<Resp>,
 ): (req: Req) => Promise<Resp> {
   return async (reqIn: Req) => {

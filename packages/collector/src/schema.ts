@@ -254,7 +254,7 @@ export function ensureSchema(db: Database.Database): void {
     -- for identical trees, which dedups via SHA naturally — two runs
     -- against the same git HEAD share one baseline blob.
     --
-    -- git_head / git_dirty are advisory metadata only. Spool never
+    -- git_head / git_dirty are advisory metadata only. Meterbility never
     -- depends on git being present.
     CREATE TABLE IF NOT EXISTS baseline_tree (
       baseline_tree_id    TEXT PRIMARY KEY,

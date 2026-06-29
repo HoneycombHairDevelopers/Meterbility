@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runCli, setupEmpty, setupFixture } from "./cli-test-utils.ts";
 
 /**
- * Exhaustive subprocess-driven coverage of all 21 `spool` CLI commands.
+ * Exhaustive subprocess-driven coverage of all 21 `meter` CLI commands.
  *
  * Strategy per D2 in main-web-cli-coverage-plan.md: every test spawns
  * a real subprocess via tsx so Commander argv parsing, exit codes,
@@ -65,7 +65,7 @@ test("slack test: missing webhook config exits non-zero with a clear error", () 
   try {
     // Ensure no env var leaks in.
     const r = runCli(["slack", "test"], fx, {
-      env: { SPOOL_SLACK_WEBHOOK: "" },
+      env: { METERBILITY_SLACK_WEBHOOK: "" },
     });
     assert.notEqual(r.status, 0, "no webhook should fail");
     assert.match(r.stderr, /webhook/i);
@@ -191,7 +191,7 @@ test("db postgres-init with no url + no env exits non-zero", () => {
   const fx = setupEmpty();
   try {
     const r = runCli(["db", "postgres-init"], fx, {
-      env: { SPOOL_DB_URL: "" },
+      env: { METERBILITY_DB_URL: "" },
     });
     assert.notEqual(r.status, 0);
   } finally {
@@ -203,7 +203,7 @@ test("db postgres-init with bad url surfaces a connect error (non-zero exit)", (
   const fx = setupEmpty();
   try {
     const r = runCli(
-      ["db", "postgres-init", "--url", "postgres://nobody@127.0.0.1:1/spool"],
+      ["db", "postgres-init", "--url", "postgres://nobody@127.0.0.1:1/meter"],
       fx,
       { timeoutMs: 5000 },
     );
@@ -329,7 +329,7 @@ test("annotate with invalid verdict exits non-zero with allowed-list hint", () =
 
 test("diff with two valid run ids exits 0 and prints a header", () => {
   const fx = setupFixture({ title: "first-run" });
-  // Create a second run reusing the same fixture's SPOOL_HOME
+  // Create a second run reusing the same fixture's METERBILITY_HOME
   const fx2 = setupFixture({ title: "second-run" });
   try {
     // Both runs need to live in the same store — use fx's home but
@@ -375,11 +375,11 @@ test("export <run-id> emits trace JSON to stdout (no -o)", () => {
     const r = runCli(["export", fx.runId!, "--no-blobs"], fx);
     assert.equal(r.status, 0, `stderr: ${r.stderr}`);
     const parsed = JSON.parse(r.stdout) as {
-      spool_trace_version: string;
+      meter_trace_version: string;
       run: { run_id: string };
       steps: unknown[];
     };
-    assert.match(parsed.spool_trace_version, /^\d+\.\d+\.\d+$/);
+    assert.match(parsed.meter_trace_version, /^\d+\.\d+\.\d+$/);
     assert.equal(parsed.run.run_id, fx.runId);
     assert.equal(parsed.steps.length, 2);
   } finally {
@@ -416,19 +416,19 @@ test("export <unknown-id> exits non-zero", () => {
 /* ── v0.3 trace format tests ──────────────────────────────────────────
  *
  * Per SPEC-V0_3 §10 + §12: the exported trace declares itself
- * spool_trace_version "0.3.0", carries `file_changes[]` and
+ * meter_trace_version "0.3.0", carries `file_changes[]` and
  * `baseline_trees[]`, and defaults to *omitting* file content blobs.
  * `--include-file-blobs` opts back in (the export.include_file_blobs
  * setting also flips the default).
  */
 
-test("export v0.3: spool_trace_version is exactly 0.3.0", () => {
+test("export v0.3: meter_trace_version is exactly 0.3.0", () => {
   const fx = setupFixture({ stepCount: 1 });
   try {
     const r = runCli(["export", fx.runId!, "--no-blobs"], fx);
     assert.equal(r.status, 0, `stderr: ${r.stderr}`);
-    const parsed = JSON.parse(r.stdout) as { spool_trace_version: string };
-    assert.equal(parsed.spool_trace_version, "0.3.0");
+    const parsed = JSON.parse(r.stdout) as { meter_trace_version: string };
+    assert.equal(parsed.meter_trace_version, "0.3.0");
   } finally {
     fx.cleanup();
   }
@@ -454,9 +454,9 @@ test("export v0.3: file_changes[] surfaces inserted FileChange rows", async () =
   const fx = setupFixture({ stepCount: 1 });
   try {
     // Seed a FileChange into the fixture store directly. Re-open with
-    // the same SPOOL_HOME so the subprocess sees it.
-    const { Store, insertFileChange } = await import("@spool-ai/collector");
-    const store = Store.open({ path: join(fx.home, "spool.db") });
+    // the same METERBILITY_HOME so the subprocess sees it.
+    const { Store, insertFileChange } = await import("@meterbility/collector");
+    const store = Store.open({ path: join(fx.home, "meterbility.db") });
     try {
       const after = await store.blobs.putString("created\n");
       insertFileChange(store, {
@@ -494,8 +494,8 @@ test("export v0.3: file_changes[] surfaces inserted FileChange rows", async () =
 test("export v0.3: --include-file-blobs OFF by default, ON inlines file blobs", async () => {
   const fx = setupFixture({ stepCount: 1 });
   try {
-    const { Store, insertFileChange } = await import("@spool-ai/collector");
-    const store = Store.open({ path: join(fx.home, "spool.db") });
+    const { Store, insertFileChange } = await import("@meterbility/collector");
+    const store = Store.open({ path: join(fx.home, "meterbility.db") });
     let afterRef = "";
     try {
       afterRef = await store.blobs.putString("contents of file\n");
@@ -557,8 +557,8 @@ test("export v0.3: baseline_trees[] surfaces the run's attached baseline", async
   const fx = setupFixture({ stepCount: 1 });
   try {
     const { Store, insertBaselineTree, setRunBaselineTree, serializeManifest } =
-      await import("@spool-ai/collector");
-    const store = Store.open({ path: join(fx.home, "spool.db") });
+      await import("@meterbility/collector");
+    const store = Store.open({ path: join(fx.home, "meterbility.db") });
     let manifestRef = "";
     let baselineId = "";
     try {
@@ -684,7 +684,7 @@ test("web --host 127.0.0.1 (loopback) starts normally with no token + no flag", 
   // Loopback is always safe. Don't actually run the server (it never
   // returns) — instead assert that the action made it past the safety
   // check by timing out (which means the server is running) OR ran far
-  // enough to print the "Spool running at" line.
+  // enough to print the "Meterbility running at" line.
   // We use the subprocess timeout to bound the test.
   const fx = setupEmpty();
   try {
@@ -714,7 +714,7 @@ test("doctor exits 0 or non-zero depending on env; output has summary section", 
     const r = runCli(["doctor"], fx);
     // Exit code depends on whether the machine has ~/.claude — both
     // 0 and non-zero are acceptable. We only assert the output shape.
-    assert.match(r.stdout, /Node|SPOOL|Claude/i);
+    assert.match(r.stdout, /Node|METERBILITY|Claude/i);
   } finally {
     fx.cleanup();
   }
@@ -750,7 +750,7 @@ test("doctor --help lists the --json option", () => {
   }
 });
 
-test("doctor on a clean SPOOL_HOME doesn't crash (any exit code, output shape)", () => {
+test("doctor on a clean METERBILITY_HOME doesn't crash (any exit code, output shape)", () => {
   const fx = setupEmpty();
   try {
     const r = runCli(["doctor", "--json"], fx);
@@ -842,15 +842,15 @@ test("ingest claude-code --cwd <empty-dir> reports 'no sessions to ingest'", () 
 
 // ── init (creates files; exercise via [path] arg) ────────────────────
 
-test("init [path] scaffolds .spoolignore + .spool/config.toml in the given dir", () => {
+test("init [path] scaffolds .meterbilityignore + .meterbility/config.toml in the given dir", () => {
   const fx = setupEmpty();
   try {
     const r = runCli(["init", fx.home], fx);
     assert.equal(r.status, 0, `stderr: ${r.stderr}`);
-    assert.ok(existsSync(join(fx.home, ".spoolignore")), ".spoolignore created");
+    assert.ok(existsSync(join(fx.home, ".meterbilityignore")), ".meterbilityignore created");
     assert.ok(
-      existsSync(join(fx.home, ".spool", "config.toml")),
-      ".spool/config.toml created",
+      existsSync(join(fx.home, ".meter", "config.toml")),
+      ".meterbility/config.toml created",
     );
     assert.match(r.stdout, /scaffolded|created/i);
   } finally {
@@ -863,24 +863,24 @@ test("init [path] is idempotent — re-running leaves existing files alone", () 
   try {
     runCli(["init", fx.home], fx);
     // Mutate the file to confirm it's not regenerated.
-    const ignorePath = join(fx.home, ".spoolignore");
+    const ignorePath = join(fx.home, ".meterbilityignore");
     const mutated = readFileSync(ignorePath, "utf-8") + "\n# user added line\n";
     writeFileSync(ignorePath, mutated, "utf-8");
     // Re-run init without --force.
     const r = runCli(["init", fx.home], fx);
     assert.equal(r.status, 0, `stderr: ${r.stderr}`);
     const after = readFileSync(ignorePath, "utf-8");
-    assert.equal(after, mutated, "existing .spoolignore not overwritten");
+    assert.equal(after, mutated, "existing .meterbilityignore not overwritten");
   } finally {
     fx.cleanup();
   }
 });
 
-test("init [path] --force overwrites existing .spoolignore", () => {
+test("init [path] --force overwrites existing .meterbilityignore", () => {
   const fx = setupEmpty();
   try {
     runCli(["init", fx.home], fx);
-    const ignorePath = join(fx.home, ".spoolignore");
+    const ignorePath = join(fx.home, ".meterbilityignore");
     writeFileSync(ignorePath, "# replaced\n", "utf-8");
     const r = runCli(["init", fx.home, "--force"], fx);
     assert.equal(r.status, 0, `stderr: ${r.stderr}`);

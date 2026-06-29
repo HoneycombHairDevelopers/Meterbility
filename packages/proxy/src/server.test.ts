@@ -4,12 +4,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { Store, listRuns, listSteps } from "@spool-ai/collector";
+import { Store, listRuns, listSteps } from "@meterbility/collector";
 import { startProxy } from "./server.ts";
 
 function freshHome(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-proxy-test-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-proxy-test-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
@@ -365,7 +365,7 @@ test("proxy routes /v1/chat/completions to OpenAI capture", async () => {
   }
 });
 
-test("proxy strips x-spool-* headers before forwarding upstream", async () => {
+test("proxy strips x-meterbility-* headers before forwarding upstream", async () => {
   freshHome();
   let receivedHeaders: Record<string, string | string[] | undefined> = {};
   const upstream = await startFakeUpstream((req, res) => {
@@ -391,8 +391,8 @@ test("proxy strips x-spool-* headers before forwarding upstream", async () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-spool-run-id": "run_explicit_test",
-        "x-spool-project": "should-not-leak",
+        "x-meterbility-run-id": "run_explicit_test",
+        "x-meterbility-project": "should-not-leak",
       },
       body: JSON.stringify({
         model: "claude-opus-4-7",
@@ -401,8 +401,8 @@ test("proxy strips x-spool-* headers before forwarding upstream", async () => {
       }),
     });
     await settled();
-    assert.equal(receivedHeaders["x-spool-run-id"], undefined);
-    assert.equal(receivedHeaders["x-spool-project"], undefined);
+    assert.equal(receivedHeaders["x-meterbility-run-id"], undefined);
+    assert.equal(receivedHeaders["x-meterbility-project"], undefined);
   } finally {
     await proxy.close();
     await upstream.close();

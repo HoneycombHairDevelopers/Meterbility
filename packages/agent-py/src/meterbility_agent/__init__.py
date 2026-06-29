@@ -1,16 +1,16 @@
 """
-Spool Python SDK.
+Meterbility Python SDK.
 
-Wire any Python agent into Spool by capturing one Step per model call.
-Runs land in the same ``~/.spool/spool.db`` SQLite store the TypeScript
+Wire any Python agent into Meterbility by capturing one Step per model call.
+Runs land in the same ``~/.meterbility/meterbility.db`` SQLite store the TypeScript
 SDK, the CLI, and the web UI read from — so a Python agent shows up in
-``spool list`` and ``spool web`` immediately, no separate ingest step.
+``meter list`` and ``meter web`` immediately, no separate ingest step.
 
 Minimal usage::
 
-    from spool_agent import SpoolTracer
+    from meterbility_agent import MeterbilityTracer
 
-    tracer = SpoolTracer(project="my-app", agent="support")
+    tracer = MeterbilityTracer(project="my-app", agent="support")
     step = tracer.start_step(
         model="claude-opus-4-7",
         system_prompt="you are helpful",
@@ -24,9 +24,9 @@ Minimal usage::
 Anthropic shortcut::
 
     from anthropic import Anthropic
-    from spool_agent import SpoolTracer, trace_anthropic
+    from meterbility_agent import MeterbilityTracer, trace_anthropic
 
-    tracer = SpoolTracer(project="my-app", agent="support")
+    tracer = MeterbilityTracer(project="my-app", agent="support")
     client = Anthropic()
     traced = trace_anthropic(tracer, client)
 
@@ -37,7 +37,7 @@ Anthropic shortcut::
     )
 """
 
-from .tracer import SpoolTracer, SpoolStep
+from .tracer import MeterbilityTracer, MeterbilityStep
 from .anthropic_helper import trace_anthropic
 from .actions import (
     tool_call_action,
@@ -45,7 +45,7 @@ from .actions import (
     thinking_only_action,
     sub_agent_action,
 )
-from .paths import spool_home, db_path, blob_root, blob_path
+from .paths import meter_home, db_path, blob_root, blob_path
 from .probe import (
     ProbeRecord,
     ProbeFsmState,
@@ -62,14 +62,14 @@ from .probe import (
 from .probe_hook import DEFAULT_PROBE_RUNTIME, ProbeRuntime, apply_probe_to_request
 
 __all__ = [
-    "SpoolTracer",
-    "SpoolStep",
+    "MeterbilityTracer",
+    "MeterbilityStep",
     "trace_anthropic",
     "tool_call_action",
     "message_action",
     "thinking_only_action",
     "sub_agent_action",
-    "spool_home",
+    "meter_home",
     "db_path",
     "blob_root",
     "blob_path",

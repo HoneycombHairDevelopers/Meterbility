@@ -12,7 +12,7 @@ Two layers:
 
 Uses ``unittest`` (stdlib) so the suite has zero install footprint.
 Mirrors the existing ``tests/test_sdk.py`` style: each test isolates
-``$SPOOL_HOME`` to a tempdir.
+``$METERBILITY_HOME`` to a tempdir.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "src"))
 
-from spool_agent import (  # noqa: E402
+from meterbility_agent import (  # noqa: E402
     ProbeRuntime,
-    SpoolTracer,
+    MeterbilityTracer,
     apply_probe_to_request,
     clear_probe,
     confirm_paused,
@@ -43,19 +43,19 @@ from spool_agent import (  # noqa: E402
 )
 
 
-class IsolatedSpoolHome(unittest.TestCase):
-    """Each test gets its own SPOOL_HOME tempdir."""
+class IsolatedMeterbilityHome(unittest.TestCase):
+    """Each test gets its own METERBILITY_HOME tempdir."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self._prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = self._tmp.name
+        self._prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = self._tmp.name
 
     def tearDown(self) -> None:
         if self._prev_home is None:
-            os.environ.pop("SPOOL_HOME", None)
+            os.environ.pop("METERBILITY_HOME", None)
         else:
-            os.environ["SPOOL_HOME"] = self._prev_home
+            os.environ["METERBILITY_HOME"] = self._prev_home
         self._tmp.cleanup()
 
 
@@ -89,7 +89,7 @@ def sleep_that_triggers(action):
 # ─── Protocol tests ──────────────────────────────────────────────────
 
 
-class TestProbeProtocol(IsolatedSpoolHome):
+class TestProbeProtocol(IsolatedMeterbilityHome):
     def test_read_state_on_no_file_returns_running_default(self) -> None:
         r = read_state("run_abc")
         self.assertEqual(r.state, "running")
@@ -235,7 +235,7 @@ class TestProbeProtocol(IsolatedSpoolHome):
 # ─── Hook tests (pure) ───────────────────────────────────────────────
 
 
-class TestProbeHook(IsolatedSpoolHome):
+class TestProbeHook(IsolatedMeterbilityHome):
     def test_pass_through_when_no_probe_activity(self) -> None:
         req = {
             "model": "claude-opus-4-7",
@@ -338,9 +338,9 @@ class FakeAnthropic:
         self.messages = FakeAnthropic._Messages()
 
 
-class TestProbeIntegration(IsolatedSpoolHome):
+class TestProbeIntegration(IsolatedMeterbilityHome):
     def test_probe_disabled_default_is_a_no_op(self) -> None:
-        tracer = SpoolTracer(project="/tmp/p-off", agent="tester")
+        tracer = MeterbilityTracer(project="/tmp/p-off", agent="tester")
         # Stale inject set, but probe_enabled defaults to False:
         set_inject(tracer.run_id, "should be ignored")
         client = FakeAnthropic()
@@ -359,7 +359,7 @@ class TestProbeIntegration(IsolatedSpoolHome):
         )
 
     def test_probe_enabled_no_activity_is_no_op(self) -> None:
-        tracer = SpoolTracer(
+        tracer = MeterbilityTracer(
             project="/tmp/p-noop", agent="tester", probe_enabled=True
         )
         client = FakeAnthropic()
@@ -374,7 +374,7 @@ class TestProbeIntegration(IsolatedSpoolHome):
         self.assertEqual(client.messages.last_req["messages"][0]["content"], "untouched")
 
     def test_probe_enabled_pause_blocks_until_resume(self) -> None:
-        tracer = SpoolTracer(
+        tracer = MeterbilityTracer(
             project="/tmp/p-pause", agent="tester", probe_enabled=True
         )
         # Swap in a deterministic sleep that triggers resume on first call.
@@ -396,7 +396,7 @@ class TestProbeIntegration(IsolatedSpoolHome):
         self.assertIsNotNone(client.messages.last_req, "call did eventually run")
 
     def test_probe_enabled_inject_appears_in_request(self) -> None:
-        tracer = SpoolTracer(
+        tracer = MeterbilityTracer(
             project="/tmp/p-inj", agent="tester", probe_enabled=True
         )
         set_inject(tracer.run_id, "operator nudge: check the logs")
@@ -413,7 +413,7 @@ class TestProbeIntegration(IsolatedSpoolHome):
         self.assertEqual(msgs[1]["content"], "operator nudge: check the logs")
 
     def test_tracer_end_clears_probe_file(self) -> None:
-        tracer = SpoolTracer(
+        tracer = MeterbilityTracer(
             project="/tmp/p-clear", agent="tester", probe_enabled=True
         )
         set_inject(tracer.run_id, "force file creation")
@@ -425,7 +425,7 @@ class TestProbeIntegration(IsolatedSpoolHome):
         )
 
     def test_tracer_end_safe_when_probe_never_used(self) -> None:
-        tracer = SpoolTracer(project="/tmp/p-noop-clear", agent="tester")
+        tracer = MeterbilityTracer(project="/tmp/p-noop-clear", agent="tester")
         # No exception even though no probe file ever existed:
         tracer.end()
 

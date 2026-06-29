@@ -1,9 +1,9 @@
 name: Publish to npm
 
-# Publishes every @spool-ai/* workspace package when a GitHub release is
+# Publishes every @meterbility/* workspace package when a GitHub release is
 # published (or manually via workflow_dispatch). Requires the NPM_TOKEN
 # repository secret: an npm automation token with publish rights on the
-# @spool-ai org.
+# @meterbility org.
 
 on:
   release:

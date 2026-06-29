@@ -1,10 +1,10 @@
 """
-``SpoolTracer`` and ``SpoolStep`` — the Python SDK's public surface.
+``MeterbilityTracer`` and ``MeterbilityStep`` — the Python SDK's public surface.
 
 Mirrors packages/agent/src/tracer.ts + step.ts in spirit:
 
   - One tracer instance = one Run.
-  - tracer.start_step() returns a SpoolStep the caller fills imperatively.
+  - tracer.start_step() returns a MeterbilityStep the caller fills imperatively.
   - step.end() persists the step + bumps run totals. Idempotent on re-call.
   - tracer.end() seals the Run row and closes the underlying SQLite handle.
 
@@ -43,14 +43,14 @@ Message = Dict[str, Any]  # {"role": "user"|"assistant"|"tool", "content": str}
 RetrievedDoc = Dict[str, str]  # {"source": str, "content": str}
 
 
-class SpoolTracer:
+class MeterbilityTracer:
     """
     One tracer = one Run. Open, call ``start_step()`` per model call,
     then call ``end()`` to seal the run.
 
     Example::
 
-        tracer = SpoolTracer(project="my-app", agent="support")
+        tracer = MeterbilityTracer(project="my-app", agent="support")
         step = tracer.start_step(model="claude-opus-4-7", history=[...])
         # ...call model...
         step.record_message("hi").record_tokens(input=10, output=2)
@@ -65,7 +65,7 @@ class SpoolTracer:
         agent: str,
         run_title: Optional[str] = None,
         tags: Optional[Iterable[str]] = None,
-        spool_home_override: Optional[str] = None,
+        meter_home_override: Optional[str] = None,
         source_runtime: str = "sdk-py",
         source_session_id: Optional[str] = None,
         cwd: Optional[str] = None,
@@ -73,8 +73,8 @@ class SpoolTracer:
         probe_enabled: bool = False,
         probe_poll_interval_ms: int = 250,
     ) -> None:
-        if spool_home_override:
-            os.environ["SPOOL_HOME"] = spool_home_override
+        if meter_home_override:
+            os.environ["METERBILITY_HOME"] = meter_home_override
         self.store = Store.open()
         cwd_eff = cwd or project
         project_row = upsert_project_by_cwd(self.store.db, cwd_eff, project)
@@ -107,7 +107,7 @@ class SpoolTracer:
 
         # Live Probe config. ``probe_enabled`` defaults to False so
         # there's zero overhead when the operator isn't using the
-        # probe; toggling it on lets ``spool probe`` and the web probe
+        # probe; toggling it on lets ``meter probe`` and the web probe
         # panel pause/inject/resume against this run.
         self.probe_enabled: bool = probe_enabled
         self.probe_runtime: ProbeRuntime = ProbeRuntime(
@@ -126,9 +126,9 @@ class SpoolTracer:
         retrieved_docs: Optional[List[RetrievedDoc]] = None,
         extra_components: Optional[List[Dict[str, Any]]] = None,
         tags: Optional[Iterable[str]] = None,
-    ) -> "SpoolStep":
+    ) -> "MeterbilityStep":
         seq = self._step_count
-        step = SpoolStep(
+        step = MeterbilityStep(
             tracer=self,
             sequence=seq,
             parent_step_id=self._prev_step_id,
@@ -162,7 +162,7 @@ class SpoolTracer:
         self.store.close()
 
     # ---- context-manager sugar ----
-    def __enter__(self) -> "SpoolTracer":
+    def __enter__(self) -> "MeterbilityTracer":
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -183,7 +183,7 @@ class SpoolTracer:
         update_run_totals(self.store.db, self.run_id)
 
 
-class SpoolStep:
+class MeterbilityStep:
     """
     One Step builder. Fill in decision/action/outcome/tokens by chained
     ``record_*`` calls, then ``end()`` to persist. ``end()`` is idempotent
@@ -197,7 +197,7 @@ class SpoolStep:
     def __init__(
         self,
         *,
-        tracer: SpoolTracer,
+        tracer: MeterbilityTracer,
         sequence: int,
         parent_step_id: Optional[str],
         started_at_ms: float,
@@ -227,18 +227,18 @@ class SpoolStep:
 
     # ---- record_* ---------------------------------------------------------
 
-    def record_decision(self, *, decision: Any, action: Dict[str, Any]) -> "SpoolStep":
+    def record_decision(self, *, decision: Any, action: Dict[str, Any]) -> "MeterbilityStep":
         self._decision_content = decision
         self._action = action
         return self
 
-    def record_action(self, action: Dict[str, Any]) -> "SpoolStep":
+    def record_action(self, action: Dict[str, Any]) -> "MeterbilityStep":
         self._action = action
         return self
 
     def record_tool_call(
         self, name: str, tool_input: Any, tool_use_id: Optional[str] = None
-    ) -> "SpoolStep":
+    ) -> "MeterbilityStep":
         self._action = {
             "kind": "tool_call",
             "tool_name": name,
@@ -247,11 +247,11 @@ class SpoolStep:
         }
         return self
 
-    def record_message(self, text: str) -> "SpoolStep":
+    def record_message(self, text: str) -> "MeterbilityStep":
         self._action = {"kind": "message", "text": text}
         return self
 
-    def record_outcome(self, outcome: Dict[str, Any]) -> "SpoolStep":
+    def record_outcome(self, outcome: Dict[str, Any]) -> "MeterbilityStep":
         self._outcome = outcome
         return self
 
@@ -261,7 +261,7 @@ class SpoolStep:
         *,
         is_error: bool = False,
         summary: Optional[str] = None,
-    ) -> "SpoolStep":
+    ) -> "MeterbilityStep":
         self._outcome = {
             "status": "error" if is_error else "ok",
             "is_error": is_error,
@@ -281,7 +281,7 @@ class SpoolStep:
         cache_creation_1h: int = 0,
         reasoning: Optional[int] = None,
         latency_ms: Optional[int] = None,
-    ) -> "SpoolStep":
+    ) -> "MeterbilityStep":
         self._tokens = {
             "input": input,
             "output": output,
@@ -295,7 +295,7 @@ class SpoolStep:
             self._explicit_latency_ms = latency_ms
         return self
 
-    def tag(self, tag: str) -> "SpoolStep":
+    def tag(self, tag: str) -> "MeterbilityStep":
         if tag not in self._tags:
             self._tags.append(tag)
         return self
@@ -305,7 +305,7 @@ class SpoolStep:
     def end(self) -> Dict[str, Any]:
         """Persist the step. Returns the row that was written."""
         if self._ended:
-            raise RuntimeError("SpoolStep.end() called twice")
+            raise RuntimeError("MeterbilityStep.end() called twice")
         self._ended = True
 
         # Build & persist context components.

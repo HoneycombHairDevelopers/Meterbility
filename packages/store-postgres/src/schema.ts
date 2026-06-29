@@ -1,19 +1,19 @@
 import type { Client } from "pg";
 
 /**
- * Postgres schema mirroring `@spool-ai/collector` (SQLite). Same column
+ * Postgres schema mirroring `@meterbility/collector` (SQLite). Same column
  * names, same semantics. Differences:
  *   - JSON columns use `jsonb` (queryable + indexable later).
  *   - Timestamps use `timestamptz` rather than free-form text.
  *   - Indexes are explicit; SQLite's `WAL` / `synchronous` pragmas have
  *     no Postgres equivalent and aren't applied.
  *
- * Designed for Spool's hosted/team tier (SPEC §15.3). Local mode keeps
+ * Designed for Meterbility's hosted/team tier (SPEC §15.3). Local mode keeps
  * the SQLite store as default; this exists for the deployments where
  * multiple operators share a project's run history.
  */
 /**
- * Version history (mirrors `@spool-ai/collector` SCHEMA_VERSION):
+ * Version history (mirrors `@meterbility/collector` SCHEMA_VERSION):
  *   v3 → v4 — file_change + baseline_tree tables, runs.baseline_tree_id,
  *             runs.probe_state. Per v0.3 §3.3, full enum coverage in
  *             CHECK constraints up front so v0.4 / v0.5 don't need

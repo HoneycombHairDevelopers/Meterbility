@@ -1,4 +1,4 @@
-# Spool — As-Built Specification (v0.2)
+# Meterbility — As-Built Specification (v0.2)
 
 > **What this is.** An accurate description of the product as it exists in the
 > codebase today. Use this when you want to know *what's shipped* — every
@@ -12,7 +12,7 @@
 > **Status.** v0.2 milestone shipped (Python SDK + Anthropic & OpenAI proxy +
 > in-progress run sealing). 76 tests pass. ~12 packages live in the monorepo.
 >
-> **Audience.** Anyone joining the project, anyone integrating with Spool,
+> **Audience.** Anyone joining the project, anyone integrating with Meterbility,
 > anyone proposing a change that touches the data model, capture pipeline, or
 > UI primitives.
 
@@ -43,7 +43,7 @@
 
 ## 1. Product shape today
 
-Spool is **the debugger for AI agents**. It captures every model call your
+Meterbility is **the debugger for AI agents**. It captures every model call your
 agent makes, lets you inspect every step (with full context bytes), fork from
 any step with an edit applied, and diff trajectories. The wedge is the
 fork-and-diff primitive that no observability tool offers, layered on a faithful
@@ -51,18 +51,18 @@ DevTools-style inspector.
 
 The product ships as **one CLI binary + one local web UI + a proxy + two SDKs**,
 all writing into the same SQLite + content-addressed blob store at
-`~/.spool/spool.db` and `~/.spool/blobs/`. Local-first; an optional Postgres
+`~/.meterbility/meterbility.db` and `~/.meterbility/blobs/`. Local-first; an optional Postgres
 backend exists for team-tier scenarios.
 
 **Three surfaces** (per original SPEC §3, all live):
 
-- **Inspector — the live view.** `spool web --live` + `spool watch`. Tails
+- **Inspector — the live view.** `meter web --live` + `meter watch`. Tails
   `~/.claude/projects` and surfaces fleet status with SSE. Alerts on stalls,
   context thresholds, watched tool calls, identical-tool loops.
-- **Debugger — the post-hoc inspector.** `spool inspect` + the web run
+- **Debugger — the post-hoc inspector.** `meter inspect` + the web run
   detail page. Per-step decision/action/outcome/cost/context tabs. Resolved
   context viewer (renders the actual conversation, not the manifest).
-- **Sandbox — the isolated playground.** Partially shipped via `spool fork`
+- **Sandbox — the isolated playground.** Partially shipped via `meter fork`
   + `--continue` modes (simulate, live). Multi-step replay loop with cached
   prefix and live suffix.
 
@@ -71,8 +71,8 @@ backend exists for team-tier scenarios.
 1. **Hook adapters** — read existing session logs from disk. Zero code change.
    Adapters: `claude-code`, `codex-cli`, `cursor`.
 2. **SDK adapters** — wrap your model calls explicitly. TypeScript
-   (`@spool-ai/agent`) and Python (`spool-agent`).
-3. **HTTP proxy** — `spool proxy` or `spool run -- <cmd>`. Local forward
+   (`@meterbility/agent`) and Python (`meterbility-agent`).
+3. **HTTP proxy** — `meter proxy` or `meter run -- <cmd>`. Local forward
    proxy that captures the wire payload. **Anthropic + OpenAI from day one.**
    Streaming + non-streaming. No code change required from the agent author.
 
@@ -88,18 +88,18 @@ Three ways to feed data into the same store. Pick by friction tolerance:
 |---|---|---|---|---|
 | Hook | None | Polled (≤1.5s) | Whatever the runtime logs | You use Claude Code, Codex, or Cursor and just want to see what they did |
 | SDK | Wrap each model call | Real-time | Custom — you control step boundaries, tags, extra context components | Building a custom agent and want fine-grained observability |
-| Proxy | One env var (or none with `spool run`) | Real-time | Wire payload (system, history, tools, response, usage) | Existing langchain/llamaindex/dspy/raw-anthropic agents you don't want to refactor |
+| Proxy | One env var (or none with `meter run`) | Real-time | Wire payload (system, history, tools, response, usage) | Existing langchain/llamaindex/dspy/raw-anthropic agents you don't want to refactor |
 
-### 2.1 Hook mode (`spool ingest <runtime>`)
+### 2.1 Hook mode (`meter ingest <runtime>`)
 
 Reads runtime-published session files from disk. Idempotent — `ingest_progress`
 table tracks last byte offset per file so re-running picks up only new bytes.
 
 ```
-spool ingest claude-code              # ingests every ~/.claude/projects/**/*.jsonl
-spool ingest claude-code --cwd /repo  # restrict to a project's sessions
-spool ingest codex                    # ~/.codex sessions
-spool ingest cursor                   # Cursor's local SQLite (read-only)
+meter ingest claude-code              # ingests every ~/.claude/projects/**/*.jsonl
+meter ingest claude-code --cwd /repo  # restrict to a project's sessions
+meter ingest codex                    # ~/.codex sessions
+meter ingest cursor                   # Cursor's local SQLite (read-only)
 ```
 
 Adapters live in `adapters/<runtime>/`. Each exports `discoverSessions()` and
@@ -108,11 +108,11 @@ contained PR; nothing in the core packages needs to change.
 
 ### 2.2 SDK mode
 
-**TypeScript** (`@spool-ai/agent`):
+**TypeScript** (`@meterbility/agent`):
 ```ts
-import { SpoolTracer, helpers } from "@spool-ai/agent";
+import { MeterbilityTracer, helpers } from "@meterbility/agent";
 
-const tracer = new SpoolTracer({ project: "my-app", agent: "support" });
+const tracer = new MeterbilityTracer({ project: "my-app", agent: "support" });
 const step = tracer.startStep({
   model: "claude-opus-4-7",
   systemPrompt: "you are helpful",
@@ -128,15 +128,15 @@ await tracer.end();
 
 A convenience wrapper exists for the Anthropic SDK case:
 ```ts
-import { traceAnthropic } from "@spool-ai/agent";
+import { traceAnthropic } from "@meterbility/agent";
 const traced = traceAnthropic(tracer, (req) => client.messages.create(req));
 ```
 
-**Python** (`spool-agent`):
+**Python** (`meterbility-agent`):
 ```python
-from spool_agent import SpoolTracer, tool_call_action
+from meterbility_agent import MeterbilityTracer, tool_call_action
 
-with SpoolTracer(project="my-app", agent="support") as tracer:
+with MeterbilityTracer(project="my-app", agent="support") as tracer:
     step = tracer.start_step(model="claude-opus-4-7", history=[...])
     step.record_action(tool_call_action("Bash", {"command": "ls"}, "tu1"))
     step.record_tool_result({"stdout": "file1\nfile2"})
@@ -146,9 +146,9 @@ with SpoolTracer(project="my-app", agent="support") as tracer:
 
 The Python SDK is **stdlib-only at the core** (sqlite3, hashlib, json) — zero
 runtime deps. It writes directly to the same SQLite + blob store the JS SDK
-uses, so a Python agent shows up in `spool list`/`spool web` immediately.
+uses, so a Python agent shows up in `meter list`/`meter web` immediately.
 Anthropic helper imports `anthropic` lazily — `pip install
-'spool-agent[anthropic]'` opts in.
+'meterbility-agent[anthropic]'` opts in.
 
 Cross-language byte parity is verified: `canonical_json` matches the TS
 implementation byte-for-byte, so a content_ref hash from Python is identical
@@ -161,14 +161,14 @@ the proxy/SDK route would but **without any code change**.
 
 ```bash
 # Long-lived daemon flow
-spool proxy &
+meter proxy &
 ANTHROPIC_BASE_URL=http://127.0.0.1:8765 python myagent.py
 OPENAI_BASE_URL=http://127.0.0.1:8765/v1 python myagent.py
 
 # One-shot wrapper flow (env vars auto-injected into the child)
-spool run -- python myagent.py
-spool run -- npm run my-agent
-spool run --project my-app --agent prod -- node bot.js
+meter run -- python myagent.py
+meter run -- npm run my-agent
+meter run --project my-app --agent prod -- node bot.js
 ```
 
 Multi-provider on day one. Routing table (`packages/proxy/src/routes.ts`):
@@ -199,8 +199,8 @@ What the proxy captures:
 
 What the proxy *doesn't* know automatically:
 - **Agent name / project label.** Defaults to `cwd`. Override with `--agent`
-  and `--project` flags, or per-request via `x-spool-agent` and
-  `x-spool-project` headers.
+  and `--project` flags, or per-request via `x-meterbility-agent` and
+  `x-meterbility-project` headers.
 - **Run boundaries.** No equivalent of `tracer.end()` — proxy-captured runs
   stay `in_progress` until you seal them. See §15.
 
@@ -208,7 +208,7 @@ What the proxy *doesn't* know automatically:
 
 Three-tier strategy (`packages/proxy/src/grouping.ts`):
 
-1. **Explicit grouping wins.** `x-spool-run-id: <id>` header.
+1. **Explicit grouping wins.** `x-meterbility-run-id: <id>` header.
 2. **Conversation-seed hash + 30-min sliding window.** Hash =
    `sha256(model + system_prompt + first_user_message)`. Same seed within the
    window + new request's `messages.length >= last_messages_count` → same Run.
@@ -222,76 +222,76 @@ Every Run row carries a `source_runtime` field. Current values:
 - `claude-code`, `codex-cli`, `cursor` — hook adapters
 - `sdk-ts`, `sdk-py` — SDKs
 - `proxy` — proxy capture
-- `fork` — derived run from `spool fork`
+- `fork` — derived run from `meter fork`
 
-Used for: filtering in `spool list`/`spool web`, label rendering on the run
-detail page, retention policies (future), and `spool runs close --source` scoping.
+Used for: filtering in `meter list`/`meter web`, label rendering on the run
+detail page, retention policies (future), and `meter runs close --source` scoping.
 
 ---
 
 ## 3. CLI reference
 
-The `spool` binary registers 18 commands today. They group into seven logical
+The `meter` binary registers 18 commands today. They group into seven logical
 buckets:
 
 ### 3.1 Capture
-- **`spool ingest claude-code [path]`** — import Claude Code sessions.
-- **`spool ingest codex [path]`** — import Codex CLI sessions.
-- **`spool ingest cursor`** — import Cursor's local SQLite snapshots.
-- **`spool proxy`** — long-running local LLM-API forward proxy. Flags:
+- **`meter ingest claude-code [path]`** — import Claude Code sessions.
+- **`meter ingest codex [path]`** — import Codex CLI sessions.
+- **`meter ingest cursor`** — import Cursor's local SQLite snapshots.
+- **`meter proxy`** — long-running local LLM-API forward proxy. Flags:
   `--port`, `--host`, `--project`, `--agent`, `--anthropic-target`,
   `--openai-target`, `--quiet`. Logs each capture as
   `provider model → action (run · step · ms · in/out)`.
-- **`spool run -- <command...>`** — one-shot wrap. Spawns proxy on a free
+- **`meter run -- <command...>`** — one-shot wrap. Spawns proxy on a free
   port, injects `ANTHROPIC_BASE_URL` + `OPENAI_BASE_URL` into the child env,
   forwards stdio, mirrors child exit code. SIGINT propagates. Flags:
   `--port`, `--project`, `--agent`, `--no-anthropic`, `--no-openai`,
   `--anthropic-target`, `--openai-target`, `--quiet`.
 
 ### 3.2 Inspect
-- **`spool list [--limit N] [--status S] [--source S]`** — recent runs.
-  Aliased as `spool ls`.
-- **`spool inspect <run-id> [--at <seq-or-step-id>] [--show <tab>]`** —
+- **`meter list [--limit N] [--status S] [--source S]`** — recent runs.
+  Aliased as `meter ls`.
+- **`meter inspect <run-id> [--at <seq-or-step-id>] [--show <tab>]`** —
   terminal-rendered timeline + step inspector. `--show` accepts
   `context | decision | action | outcome | cost | all`. The `context` tab
   resolves content_refs and renders the actual conversation with role badges
   + char counts (not the raw manifest).
-- **`spool diff <run-a> <run-b>`** — terminal diff between two runs.
-- **`spool watch [--filter <kinds>] [--run <id>] [--json]`** — terminal
+- **`meter diff <run-a> <run-b>`** — terminal diff between two runs.
+- **`meter watch [--filter <kinds>] [--run <id>] [--json]`** — terminal
   counterpart to the web UI's SSE stream. Emits `run:created`, `run:updated`,
   `run:completed`, `alert`, `fleet:snapshot` events.
-- **`spool open <run-id> [--at <step>] [--context]`** — browser bridge.
+- **`meter open <run-id> [--at <step>] [--context]`** — browser bridge.
   Resolves the run locally, builds the right URL (`/runs/:id#step-…` or
-  `/contexts/:id`), pings the web server, auto-spawns `spool web --no-open`
+  `/contexts/:id`), pings the web server, auto-spawns `meter web --no-open`
   if it's down. `--print` for clipboard piping.
 
 ### 3.3 Mutate
-- **`spool annotate <target>`** — attach a verdict + note to a step or run.
-- **`spool fork <run-id> --at <step> --edit <type> [--payload|--text|--payload-file] [--continue simulate|live] [--max-iterations N]`** —
+- **`meter annotate <target>`** — attach a verdict + note to a step or run.
+- **`meter fork <run-id> --at <step> --edit <type> [--payload|--text|--payload-file] [--continue simulate|live] [--max-iterations N]`** —
   the fork primitive. Edit types:
   `replace_system_prompt | add_context | remove_tool | modify_tool_description | replace_user_message | inject_message | change_model`.
   `--continue` runs a multi-step continuation loop after the suffix step.
-- **`spool runs close [id]`** — seal an in-progress run (proxy-captured runs
+- **`meter runs close [id]`** — seal an in-progress run (proxy-captured runs
   most often). Flags: `--status ok|error|abandoned` (default ok),
   `--all [--source proxy] [--older-than <minutes>] [--dry-run]`.
 
 ### 3.4 Test
-- **`spool test`** — regression assertions over captured runs. Subcommands
+- **`meter test`** — regression assertions over captured runs. Subcommands
   for create / list / run / delete (see §10).
 
 ### 3.5 Serve
-- **`spool web [--port N] [--host H] [--no-open] [--live]`** — boots the
+- **`meter web [--port N] [--host H] [--no-open] [--live]`** — boots the
   Hono web server. `--live` enables the file-watcher fleet view.
 
 ### 3.6 Operate
-- **`spool config get|set|list|rm <key>`** — read/write the `settings`
+- **`meter config get|set|list|rm <key>`** — read/write the `settings`
   table. Mirrors the web UI's Settings page; secrets masked unless
   `--reveal` is passed.
-- **`spool doctor [--json]`** — environment check. JSON output suitable for
+- **`meter doctor [--json]`** — environment check. JSON output suitable for
   CI gates (`jq -e '.summary.fail == 0'`).
-- **`spool slack`** — Slack webhook test + send.
-- **`spool db postgres-init|postgres-sync`** — hosted backend setup.
-- **`spool export <run-id> [--no-blobs]`** — dump a run as Spool Trace
+- **`meter slack`** — Slack webhook test + send.
+- **`meter db postgres-init|postgres-sync`** — hosted backend setup.
+- **`meter export <run-id> [--no-blobs]`** — dump a run as Meterbility Trace
   Format v0.2 JSON (with inlined blobs by default).
 
 ### 3.7 Settings fallback chain
@@ -302,14 +302,14 @@ commands automatically:
 
 | Flag | Setting key | Env var (env wins over settings) |
 |---|---|---|
-| `spool web --slack-webhook` | `slack.webhook` | `SPOOL_SLACK_WEBHOOK` |
-| `spool web --watch-tool` | `live.watch_tools` (comma-list) | — |
-| `spool web --stall-seconds` | `live.stall_seconds` | — |
-| `spool fork --live-model` | `fork.default_model` | — |
-| `spool fork --max-iterations` | `fork.default_max_iterations` | — |
-| `spool db --url` | `postgres.url` | `SPOOL_DB_URL` |
+| `meter web --slack-webhook` | `slack.webhook` | `METERBILITY_SLACK_WEBHOOK` |
+| `meter web --watch-tool` | `live.watch_tools` (comma-list) | — |
+| `meter web --stall-seconds` | `live.stall_seconds` | — |
+| `meter fork --live-model` | `fork.default_model` | — |
+| `meter fork --max-iterations` | `fork.default_max_iterations` | — |
+| `meter db --url` | `postgres.url` | `METERBILITY_DB_URL` |
 
-`spool config` is the single source of truth for setting these.
+`meter config` is the single source of truth for setting these.
 
 ---
 
@@ -335,7 +335,7 @@ No SPA framework. Pages share the Cerulean shell (§12).
 
 - **`GET /api/live`** — server-sent events from `LiveInspector`. Events:
   `run:created`, `run:updated`, `run:completed`, `alert`, `fleet:snapshot`.
-  Driven by the `~/.claude/projects` file watcher when `spool web --live`
+  Driven by the `~/.claude/projects` file watcher when `meter web --live`
   is on.
 
 ### 4.3 JSON APIs
@@ -354,7 +354,7 @@ No SPA framework. Pages share the Cerulean shell (§12).
 | GET | `/api/tests` | list regression tests |
 | GET | `/api/tests/:name` | test detail |
 | GET | `/api/tests/:name/results` | recent runs of one test |
-| GET | `/api/doctor` | environment check (same data as `spool doctor --json`) |
+| GET | `/api/doctor` | environment check (same data as `meter doctor --json`) |
 | POST | `/api/runs/:id/close` | seal one in_progress run. body: `{status?: ok\|error\|abandoned}` |
 | POST | `/api/runs/close-stale` | bulk seal. body: `{older_than_minutes?, source?, status?}` |
 | POST | `/api/annotate` | create annotation |
@@ -427,7 +427,7 @@ destructive migrations to date.
 
 ### 5.3 Content-addressed blob store
 
-Layout: `~/.spool/blobs/<aa>/<bb>/<sha256>`. Two-level sharding (256 × 256)
+Layout: `~/.meterbility/blobs/<aa>/<bb>/<sha256>`. Two-level sharding (256 × 256)
 keeps any single directory bounded.
 
 - **Write semantics**: write-once. If the file exists at the sharded path,
@@ -437,8 +437,8 @@ keeps any single directory bounded.
 - **Redaction**: every blob passes through the redaction pass before write.
   Six default rules (`anthropic-key`, `openai-key`, `github-token`,
   `aws-access-key`, `bearer`, `private-key`). Replaces matches with
-  `«spool:redacted:<rule>»` placeholders. Disable globally with
-  `SPOOL_REDACT=off`. Each firing logs a row in `redaction_log`.
+  `«meter:redacted:<rule>»` placeholders. Disable globally with
+  `METERBILITY_REDACT=off`. Each firing logs a row in `redaction_log`.
 - **Cross-language parity**: TS and Python both implement the same
   `canonical_json` (sorted keys, no whitespace, ensure_ascii=False) so the
   same logical value content-addresses to the same SHA on either side.
@@ -456,8 +456,8 @@ handles the lookup.
 
 ### 5.5 Postgres backend (optional)
 
-`@spool-ai/store-postgres` mirrors the SQLite schema in Postgres (DDL in
-`packages/store-postgres/src/schema.ts`). `spool db postgres-sync` copies
+`@meterbility/store-postgres` mirrors the SQLite schema in Postgres (DDL in
+`packages/store-postgres/src/schema.ts`). `meter db postgres-sync` copies
 runs/steps/blobs from local SQLite into Postgres for team-tier scenarios.
 Not the default — local SQLite is the day-one experience.
 
@@ -466,7 +466,7 @@ Not the default — local SQLite is the day-one experience.
 ## 6. Cost engine
 
 `packages/spec/src/pricing.ts` — single source of truth for token-to-cents
-math. Used by the SDKs, the proxy, and `spool inspect`/`spool list`. All
+math. Used by the SDKs, the proxy, and `meter inspect`/`meter list`. All
 writers go through `costCents(model, usage)` so a step's cost is consistent
 no matter who recorded it.
 
@@ -512,7 +512,7 @@ isn't authoritative.
 
 **Always dollars, never cents.** The original UI mixed `$0.02` and `5¢`
 which made comparisons ambiguous. v0.2 normalized to `$0.05` everywhere
-including the table footers, fleet cards, and `spool list` output. The
+including the table footers, fleet cards, and `meter list` output. The
 cost footnote on every page reads: *Costs reflect current vendor pricing
 which is broadly understood to be VC-subsidized and may not reflect long-
 term economics.*
@@ -523,7 +523,7 @@ term economics.*
 
 ### 7.1 LiveInspector (`packages/server/src/live.ts`)
 
-When `spool web --live` is on, `LiveInspector` polls `~/.claude/projects`
+When `meter web --live` is on, `LiveInspector` polls `~/.claude/projects`
 every 1500ms and emits `LiveEvent`s (an `EventEmitter`):
 
 ```ts
@@ -536,10 +536,10 @@ type LiveEvent =
 ```
 
 These flow to: `/api/live` SSE for the web UI, the in-process `slack.attach()`
-for Slack, and `spool watch` for terminal users.
+for Slack, and `meter watch` for terminal users.
 
 **Silent backfill**: on startup, the inspector ingests existing sessions
-without firing events — important so a fresh `spool web --live` against an
+without firing events — important so a fresh `meter web --live` against an
 old corpus doesn't produce a notification storm. Only post-startup activity
 emits events.
 
@@ -562,8 +562,8 @@ forward `run:created` and `run:completed`). Built-in 60s rate-limit window
 to avoid storming a channel when a run is in trouble. Validates webhook
 URLs (rejects non-Slack hosts) and redacts Anthropic keys before send.
 
-Configure via `slack.webhook` setting (preferred) or `SPOOL_SLACK_WEBHOOK`
-env var. Test from the Settings page or `spool slack test`.
+Configure via `slack.webhook` setting (preferred) or `METERBILITY_SLACK_WEBHOOK`
+env var. Test from the Settings page or `meter slack test`.
 
 ---
 
@@ -571,7 +571,7 @@ env var. Test from the Settings page or `spool slack test`.
 
 ### 8.1 Fork primitive
 
-`spool fork <run-id> --at <seq> --edit <type>` — the headline feature.
+`meter fork <run-id> --at <seq> --edit <type>` — the headline feature.
 
 Edit types (`packages/shared/src/types.ts`):
 
@@ -632,7 +632,7 @@ Web UI (`/diff?a=&b=`) renders side-by-side with toggles for:
   to see the cached prefix too.
 - **JSON download** — full diff payload for offline analysis.
 
-Terminal version: `spool diff <a> <b>`.
+Terminal version: `meter diff <a> <b>`.
 
 Semantic diff (embedding-based alignment for high-divergence forks) is
 on the v1 roadmap, not yet shipped.
@@ -670,10 +670,10 @@ interface RegressionTest {
 ### 10.3 Workflow
 
 - Annotate a "good" run as the canonical example.
-- `spool test create <name> --from <run-id>` — auto-derives a starter
+- `meter test create <name> --from <run-id>` — auto-derives a starter
   assertion set from the canonical run.
 - Edit assertions in the web UI's `/tests` page.
-- `spool test run <name>` — runs assertions against every captured run
+- `meter test run <name>` — runs assertions against every captured run
   whose first user message matches the canonical's, records pass/fail
   in `regression_results`.
 
@@ -685,11 +685,11 @@ your own changes.
 ## 11. Trace format v0.2 (export/import)
 
 `TRACE_FORMAT_VERSION = "0.2.0"`. Exported by
-`spool export <run-id>` or `GET /api/runs/:id/export`.
+`meter export <run-id>` or `GET /api/runs/:id/export`.
 
 ```json
 {
-  "spool_trace_version": "0.2.0",
+  "meter_trace_version": "0.2.0",
   "run":   { /* full Run row */ },
   "steps": [ /* full Step rows in sequence order */ ],
   "blobs": {
@@ -866,13 +866,13 @@ packages/
 ├── shared/              # Types, hashing, paths, redaction. Zero runtime deps.
 ├── spec/                # Trace format version + pricing tables.
 ├── collector/           # SQLite Store + BlobStore + queries + settings + schema.
-├── agent/               # TypeScript SDK (SpoolTracer, SpoolStep, traceAnthropic).
-├── agent-py/            # Python SDK (spool-agent on PyPI).
+├── agent/               # TypeScript SDK (MeterbilityTracer, MeterbilityStep, traceAnthropic).
+├── agent-py/            # Python SDK (meterbility-agent on PyPI).
 ├── proxy/               # HTTP forward proxy (Anthropic + OpenAI capture).
 ├── server/              # Hono app, web UI HTML, live inspector, fork/replay,
 │                        # diff, regression, Slack notifier, continuation.
 ├── store-postgres/      # Optional Postgres backend (mirrors SQLite schema).
-├── cli/                 # `spool` binary. All commands, util, store-open.
+├── cli/                 # `meter` binary. All commands, util, store-open.
 ├── web/                 # (placeholder for future SPA / Tauri renderer)
 └── ...
 
@@ -918,7 +918,7 @@ brackets, when does request N belong to the same Run as request N-1?
 
 ### 14.1 Strategy (priority-ordered)
 
-1. **Explicit grouping wins.** Request carries `x-spool-run-id: <id>` →
+1. **Explicit grouping wins.** Request carries `x-meterbility-run-id: <id>` →
    use it. Caller is opting in to authoritative grouping.
 2. **Conversation-seed match within window.** Compute
    `seed = sha256(model + system_prompt + first_user_message)`. Look up
@@ -950,8 +950,8 @@ when full.
 ### 14.3 Known limits
 
 - Two parallel agents started with the same prompt within 30 minutes will
-  merge into one Run. Mitigation: pass `x-spool-run-id` header per process
-  (the `spool run` wrapper could do this automatically — punted to future
+  merge into one Run. Mitigation: pass `x-meterbility-run-id` header per process
+  (the `meter run` wrapper could do this automatically — punted to future
   work).
 - A user resuming a long-paused conversation after the window expires
   starts a new Run. This is probably correct (the conversation logically
@@ -979,11 +979,11 @@ escape hatch.
 ### 15.1 CLI
 
 ```bash
-spool runs close <run-id>                                  # default: status=ok
-spool runs close <run-id> --status abandoned               # honest about failures
-spool runs close --all --source proxy                      # bulk-close every proxy run
-spool runs close --all --source proxy --older-than 60      # only those >60min old
-spool runs close --all --source proxy --dry-run            # preview without writing
+meter runs close <run-id>                                  # default: status=ok
+meter runs close <run-id> --status abandoned               # honest about failures
+meter runs close --all --source proxy                      # bulk-close every proxy run
+meter runs close --all --source proxy --older-than 60      # only those >60min old
+meter runs close --all --source proxy --dry-run            # preview without writing
 ```
 
 Refuses to act on already-sealed runs (with a friendly message).
@@ -1045,9 +1045,9 @@ now (v0.2 milestone):
 ### Shipped beyond original SPEC
 - **Proxy capture** (Anthropic + OpenAI, streaming + non-streaming) — not
   in the original SPEC at all. Major adoption-friction reduction.
-- **`spool run -- <command>`** wrapper — auto-injects env vars.
-- **`spool watch`**, **`spool open`**, **`spool config`**, **`spool runs
-  close`**, **`spool doctor --json`** — terminal QoL improvements.
+- **`meter run -- <command>`** wrapper — auto-injects env vars.
+- **`meter watch`**, **`meter open`**, **`meter config`**, **`meter runs
+  close`**, **`meter doctor --json`** — terminal QoL improvements.
 - **Multi-step fork continuation** (`--continue simulate|live`) — full
   agent loop replay with cached or live tool execution.
 - **Anthropic 5m vs 1h cache pricing split** — caught a ~30% under-charge
@@ -1055,7 +1055,7 @@ now (v0.2 milestone):
 - **Settings table** + UI page — shared config between CLI and web.
 - **Cerulean Design System** — the original SPEC didn't specify a visual
   language at all. v0.2 has one and it's documented.
-- **Resolved-context viewer** — both CLI (`spool inspect --show context`)
+- **Resolved-context viewer** — both CLI (`meter inspect --show context`)
   and web (`/contexts/:id`). Walks the manifest, fetches blobs, renders
   the actual conversation.
 
@@ -1077,7 +1077,7 @@ now (v0.2 milestone):
 - Enterprise tier (SSO, on-prem, audit logs).
 - Auto-seal sweeper for `in_progress` proxy runs (§15.4).
 - Conversation-continuity grouping refinements (per-process attribution
-  via `x-spool-run-id` header in `spool run`).
+  via `x-meterbility-run-id` header in `meter run`).
 
 ---
 
@@ -1113,13 +1113,13 @@ revisit something.
   it became clear that "I just want to see what my langchain agent is
   doing" was the dominant non-Claude-Code ask.
 - **Direct SQLite from Python, not JSONL emit-and-ingest.** Same
-  liveness as the TS SDK — Python runs show up in `spool list`/`spool web`
+  liveness as the TS SDK — Python runs show up in `meter list`/`meter web`
   immediately. Cost: schema duplication (Python re-implements the DDL).
   Mitigation: idempotent `IF NOT EXISTS` everywhere, and a verbatim copy
   with comments pointing back to the TS source of truth.
-- **Stdlib-only Python core.** `pip install spool-agent` should work in a
+- **Stdlib-only Python core.** `pip install meterbility-agent` should work in a
   venv with no compile step. The Anthropic helper imports `anthropic`
-  lazily; `pip install 'spool-agent[anthropic]'` opts in.
+  lazily; `pip install 'meterbility-agent[anthropic]'` opts in.
 
 ### Proxy
 - **Multi-provider day one.** Adopting one and deferring the other would
@@ -1132,7 +1132,7 @@ revisit something.
 - **Conversation-continuity grouping over PID/process attribution.**
   PIDs aren't visible from the proxy's TCP perspective. Conversation seed
   is the most reliable signal we have. Acknowledge limits explicitly
-  (§14.3), provide explicit override (`x-spool-run-id`) for users who
+  (§14.3), provide explicit override (`x-meterbility-run-id`) for users who
   need precision.
 - **Fire-and-forget capture.** Persist work happens in
   `void persistCapture(...)` after the response returns to the client.
@@ -1203,9 +1203,9 @@ revisit something.
 - **Hook mode.** Capture by reading runtime-published session logs from
   disk (Claude Code, Codex, Cursor).
 - **SDK mode.** Capture by wrapping model and tool calls at instrumentation
-  points (`@spool-ai/agent`, `spool-agent`).
+  points (`@meterbility/agent`, `meterbility-agent`).
 - **Proxy mode.** Capture by intercepting HTTP requests to LLM provider
-  APIs (`spool proxy`, `spool run`).
+  APIs (`meter proxy`, `meter run`).
 - **Source runtime.** The capture origin: `claude-code | codex-cli | cursor
   | sdk-ts | sdk-py | proxy | fork`.
 - **Sealing.** Manually transitioning a Run from `in_progress` to a

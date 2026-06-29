@@ -4,16 +4,16 @@ import pc from "picocolors";
 import {
   discoverSessions,
   ingestSession,
-} from "@spool-ai/claude-code-adapter";
+} from "@meterbility/claude-code-adapter";
 import {
   discoverCodexSessions,
   ingestCodexSession,
-} from "@spool-ai/codex-cli-adapter";
+} from "@meterbility/codex-cli-adapter";
 import {
   defaultGlobalDbPath,
   discoverCursorWorkspaces,
   ingestCursorGlobal,
-} from "@spool-ai/cursor-adapter";
+} from "@meterbility/cursor-adapter";
 import { openStore } from "../util.ts";
 
 export function registerIngestCommand(program: Command): void {
@@ -198,7 +198,7 @@ export function registerIngestCommand(program: Command): void {
 
   ingest
     .command("discover")
-    .description("List Claude Code sessions visible to Spool, newest first")
+    .description("List Claude Code sessions visible to Meterbility, newest first")
     .option("--cwd <dir>", "Restrict to one project")
     .action(async (opts: { cwd?: string }) => {
       const sessions = await discoverSessions({ cwd: opts.cwd });

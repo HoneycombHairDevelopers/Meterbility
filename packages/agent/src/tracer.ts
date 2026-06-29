@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { Store } from "@spool-ai/collector";
+import { Store } from "@meterbility/collector";
 import {
   insertRun,
   setRunStatus,
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import { clearProbe, type Run } from "@spool-ai/shared";
-import { SpoolStep } from "./step.ts";
+} from "@meterbility/collector";
+import { clearProbe, type Run } from "@meterbility/shared";
+import { MeterbilityStep } from "./step.ts";
 import type { StartStepOptions, TracerOptions } from "./types.ts";
 import { DEFAULT_PROBE_RUNTIME, type ProbeRuntime } from "./probe.ts";
 
@@ -17,7 +17,7 @@ import { DEFAULT_PROBE_RUNTIME, type ProbeRuntime } from "./probe.ts";
  *
  * Lifecycle:
  *
- *   const tracer = new SpoolTracer({ project: "my-app", agent: "support" });
+ *   const tracer = new MeterbilityTracer({ project: "my-app", agent: "support" });
  *   const step = tracer.startStep({ model: "claude-opus-4-7", history });
  *   // ...call model, record outcome, record tokens...
  *   await step.end();
@@ -27,7 +27,7 @@ import { DEFAULT_PROBE_RUNTIME, type ProbeRuntime } from "./probe.ts";
  * block the agent's hot path — and persists asynchronously via promises
  * returned from step.end().
  */
-export class SpoolTracer {
+export class MeterbilityTracer {
   readonly run_id: string;
   readonly project_id: string;
   readonly agent_id: string;
@@ -52,7 +52,7 @@ export class SpoolTracer {
   private status: "in_progress" | "ok" | "error" | "abandoned" = "in_progress";
 
   constructor(opts: TracerOptions) {
-    if (opts.spoolHome) process.env.SPOOL_HOME = opts.spoolHome;
+    if (opts.meterHome) process.env.METERBILITY_HOME = opts.meterHome;
     this.store = Store.open();
     const project = upsertProjectByCwd(
       this.store,
@@ -92,12 +92,12 @@ export class SpoolTracer {
   }
 
   /**
-   * Begin one Step. Returns a {@link SpoolStep} the caller fills in
+   * Begin one Step. Returns a {@link MeterbilityStep} the caller fills in
    * imperatively: recordDecision, recordOutcome, recordTokens, end.
    */
-  startStep(opts: StartStepOptions): SpoolStep {
+  startStep(opts: StartStepOptions): MeterbilityStep {
     const sequence = this.stepCount;
-    const step = new SpoolStep({
+    const step = new MeterbilityStep({
       tracer: this,
       sequence,
       parent_step_id: this.prevStepId,

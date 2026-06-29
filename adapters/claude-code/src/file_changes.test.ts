@@ -7,7 +7,7 @@ import {
   Store,
   listFileChanges,
   listSteps,
-} from "@spool-ai/collector";
+} from "@meterbility/collector";
 import { ingestSession } from "./ingest.ts";
 import { applyEdit, parseRmCommand } from "./file_changes.ts";
 import { diffLines } from "./diff.ts";
@@ -25,13 +25,13 @@ import { diffLines } from "./diff.ts";
  */
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-fc-adapter-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-fc-adapter-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 function writeSession(records: object[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-fc-session-"));
+  const dir = mkdtempSync(join(tmpdir(), "meter-fc-session-"));
   const path = join(dir, "session.jsonl");
   writeFileSync(
     path,
@@ -52,7 +52,7 @@ function memoryBackupReader(map: Record<string, string>) {
 
 test("applyEdit substitutes the first match", () => {
   const before = "hello world\nhello world\n";
-  assert.equal(applyEdit(before, "world", "spool"), "hello spool\nhello world\n");
+  assert.equal(applyEdit(before, "world", "meter"), "hello meter\nhello world\n");
 });
 
 test("applyEdit returns undefined when old_string is absent", () => {

@@ -23,11 +23,11 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import type { Run, Step } from "@spool-ai/shared";
+} from "@meterbility/collector";
+import type { Run, Step } from "@meterbility/shared";
 
 export interface ServerTestCtx {
-  /** Test-scoped SPOOL_HOME directory (mkdtemp). */
+  /** Test-scoped METERBILITY_HOME directory (mkdtemp). */
   home: string;
   /** Open Store connection — caller responsible for store.close() in finally. */
   store: Store;
@@ -36,14 +36,14 @@ export interface ServerTestCtx {
 }
 
 /**
- * Open a fresh in-temp-dir Store with SPOOL_HOME set. Pair with
+ * Open a fresh in-temp-dir Store with METERBILITY_HOME set. Pair with
  * `cleanup()` in a `try`/`finally`. The Store is left open — tests
  * call `store.close()` themselves so they can introspect after.
  */
 export function freshCtx(): ServerTestCtx {
-  const home = mkdtempSync(join(tmpdir(), "spool-web-exh-"));
-  process.env.SPOOL_HOME = home;
-  const store = Store.open({ path: join(home, "spool.db") });
+  const home = mkdtempSync(join(tmpdir(), "meter-web-exh-"));
+  process.env.METERBILITY_HOME = home;
+  const store = Store.open({ path: join(home, "meterbility.db") });
   return {
     home,
     store,

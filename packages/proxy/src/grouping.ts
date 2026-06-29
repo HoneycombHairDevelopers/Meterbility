@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sha256 } from "@spool-ai/shared";
+import { sha256 } from "@meterbility/shared";
 import type { ParsedRequest } from "./types.ts";
 
 /**
@@ -11,8 +11,8 @@ import type { ParsedRequest } from "./types.ts";
  * Heuristic (matches how the Claude Code JSONL adapter groups sessions):
  *
  *   1. **Explicit grouping wins.** If the client sent
- *      `x-spool-run-id: <id>` (e.g. via SPOOL_RUN_ID injection from
- *      `spool run`), use it. This is the cleanest signal and skips the
+ *      `x-meterbility-run-id: <id>` (e.g. via METERBILITY_RUN_ID injection from
+ *      `meter run`), use it. This is the cleanest signal and skips the
  *      rest of the heuristic.
  *
  *   2. **Conversation seed.** Hash the first user message + the system

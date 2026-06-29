@@ -2,8 +2,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { availableParallelism } from "node:os";
 import { join, relative, sep } from "node:path";
-import type { BaselineTree, ManifestEntry } from "@spool-ai/shared";
-import { IgnoreMatcher } from "@spool-ai/shared";
+import type { BaselineTree, ManifestEntry } from "@meterbility/shared";
+import { IgnoreMatcher } from "@meterbility/shared";
 import {
   findBaselineByManifest,
   insertBaselineTree,
@@ -14,8 +14,8 @@ import type { Store } from "./store.ts";
 /**
  * v0.3 Track A — lazy baseline tree capture (SPEC §3.5).
  *
- * Walks a run's cwd respecting `.spoolignore` defaults + the user's
- * `.spoolignore` + `.gitignore`, hashes every file's bytes through the
+ * Walks a run's cwd respecting `.meterbilityignore` defaults + the user's
+ * `.meterbilityignore` + `.gitignore`, hashes every file's bytes through the
  * blob store (binary-safe per PR 1), serializes a sorted manifest, and
  * registers a `baseline_tree` row.
  *
@@ -64,7 +64,7 @@ export interface CaptureBaselineResult {
 export interface CaptureBaselineOptions {
   /**
    * Pre-built ignore matcher. If omitted, the function loads
-   * `<cwd>/.spoolignore` + `<cwd>/.gitignore` on top of the
+   * `<cwd>/.meterbilityignore` + `<cwd>/.gitignore` on top of the
    * shipped defaults.
    */
   matcher?: IgnoreMatcher;
@@ -221,9 +221,9 @@ function toRepoRelative(rootCwd: string, abs: string): string {
 }
 
 async function buildDefaultMatcher(cwd: string): Promise<IgnoreMatcher> {
-  const userSpool = await readLines(join(cwd, ".spoolignore"));
+  const userMeterbility = await readLines(join(cwd, ".meterbilityignore"));
   const gitignore = await readLines(join(cwd, ".gitignore"));
-  return IgnoreMatcher.fromDefaultsPlus(userSpool, gitignore);
+  return IgnoreMatcher.fromDefaultsPlus(userMeterbility, gitignore);
 }
 
 async function readLines(path: string): Promise<string[] | undefined> {
@@ -240,7 +240,7 @@ function readGitAdvisory(cwd: string): {
   git_dirty: boolean;
 } {
   // Both calls are best-effort. If `git` isn't on PATH, or cwd isn't a
-  // git repo, both return undefined / false. Spool never depends on
+  // git repo, both return undefined / false. Meterbility never depends on
   // git — this is advisory metadata only (SPEC §3.5).
   const head = spawnSync("git", ["rev-parse", "HEAD"], {
     cwd,

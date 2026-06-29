@@ -1,19 +1,19 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { resolveSetting } from "@spool-ai/collector";
+import { resolveSetting } from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 /**
- * Resolve the Postgres URL: --url flag > SPOOL_DB_URL env > settings table.
+ * Resolve the Postgres URL: --url flag > METERBILITY_DB_URL env > settings table.
  * Returns undefined if nothing is configured (PostgresStore.open will then
  * throw a clear error).
  */
 function resolvePostgresUrl(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   flag?: string,
 ): string | undefined {
   if (flag) return flag;
-  return resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+  return resolveSetting(store, "postgres.url", "METERBILITY_DB_URL");
 }
 
 export function registerDbCommand(program: Command): void {
@@ -24,14 +24,14 @@ export function registerDbCommand(program: Command): void {
   db
     .command("postgres-init")
     .description(
-      "Connect to a Postgres URL and ensure Spool's schema is present.",
+      "Connect to a Postgres URL and ensure Meterbility's schema is present.",
     )
     .option(
       "--url <conn>",
-      "Postgres connection URL (defaults to SPOOL_DB_URL or postgres.url setting)",
+      "Postgres connection URL (defaults to METERBILITY_DB_URL or postgres.url setting)",
     )
     .action(async (opts: { url?: string }) => {
-      const { PostgresStore } = await import("@spool-ai/store-postgres");
+      const { PostgresStore } = await import("@meterbility/store-postgres");
       const sqlite = openStore();
       let store: Awaited<ReturnType<typeof PostgresStore.open>>;
       try {
@@ -60,7 +60,7 @@ export function registerDbCommand(program: Command): void {
     )
     .option(
       "--url <conn>",
-      "Postgres URL (defaults to SPOOL_DB_URL or postgres.url setting)",
+      "Postgres URL (defaults to METERBILITY_DB_URL or postgres.url setting)",
     )
     .option(
       "--limit <n>",
@@ -69,7 +69,7 @@ export function registerDbCommand(program: Command): void {
     )
     .action(async (opts: { url?: string; limit?: number }) => {
       const { PostgresStore, syncSqliteToPostgres } = await import(
-        "@spool-ai/store-postgres"
+        "@meterbility/store-postgres"
       );
       const sqlite = openStore();
       const postgres = await PostgresStore.open({

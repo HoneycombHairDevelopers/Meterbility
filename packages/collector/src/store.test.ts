@@ -7,9 +7,9 @@ import { Store } from "./store.ts";
 import { upsertProjectByCwd, upsertAgent, listRuns } from "./queries.ts";
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-test-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-test-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 test("store opens, schema applies, project upsert idempotent", () => {
@@ -38,5 +38,5 @@ test("blob store redacts secrets before persist", async () => {
   const hash = await store.blobs.putString(`prefix ${secret} suffix`);
   const stored = await store.blobs.getString(hash);
   assert.ok(!stored.includes(secret));
-  assert.match(stored, /«spool:redacted:anthropic-key»/);
+  assert.match(stored, /«meter:redacted:anthropic-key»/);
 });

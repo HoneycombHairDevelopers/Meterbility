@@ -1,4 +1,4 @@
-# Contributing to Spool
+# Contributing to Meterbility
 
 Thanks for the interest. This doc covers what you need to know to get a
 working dev environment, what we expect in a PR, and how the open-core
@@ -12,8 +12,8 @@ issue or PR.
 ## TL;DR
 
 ```bash
-git clone https://github.com/HoneycombHairDevelopers/spool
-cd spool
+git clone https://github.com/HoneycombHairDevelopers/Meterbility
+cd Meterbility
 nvm use && npm install            # Node 20.6+ via .nvmrc
 npm test                          # TypeScript suite (~250 tests)
 cd packages/agent-py && python3 -m unittest discover tests   # Python suite (~50 tests)
@@ -30,7 +30,7 @@ needing a native rebuild on first install — give it 60 seconds.
 
 - **Node 20.6+** — pinned in `.nvmrc`. The repo uses `node --import tsx/esm`,
   which needs the `--import` flag added in 20.6.
-- **Python 3.9+** — for the `spool-agent` SDK. Stdlib only at runtime.
+- **Python 3.9+** — for the `meterbility-agent` SDK. Stdlib only at runtime.
 - **A C toolchain** — `better-sqlite3` builds a native module on
   install. macOS ships one; on Linux you'll need `build-essential`.
 
@@ -77,19 +77,19 @@ See the [README §Repo layout](README.md#repo-layout). The mental model:
 - `packages/shared/` — types + small pure helpers everyone depends on.
 - `packages/spec/` — trace format + pricing tables. No runtime logic.
 - `packages/collector/` — SQLite + blob store. The data layer.
-- `adapters/*/` — turn a vendor's session format into Spool Steps.
+- `adapters/*/` — turn a vendor's session format into Meterbility Steps.
 - `packages/agent/` and `packages/agent-py/` — SDKs for instrumenting
   custom agents.
 - `packages/proxy/` — HTTP proxy that captures Anthropic/OpenAI traffic.
 - `packages/server/` — replay engine, fork engine, web UI (Hono),
   live inspector, regression suite, Live Probe panel.
-- `packages/cli/` — `spool` command surface.
+- `packages/cli/` — `meter` command surface.
 - `packages/store-postgres/` — optional Postgres backend.
 - `packages/web/` — placeholder for a future SPA.
 - `ee/` — Enterprise Edition modules. Empty today. **Different
   license** (ELv2) than the rest of the repo.
 
-Workspace deps are wired through npm workspaces — `@spool-ai/*` packages
+Workspace deps are wired through npm workspaces — `@meterbility/*` packages
 import each other by name without a build step.
 
 ---
@@ -119,21 +119,21 @@ cd packages/agent-py
 python3 -m unittest discover -s tests -v
 ```
 
-Each test isolates `$SPOOL_HOME` to a tempdir, so the suite never
-touches the real `~/.spool`. The TS and Python probe tests share a
+Each test isolates `$METERBILITY_HOME` to a tempdir, so the suite never
+touches the real `~/.meterbility`. The TS and Python probe tests share a
 file format — if you change either, run both suites.
 
 ### Cross-language smoke
 
 If you change `packages/shared/src/probe.ts` OR
-`packages/agent-py/src/spool_agent/probe.py`, run a manual interop
+`packages/agent-py/src/meterbility_agent/probe.py`, run a manual interop
 check:
 
 ```bash
-SMOKE=$(mktemp -d) SPOOL_HOME=$SMOKE
+SMOKE=$(mktemp -d) METERBILITY_HOME=$SMOKE
 node --import tsx/esm -e 'import { requestPause, setInject } from "./packages/shared/src/probe.ts"; requestPause("run_x"); setInject("run_x", "from-ts");'
 cd packages/agent-py
-python3 -c 'import sys; sys.path.insert(0, "src"); from spool_agent import read_state; print(read_state("run_x"))'
+python3 -c 'import sys; sys.path.insert(0, "src"); from meterbility_agent import read_state; print(read_state("run_x"))'
 rm -rf "$SMOKE"
 ```
 
@@ -189,14 +189,14 @@ If you need a dep that doesn't fit, open an issue first.
 
 1. Test diff (matches the source diff?)
 2. Surface change (any new export? backwards-incompatible?)
-3. Cross-package coupling (new `@spool-ai/*` import that creates a cycle?)
+3. Cross-package coupling (new `@meterbility/*` import that creates a cycle?)
 4. The actual logic
 
 ---
 
 ## Open-core licensing
 
-Spool is open source under MIT for everything outside `/ee`. The `/ee`
+Meterbility is open source under MIT for everything outside `/ee`. The `/ee`
 directory is reserved for Enterprise Edition modules (multi-tenant
 fleet orchestration, SSO, RBAC, audit logs, long-retention) and is
 licensed under the **Elastic License 2.0** — see [`ee/LICENSE`](ee/LICENSE).

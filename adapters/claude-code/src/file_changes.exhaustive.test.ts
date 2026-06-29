@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listFileChanges, listSteps } from "@spool-ai/collector";
+import { Store, listFileChanges, listSteps } from "@meterbility/collector";
 import { ingestSession } from "./ingest.ts";
 
 /**
@@ -20,7 +20,7 @@ import { ingestSession } from "./ingest.ts";
  *   - shared session builder + in-memory backup reader (no real disk)
  *   - `ingestSession` end-to-end then read back the file_change rows
  *
- * Every test starts with `freshStore()` so SPOOL_HOME doesn't leak
+ * Every test starts with `freshStore()` so METERBILITY_HOME doesn't leak
  * across tests. The session writer puts the JSONL in a tmpdir that
  * each test owns — no `cleanup()` needed because the OS reaps tmp
  * eventually and the Store is closed in the finally.
@@ -29,13 +29,13 @@ import { ingestSession } from "./ingest.ts";
 // ─── Fixture builders ──────────────────────────────────────────────
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-fc-exh-adapter-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-fc-exh-adapter-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 function writeSession(records: object[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-fc-exh-session-"));
+  const dir = mkdtempSync(join(tmpdir(), "meter-fc-exh-session-"));
   const path = join(dir, "session.jsonl");
   writeFileSync(
     path,

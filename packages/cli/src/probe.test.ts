@@ -5,26 +5,26 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { Store, insertRun, upsertAgent, upsertProjectByCwd } from "@spool-ai/collector";
+import { Store, insertRun, upsertAgent, upsertProjectByCwd } from "@meterbility/collector";
 import {
   probeFilePath,
   readState,
   requestPause,
   setInject,
-} from "@spool-ai/shared";
-import type { Run } from "@spool-ai/shared";
+} from "@meterbility/shared";
+import type { Run } from "@meterbility/shared";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const CLI_ENTRY = resolve(TEST_DIR, "index.ts");
 const REPO_ROOT = resolve(TEST_DIR, "../../..");
 
 /**
- * `spool probe` CLI tests — Turn 8 chunk 4.
+ * `meter probe` CLI tests — Turn 8 chunk 4.
  *
  * Strategy mirrors `files.test.ts`: shell out to the actual CLI binary
  * via tsx so the test exercises Commander registration, subcommand
  * routing, argument parsing, and the probe protocol end-to-end. The
- * store + probe directory live under a per-test SPOOL_HOME so nothing
+ * store + probe directory live under a per-test METERBILITY_HOME so nothing
  * escapes.
  */
 
@@ -34,13 +34,13 @@ interface Fixture {
 }
 
 /**
- * Set up: fresh $SPOOL_HOME, insert one Run row so getRun resolves,
+ * Set up: fresh $METERBILITY_HOME, insert one Run row so getRun resolves,
  * return the resolved run id.
  */
 function setupFixture(): Fixture {
-  const home = mkdtempSync(join(tmpdir(), "spool-probe-cli-"));
-  process.env.SPOOL_HOME = home;
-  const store = Store.open({ path: join(home, "spool.db") });
+  const home = mkdtempSync(join(tmpdir(), "meter-probe-cli-"));
+  process.env.METERBILITY_HOME = home;
+  const store = Store.open({ path: join(home, "meterbility.db") });
   const project = upsertProjectByCwd(store, "/tmp/probe-cli", "probe-cli");
   const agent = upsertAgent(store, project.project_id, "tester");
   const runId = "run_11111111-2222-3333-4444-555555555555";
@@ -76,7 +76,7 @@ function runCli(
     {
       cwd: REPO_ROOT,
       encoding: "utf-8",
-      env: { ...process.env, SPOOL_HOME: fx.home, NO_COLOR: "1" },
+      env: { ...process.env, METERBILITY_HOME: fx.home, NO_COLOR: "1" },
       input: stdinInput,
     },
   );

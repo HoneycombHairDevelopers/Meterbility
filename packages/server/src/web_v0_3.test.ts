@@ -11,8 +11,8 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import type { Run, Step } from "@spool-ai/shared";
+} from "@meterbility/collector";
+import type { Run, Step } from "@meterbility/shared";
 import { buildApp } from "./web.ts";
 
 /**
@@ -33,9 +33,9 @@ import { buildApp } from "./web.ts";
  */
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-web-v03-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-web-v03-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 /** Build a project + agent + run + N steps so the routes have data. */
@@ -322,7 +322,7 @@ test("/runs/:id stamps data-run-id, exposes #steps-anchor, and renders the Live 
     // Add one FileChange so the Files tab + run-level "Files changed"
     // section both render — gives us a more complete check of the
     // wiring than the bare run page.
-    const { listSteps } = await import("@spool-ai/collector");
+    const { listSteps } = await import("@meterbility/collector");
     const step = listSteps(store, runId)[0]!;
     insertFileChange(store, {
       run_id: runId, step_id: step.step_id, sequence: 0,
@@ -354,7 +354,7 @@ test("/runs/:id stamps data-run-id, exposes #steps-anchor, and renders the Live 
     // Live SSE wiring functions are present (so the page can react
     // when the user flips the toggle).
     assert.match(html, /initLiveRunUpdates/);
-    assert.match(html, /spool:live-state/);
+    assert.match(html, /meter:live-state/);
   } finally {
     store.close();
   }

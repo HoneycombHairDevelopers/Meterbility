@@ -1,5 +1,5 @@
 {
-  "name": "@spool-ai/server",
+  "name": "@meterbility/server",
   "version": "0.3.1",
   "license": "MIT",
   "type": "module",
@@ -13,25 +13,25 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
     "@hono/node-server": "^1.13.0",
-    "@spool-ai/collector": "^0.3.0",
-    "@spool-ai/shared": "^0.3.0",
-    "@spool-ai/spec": "^0.3.0",
+    "@meterbility/collector": "^0.3.0",
+    "@meterbility/shared": "^0.3.0",
+    "@meterbility/spec": "^0.3.0",
     "hono": "^4.6.0",
     "shiki": "^1.29.2",
-    "@spool-ai/claude-code-adapter": "^0.3.0",
-    "@spool-ai/codex-cli-adapter": "^0.3.0",
-    "@spool-ai/cursor-adapter": "^0.3.0",
-    "@spool-ai/store-postgres": "^0.3.0"
+    "@meterbility/claude-code-adapter": "^0.3.0",
+    "@meterbility/codex-cli-adapter": "^0.3.0",
+    "@meterbility/cursor-adapter": "^0.3.0",
+    "@meterbility/store-postgres": "^0.3.0"
   },
-  "description": "Spool web inspector: Hono server, fork/replay engine, live fleet view",
+  "description": "Meterbility web inspector: Hono server, fork/replay engine, live fleet view",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HoneycombHairDevelopers/Spool.git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Meterbility.git",
     "directory": "packages/server"
   },
-  "homepage": "https://github.com/HoneycombHairDevelopers/Spool#readme",
+  "homepage": "https://github.com/HoneycombHairDevelopers/Meterbility#readme",
   "bugs": {
-    "url": "https://github.com/HoneycombHairDevelopers/Spool/issues"
+    "url": "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
   },
   "engines": {
     "node": ">=20.6"

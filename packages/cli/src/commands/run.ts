@@ -2,18 +2,18 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { Command } from "commander";
 import pc from "picocolors";
-import { startProxy } from "@spool-ai/proxy";
+import { startProxy } from "@meterbility/proxy";
 
 /**
- * `spool run -- <command...>` — one-command zero-instrumentation capture.
+ * `meter run -- <command...>` — one-command zero-instrumentation capture.
  *
  * Spawns a short-lived proxy on a free port, sets ANTHROPIC_BASE_URL +
  * OPENAI_BASE_URL in the child process's env, runs the user command,
  * and tears the proxy down on exit. Useful for one-shot scripts:
  *
- *   $ spool run -- python myagent.py
- *   $ spool run --project my-app -- node agent.js
- *   $ spool run -- npx tsx mything.ts
+ *   $ meter run -- python myagent.py
+ *   $ meter run --project my-app -- node agent.js
+ *   $ meter run -- npx tsx mything.ts
  *
  * Anything after `--` is the user command + its args. stdin/stdout/
  * stderr are inherited from the parent so the child looks unchanged.
@@ -24,7 +24,7 @@ import { startProxy } from "@spool-ai/proxy";
 export function registerRunCommand(program: Command): void {
   program
     .command("run")
-    .description("Run a command with the Spool proxy auto-wired (zero code change capture)")
+    .description("Run a command with the Meterbility proxy auto-wired (zero code change capture)")
     .allowUnknownOption(true)
     .option("--port <n>", "Pin the proxy to a port (default: random free port)", (v) => parseInt(v, 10))
     .option(
@@ -71,7 +71,7 @@ export function registerRunCommand(program: Command): void {
       const userArgs = collectUserArgs(cmd);
       if (userArgs.length === 0) {
         console.error(
-          pc.red("spool run: missing command. Usage: spool run -- <command> [args]"),
+          pc.red("meter run: missing command. Usage: meter run -- <command> [args]"),
         );
         process.exit(2);
       }
@@ -87,7 +87,7 @@ export function registerRunCommand(program: Command): void {
           ...(opts.anthropicTarget ? { anthropic: opts.anthropicTarget } : {}),
           ...(opts.openaiTarget ? { openai: opts.openaiTarget } : {}),
         },
-        logger: opts.quiet ? () => {} : (line) => process.stderr.write(pc.dim(`[spool] ${line}\n`)),
+        logger: opts.quiet ? () => {} : (line) => process.stderr.write(pc.dim(`[meter] ${line}\n`)),
       });
 
       const childEnv = { ...process.env };
@@ -104,7 +104,7 @@ export function registerRunCommand(program: Command): void {
       if (!opts.quiet) {
         process.stderr.write(
           pc.dim(
-            `[spool] proxy ${handle.url} → spawning: ${userArgs.join(" ")}\n`,
+            `[meter] proxy ${handle.url} → spawning: ${userArgs.join(" ")}\n`,
           ),
         );
       }
@@ -143,7 +143,7 @@ export function registerRunCommand(program: Command): void {
           if (!opts.quiet) {
             process.stderr.write(
               pc.dim(
-                `[spool] child exited ${code ?? `(signal ${signal})`} — proxy stopping\n`,
+                `[meter] child exited ${code ?? `(signal ${signal})`} — proxy stopping\n`,
               ),
             );
           }
@@ -151,7 +151,7 @@ export function registerRunCommand(program: Command): void {
         }, 250);
       });
       child.on("error", (err) => {
-        process.stderr.write(pc.red(`spool run: failed to spawn child: ${err.message}\n`));
+        process.stderr.write(pc.red(`meter run: failed to spawn child: ${err.message}\n`));
         void shutdown(127);
       });
     });

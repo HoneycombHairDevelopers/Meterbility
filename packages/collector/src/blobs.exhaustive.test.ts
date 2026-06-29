@@ -12,7 +12,7 @@ import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import fc from "fast-check";
-import { blobPath } from "@spool-ai/shared";
+import { blobPath } from "@meterbility/shared";
 import { Store } from "./store.ts";
 import { isProbablyText } from "./blobs.ts";
 
@@ -36,9 +36,9 @@ import { isProbablyText } from "./blobs.ts";
 // ─── Fixtures ──────────────────────────────────────────────────────
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-blob-exh-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-blob-exh-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 /** Read all redaction_log rows for a given blob hash. */
@@ -68,7 +68,7 @@ test("matrix: utf-8 × skipRedact=false → secret redacted", async () => {
     const hash = await store.blobs.putString(text);
     const stored = await store.blobs.getString(hash);
     assert.ok(!stored.includes(ANTHROPIC_SECRET), "raw secret must not survive");
-    assert.match(stored, /«spool:redacted:anthropic-key»/);
+    assert.match(stored, /«meter:redacted:anthropic-key»/);
     const rows = redactionRows(store, hash);
     assert.equal(rows.length, 1);
     assert.equal(rows[0]!.rule, "anthropic-key");
@@ -522,7 +522,7 @@ test("round-trip: putString → getString for text-with-secret returns REDACTED 
     const hash = await store.blobs.putString(text);
     const stored = await store.blobs.getString(hash);
     assert.notEqual(stored, text);
-    assert.ok(stored.includes("«spool:redacted:anthropic-key»"));
+    assert.ok(stored.includes("«meter:redacted:anthropic-key»"));
   } finally {
     store.close();
   }
@@ -641,9 +641,9 @@ test(
   "stress: 4 workers × 50 putBuffer(sameBytes) → identical hash, exactly one file on disk",
   { timeout: 30_000 },
   async () => {
-    const dir = mkdtempSync(join(tmpdir(), "spool-blob-stress-"));
-    process.env.SPOOL_HOME = dir;
-    const store = Store.open({ path: join(dir, "spool.db") });
+    const dir = mkdtempSync(join(tmpdir(), "meter-blob-stress-"));
+    process.env.METERBILITY_HOME = dir;
+    const store = Store.open({ path: join(dir, "meterbility.db") });
     try {
       const N_WORKERS = 4;
       const ITERATIONS = 50;

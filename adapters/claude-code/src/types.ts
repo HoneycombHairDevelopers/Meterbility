@@ -1,5 +1,5 @@
 /**
- * Subset of Claude Code's JSONL session record schema that Spool depends
+ * Subset of Claude Code's JSONL session record schema that Meterbility depends
  * on. Other fields are intentionally typed as `unknown` — we want to fail
  * loudly if the shape changes underneath us rather than silently lose
  * data.

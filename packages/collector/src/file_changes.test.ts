@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Run, Step } from "@spool-ai/shared";
+import type { Run, Step } from "@meterbility/shared";
 import { Store } from "./store.ts";
 import {
   upsertProjectByCwd,
@@ -30,9 +30,9 @@ import {
 } from "./replay.ts";
 
 function fresh(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-fc-test-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-fc-test-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 /** Build the project + agent + run + N empty steps that the tests need. */

@@ -1,5 +1,5 @@
-import type { AnnotationKind } from "@spool-ai/shared";
-import { insertAnnotation, type Store } from "@spool-ai/collector";
+import type { AnnotationKind } from "@meterbility/shared";
+import { insertAnnotation, type Store } from "@meterbility/collector";
 
 /**
  * Probe-intervention annotation emission. Single helper called by
@@ -17,7 +17,7 @@ import { insertAnnotation, type Store } from "@spool-ai/collector";
  * AFTER the FSM mutation succeeded, the FSM state is the source of
  * truth — we log + increment the counter and continue. Rolling back
  * the FSM mutation on annotation failure would be worse: the pause
- * is already persisted in `~/.spool/probe/<id>.json`, the SDK is
+ * is already persisted in `~/.meterbility/probe/<id>.json`, the SDK is
  * already blocked, and unwinding would leave the on-disk state and
  * in-memory state divergent. Annotation loss is recoverable; probe
  * desync is not.
@@ -55,7 +55,7 @@ export function recordProbeIntervention(
     });
   } catch (err) {
     // Don't let an annotation failure unwind a successful FSM mutation.
-    // Surface via the counter that `spool doctor` can read.
+    // Surface via the counter that `meter doctor` can read.
     probeAnnotationFailedCount += 1;
     // eslint-disable-next-line no-console
     console.error(

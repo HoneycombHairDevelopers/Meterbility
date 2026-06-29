@@ -1,6 +1,6 @@
-# Custom-agent SDK (`@spool-ai/agent`)
+# Custom-agent SDK (`@meterbility/agent`)
 
-Instrument any TypeScript agent so its runs land in Spool alongside Claude Code and Codex captures. Two flavors:
+Instrument any TypeScript agent so its runs land in Meterbility alongside Claude Code and Codex captures. Two flavors:
 
 1. **Imperative tracer** — full control. Best when you want to capture exactly what happened at each decision point.
 2. **`traceAnthropic` wrapper** — drop-in around the Anthropic SDK. Each `messages.create` becomes one Step.
@@ -8,12 +8,12 @@ Instrument any TypeScript agent so its runs land in Spool alongside Claude Code 
 ## Imperative tracer
 
 ```ts
-import { SpoolTracer, helpers } from "@spool-ai/agent";
+import { MeterbilityTracer, helpers } from "@meterbility/agent";
 
-const tracer = new SpoolTracer({
+const tracer = new MeterbilityTracer({
   project: "/abs/path/to/repo",       // becomes the Project
   agent: "support-bot",                // becomes the Agent within that Project
-  runTitle: "ticket-#42",              // shows in `spool list`
+  runTitle: "ticket-#42",              // shows in `meter list`
   cwd: process.cwd(),                  // optional
   gitBranch: "main",                   // optional
   tags: ["env:prod"],                  // optional
@@ -54,10 +54,10 @@ If you're already calling the Anthropic SDK and just want trace capture for free
 
 ```ts
 import Anthropic from "@anthropic-ai/sdk";
-import { SpoolTracer, traceAnthropic } from "@spool-ai/agent";
+import { MeterbilityTracer, traceAnthropic } from "@meterbility/agent";
 
 const client = new Anthropic();
-const tracer = new SpoolTracer({ project: "/repo", agent: "ops" });
+const tracer = new MeterbilityTracer({ project: "/repo", agent: "ops" });
 const create = traceAnthropic(tracer, (req) => client.messages.create(req));
 
 const resp = await create({
@@ -75,7 +75,7 @@ Errors thrown by the SDK are caught and recorded as an error-status step before 
 
 ## Where data lands
 
-By default, `~/.spool/spool.db` and `~/.spool/blobs/` (override with `SPOOL_HOME`). The same store the CLI reads — `spool list` will show your SDK runs immediately.
+By default, `~/.meterbility/meterbility.db` and `~/.meterbility/blobs/` (override with `METERBILITY_HOME`). The same store the CLI reads — `meter list` will show your SDK runs immediately.
 
 ## Multi-step agents
 

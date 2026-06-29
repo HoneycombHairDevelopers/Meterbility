@@ -2,7 +2,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
-.spool/
+.meterbility/
 data/
 .env
 .env.local
@@ -17,7 +17,7 @@ data/
 test-results/
 playwright-report/
 packages/server/src/e2e/fixture.json
-/packages/agent-py/src/spool_agent/__pycache__
+/packages/agent-py/src/meterbility_agent/__pycache__
 /packages/agent-py/tests/__pycache__
 
 # local working context

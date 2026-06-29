@@ -38,7 +38,7 @@ test("RunGrouper: different first user message starts a new run", () => {
   assert.equal(b.is_new, true);
 });
 
-test("RunGrouper: explicit x-spool-run-id wins over heuristic", () => {
+test("RunGrouper: explicit x-meterbility-run-id wins over heuristic", () => {
   const g = new RunGrouper();
   const a = g.resolve(req([{ role: "user", content: "hi" }]), "run_explicit_1", 1_000);
   const b = g.resolve(req([{ role: "user", content: "totally different" }]), "run_explicit_1", 2_000);

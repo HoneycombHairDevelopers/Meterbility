@@ -3,22 +3,22 @@ import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
-import { DEFAULT_SPOOLIGNORE } from "@spool-ai/shared";
+import { DEFAULT_METERBILITYIGNORE } from "@meterbility/shared";
 
 /**
- * `spool init` — scaffolds the per-project opt-in for v0.3 file capture
+ * `meter init` — scaffolds the per-project opt-in for v0.3 file capture
  * (SPEC §7.1 + §10.3).
  *
  * Writes two files at the chosen root (defaults to cwd):
  *
- *   1. `.spool/config.toml` — the repo-level opt-in toggle. v0.3 file
+ *   1. `.meterbility/config.toml` — the repo-level opt-in toggle. v0.3 file
  *      capture is OFF by default until the user runs this command;
  *      that's the local-first stance the spec calls out (§10.3, mirrors
  *      v0.2 §17). Without this file, FileChange rows still emit but
  *      with no blob refs, so the *fact* of an edit is recorded but the
  *      contents aren't.
  *
- *   2. `.spoolignore` — a user-editable copy of `DEFAULT_SPOOLIGNORE`,
+ *   2. `.meterbilityignore` — a user-editable copy of `DEFAULT_METERBILITYIGNORE`,
  *      pre-populated so the user can see and tweak what gets filtered.
  *
  * Idempotent: existing files are left alone unless `--force` is passed.
@@ -29,7 +29,7 @@ export function registerInitCommand(program: Command): void {
   program
     .command("init [path]")
     .description(
-      "Scaffold .spool/config.toml and .spoolignore for v0.3 file capture",
+      "Scaffold .meterbility/config.toml and .meterbilityignore for v0.3 file capture",
     )
     .option(
       "--force",
@@ -45,22 +45,22 @@ export function registerInitCommand(program: Command): void {
     ) => {
       const root = resolve(pathArg ?? process.cwd());
       if (!existsSync(root)) {
-        console.error(pc.red(`spool init: target path does not exist: ${root}`));
+        console.error(pc.red(`meter init: target path does not exist: ${root}`));
         process.exit(2);
       }
 
       // Determine what to write. Each entry has a path + the contents
       // we'd produce on a fresh write. Existing-file logic lives at
       // the writeIfNeeded boundary below.
-      const ignorePath = join(root, ".spoolignore");
-      const configDir = join(root, ".spool");
+      const ignorePath = join(root, ".meterbilityignore");
+      const configDir = join(root, ".meter");
       const configPath = join(configDir, "config.toml");
 
       mkdirSync(configDir, { recursive: true });
 
       const ignoreResult = await writeIfNeeded(
         ignorePath,
-        renderSpoolignore(),
+        renderMeterbilityignore(),
         opts.force === true,
       );
       const configResult = await writeIfNeeded(
@@ -70,8 +70,8 @@ export function registerInitCommand(program: Command): void {
       );
 
       if (!opts.quiet) {
-        printFileResult(".spoolignore", ignorePath, ignoreResult);
-        printFileResult(".spool/config.toml", configPath, configResult);
+        printFileResult(".meterbilityignore", ignorePath, ignoreResult);
+        printFileResult(".meterbility/config.toml", configPath, configResult);
       }
 
       // Summary footer. Tells the user what to do next; the call-to-
@@ -80,20 +80,20 @@ export function registerInitCommand(program: Command): void {
         ignoreResult === "created" && configResult === "created";
       if (allCreated) {
         console.log(
-          pc.bold(pc.green("\nspool init: scaffolded")) +
+          pc.bold(pc.green("\nmeter init: scaffolded")) +
             pc.dim(" — v0.3 file capture is now on for this project."),
         );
       } else {
         console.log(
           pc.dim(
-            "\nspool init: complete. Re-run with --force to regenerate existing files.",
+            "\nmeter init: complete. Re-run with --force to regenerate existing files.",
           ),
         );
       }
       console.log(
         pc.dim(
-          "  edit .spoolignore to tune what gets captured\n" +
-            "  see `spool files <run-id>` after your next Claude Code session",
+          "  edit .meterbilityignore to tune what gets captured\n" +
+            "  see `meter files <run-id>` after your next Claude Code session",
         ),
       );
     });
@@ -123,15 +123,15 @@ function printFileResult(label: string, path: string, result: WriteResult): void
 }
 
 /**
- * Render the default `.spoolignore`. We ship one line per pattern,
- * grouped by the same sections used in `DEFAULT_SPOOLIGNORE`, so the
+ * Render the default `.meterbilityignore`. We ship one line per pattern,
+ * grouped by the same sections used in `DEFAULT_METERBILITYIGNORE`, so the
  * file is editable by humans. Comments explain each section so users
  * understand what they're inheriting.
  */
-function renderSpoolignore(): string {
-  return `# .spoolignore — paths Spool excludes from file capture (v0.3+).
+function renderMeterbilityignore(): string {
+  return `# .meterbilityignore — paths Meterbility excludes from file capture (v0.3+).
 # Same syntax subset as .gitignore. First match wins; no negation in v0.3.
-# Generated by \`spool init\`. Edit freely.
+# Generated by \`meter init\`. Edit freely.
 
 # Build artifacts
 node_modules/
@@ -173,12 +173,12 @@ credentials.json
 }
 
 /**
- * The opt-in `.spool/config.toml`. v0.3 reads `[capture.files].enabled`
+ * The opt-in `.meterbility/config.toml`. v0.3 reads `[capture.files].enabled`
  * to gate FileChange blob capture; the other keys are wired through
  * in v0.4 (the spec leaves them defined for forward-compat).
  */
 function renderConfigToml(): string {
-  return `# .spool/config.toml — per-project Spool configuration.
+  return `# .meterbility/config.toml — per-project Meterbility configuration.
 # v0.3 reads [capture.files] only; later milestones add more sections.
 
 [capture.files]
@@ -208,4 +208,4 @@ binary_detection = "null-byte-heuristic"
 }
 
 // Re-export for the index registration.
-export { DEFAULT_SPOOLIGNORE };
+export { DEFAULT_METERBILITYIGNORE };

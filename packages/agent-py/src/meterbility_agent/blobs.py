@@ -28,7 +28,7 @@ def _now_iso() -> str:
 
 
 class BlobStore:
-    """Tiny content-addressed filesystem store backed by ``$SPOOL_HOME/blobs``."""
+    """Tiny content-addressed filesystem store backed by ``$METERBILITY_HOME/blobs``."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db

@@ -38,7 +38,7 @@ import {
  * fast-check properties.
  *
  * Test-context helper: every test uses `ctx()`, which mkdtemps a
- * SPOOL_HOME, mints a fresh run id, and hands back a deterministic
+ * METERBILITY_HOME, mints a fresh run id, and hands back a deterministic
  * mock clock plus a cleanup callback. The mock clock matters — every
  * timestamp assertion in this file is exact (=== c.clock.now()),
  * never "approximately now". That makes the whole file
@@ -74,8 +74,8 @@ interface TestCtx {
 
 let _testCounter = 0;
 function ctx(opts: { runId?: string; clockStart?: number } = {}): TestCtx {
-  const home = mkdtempSync(join(tmpdir(), "spool-probe-exhaustive-"));
-  process.env.SPOOL_HOME = home;
+  const home = mkdtempSync(join(tmpdir(), "meter-probe-exhaustive-"));
+  process.env.METERBILITY_HOME = home;
   const runId = opts.runId ?? `run-${++_testCounter}-${Date.now()}`;
   const clock = mockClock(opts.clockStart);
   return {
@@ -900,9 +900,9 @@ test("atomicity: successful mutation leaves no .tmp file behind (any suffix)", (
 
 test("atomicity: two sequential mutations on different runs don't collide (independent files)", () => {
   const c1 = ctx({ runId: "run-A" });
-  // Reuse c1.home for c2 so they share SPOOL_HOME (real-world layout)
+  // Reuse c1.home for c2 so they share METERBILITY_HOME (real-world layout)
   const home = c1.home;
-  process.env.SPOOL_HOME = home;
+  process.env.METERBILITY_HOME = home;
   try {
     const clockA = mockClock(1000);
     const clockB = mockClock(2000);
@@ -1069,7 +1069,7 @@ test("clearProbe: on a directory at the path propagates non-ENOENT", () => {
 /* ====================================================================
  * Section 11 — fast-check property tests (4 properties)
  *
- * Uses a shared SPOOL_HOME with unique runIds per property iteration to
+ * Uses a shared METERBILITY_HOME with unique runIds per property iteration to
  * avoid the mkdtempSync-per-run overhead (100 runs × mkdtemp would
  * dominate test time without changing signal).
  * ==================================================================== */
@@ -1091,8 +1091,8 @@ const INJECT_PAYLOAD_ARB = fc.string({
 });
 
 test("property P1: FSM is closed under all ops — final state is always valid", () => {
-  const home = mkdtempSync(join(tmpdir(), "spool-prop-p1-"));
-  process.env.SPOOL_HOME = home;
+  const home = mkdtempSync(join(tmpdir(), "meter-prop-p1-"));
+  process.env.METERBILITY_HOME = home;
   let runCounter = 0;
   try {
     fc.assert(
@@ -1123,8 +1123,8 @@ test("property P1: FSM is closed under all ops — final state is always valid",
 });
 
 test("property P2: setInject(msg); consumeInject() === msg AND state unchanged", () => {
-  const home = mkdtempSync(join(tmpdir(), "spool-prop-p2-"));
-  process.env.SPOOL_HOME = home;
+  const home = mkdtempSync(join(tmpdir(), "meter-prop-p2-"));
+  process.env.METERBILITY_HOME = home;
   let runCounter = 0;
   try {
     fc.assert(
@@ -1155,8 +1155,8 @@ test("property P2: setInject(msg); consumeInject() === msg AND state unchanged",
 });
 
 test("property P3: state-mutating ops reach a fixed point after one call (idempotence)", () => {
-  const home = mkdtempSync(join(tmpdir(), "spool-prop-p3-"));
-  process.env.SPOOL_HOME = home;
+  const home = mkdtempSync(join(tmpdir(), "meter-prop-p3-"));
+  process.env.METERBILITY_HOME = home;
   let runCounter = 0;
   try {
     fc.assert(
@@ -1207,8 +1207,8 @@ test("property P3: state-mutating ops reach a fixed point after one call (idempo
 });
 
 test("property P4: clearProbe wipes all state — readState after returns the default record", () => {
-  const home = mkdtempSync(join(tmpdir(), "spool-prop-p4-"));
-  process.env.SPOOL_HOME = home;
+  const home = mkdtempSync(join(tmpdir(), "meter-prop-p4-"));
+  process.env.METERBILITY_HOME = home;
   let runCounter = 0;
   try {
     fc.assert(

@@ -6,7 +6,7 @@ import type { LiveEvent, LiveInspector } from "./live.ts";
  * are fire-and-forget, errors are logged but don't crash the watcher.
  *
  * Anchor URLs use the server's externally-reachable origin (passed via
- * `serverUrl`) so operators can jump from Slack into Spool's web UI.
+ * `serverUrl`) so operators can jump from Slack into Meterbility's web UI.
  */
 
 export type SlackEventKind =
@@ -17,7 +17,7 @@ export type SlackEventKind =
 export interface SlackNotifierOptions {
   /** Incoming-webhook URL (https://hooks.slack.com/services/...). */
   webhookUrl: string;
-  /** External origin of the local Spool web UI for clickable links. */
+  /** External origin of the local Meterbility web UI for clickable links. */
   serverUrl?: string;
   /** Which event types to post. Defaults to alerts only. */
   events?: SlackEventKind[];
@@ -73,24 +73,24 @@ export class SlackNotifier {
       if (!res.ok) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[spool/slack] webhook returned ${res.status}: ${await res.text()}`,
+          `[meter/slack] webhook returned ${res.status}: ${await res.text()}`,
         );
       }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn(`[spool/slack] post failed:`, (err as Error).message);
+      console.warn(`[meter/slack] post failed:`, (err as Error).message);
     }
   }
 
   /**
-   * Send a one-off test message — used by `spool slack test`.
+   * Send a one-off test message — used by `meter slack test`.
    */
   async sendTest(): Promise<void> {
     const payload = {
       blocks: [
         {
           type: "header",
-          text: { type: "plain_text", text: "Spool is connected" },
+          text: { type: "plain_text", text: "Meterbility is connected" },
         },
         {
           type: "section",
@@ -148,7 +148,7 @@ export class SlackNotifier {
                 elements: [
                   {
                     type: "button",
-                    text: { type: "plain_text", text: "Open in Spool" },
+                    text: { type: "plain_text", text: "Open in Meterbility" },
                     url: link(e.run_id),
                   },
                 ],
@@ -166,7 +166,7 @@ export class SlackNotifier {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `▶︎ New run: *${escapeSlack(e.run.title ?? e.run.run_id)}* (${escapeSlack(e.run.source_runtime)})\n<${link(e.run.run_id)}|open in Spool>`,
+              text: `▶︎ New run: *${escapeSlack(e.run.title ?? e.run.run_id)}* (${escapeSlack(e.run.source_runtime)})\n<${link(e.run.run_id)}|open in Meterbility>`,
             },
           },
         ],
@@ -181,7 +181,7 @@ export class SlackNotifier {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `${icon} *${escapeSlack(e.run.title ?? e.run.run_id)}* finished · ${e.run.step_count} steps · ${formatCost(e.run.cost_cents)}\n<${link(e.run.run_id)}|open in Spool>`,
+              text: `${icon} *${escapeSlack(e.run.title ?? e.run.run_id)}* finished · ${e.run.step_count} steps · ${formatCost(e.run.cost_cents)}\n<${link(e.run.run_id)}|open in Meterbility>`,
             },
           },
         ],

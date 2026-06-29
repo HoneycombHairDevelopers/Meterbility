@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store } from "@spool-ai/collector";
+import { Store } from "@meterbility/collector";
 import {
   clearProbe,
   confirmPaused,
   requestPause,
   requestResume,
   setInject,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import { LiveInspector, type LiveEvent } from "./live.ts";
 
 /**
@@ -20,20 +20,20 @@ import { LiveInspector, type LiveEvent } from "./live.ts";
  *   - `run:resumed`    (Live Probe resume)
  *
  * These are observed by the inspector tick. Pause/resume by polling the
- * probe file (works for both web POST and CLI `spool probe`); files:changed
+ * probe file (works for both web POST and CLI `meter probe`); files:changed
  * by walking new_steps and looking up file_change rows after ingest.
  */
 
-function freshHomes(): { spool: string; claude: string } {
-  const spool = mkdtempSync(join(tmpdir(), "spool-v03-events-"));
+function freshHomes(): { meter: string; claude: string } {
+  const meter = mkdtempSync(join(tmpdir(), "meter-v03-events-"));
   const claude = mkdtempSync(join(tmpdir(), "claude-v03-events-"));
-  process.env.SPOOL_HOME = spool;
+  process.env.METERBILITY_HOME = meter;
   process.env.CLAUDE_HOME = claude;
-  return { spool, claude };
+  return { meter, claude };
 }
 
 function writeRepo(layout: Record<string, string>): string {
-  const root = mkdtempSync(join(tmpdir(), "spool-v03-repo-"));
+  const root = mkdtempSync(join(tmpdir(), "meter-v03-repo-"));
   for (const [rel, content] of Object.entries(layout)) {
     const abs = join(root, rel);
     mkdirSync(join(abs, ".."), { recursive: true });
@@ -309,7 +309,7 @@ test("a corrupt probe file for one run does not poison polling for other runs", 
   // Pre-fix: an unguarded readProbeState call threw on any non-ENOENT
   // error, aborting the whole probe-poll loop and skipping the fleet
   // snapshot. Post-fix: per-run try/catch isolates the failure.
-  const { claude, spool } = freshHomes();
+  const { claude, meter } = freshHomes();
   const store = Store.open();
   const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
   await live.start();
@@ -342,9 +342,9 @@ test("a corrupt probe file for one run does not poison polling for other runs", 
   // throws EACCES — the one re-thrown error path in readState.
   const { mkdirSync, writeFileSync, chmodSync } = await import("node:fs");
   const { join: pjoin } = await import("node:path");
-  mkdirSync(pjoin(spool, "probe"), { recursive: true });
+  mkdirSync(pjoin(meter, "probe"), { recursive: true });
   const badProbePath = pjoin(
-    spool,
+    meter,
     "probe",
     `${encodeURIComponent(badRunId)}.json`,
   );

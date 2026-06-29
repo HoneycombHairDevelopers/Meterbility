@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # license-audit.sh — Verify every installed dependency ships under a
-# license compatible with Spool's MIT core. Track C / Turn 9 chunk 2.
+# license compatible with Meterbility's MIT core. Track C / Turn 9 chunk 2.
 #
 # Exits:
 #   0  every direct dep is in the allowlist
@@ -71,7 +71,7 @@ for f in [pathlib.Path("package.json")] + list(pathlib.Path("packages").glob("*/
     d = json.loads(f.read_text())
     for k in ("dependencies", "devDependencies", "peerDependencies"):
         for name in (d.get(k) or {}):
-            if name.startswith("@spool-ai/"):
+            if name.startswith("@meterbility/"):
                 continue
             direct_deps.add(name)
 

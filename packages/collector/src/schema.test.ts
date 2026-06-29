@@ -41,8 +41,8 @@ interface SqlitePragmaColumn {
 }
 
 function freshDb(): Database.Database {
-  const dir = mkdtempSync(join(tmpdir(), "spool-schema-test-"));
-  return new Database(join(dir, "spool.db"));
+  const dir = mkdtempSync(join(tmpdir(), "meter-schema-test-"));
+  return new Database(join(dir, "meterbility.db"));
 }
 
 function tableExists(db: Database.Database, name: string): boolean {
@@ -269,7 +269,7 @@ test("v4 → v5 migration: annotations.kind backfills to 'comment' and CHECK rej
 test("v5 fresh-DB CHECK constraint rejects unknown annotation kinds", () => {
   // On a fresh CREATE TABLE'd database (not migrated), the CHECK
   // constraint IS active. This test pins that contract — anyone
-  // initializing a new spool DB gets the DB-level enum safety net.
+  // initializing a new meter DB gets the DB-level enum safety net.
   const db = freshDb();
   ensureSchema(db);
   assert.throws(

@@ -1,4 +1,4 @@
-import type { Action, ContextComponent } from "@spool-ai/shared";
+import type { Action, ContextComponent } from "@meterbility/shared";
 import { parseSseStream, type SseEvent } from "./sse.ts";
 import type { CapturedExchange, ProviderCapture } from "./types.ts";
 
@@ -258,7 +258,7 @@ function reassembleAnthropicMessage(events: SseEvent[]): AnthropicMessage | unde
           try {
             block.input = JSON.parse(partial);
           } catch {
-            block.input = { _spool_partial_json: partial };
+            block.input = { _meter_partial_json: partial };
           }
         }
       }

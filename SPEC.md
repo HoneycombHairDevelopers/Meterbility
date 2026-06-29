@@ -1,4 +1,4 @@
-# Spool — Product Specification
+# Meterbility — Product Specification
 
 > **Looking for the current product?** This document is the **pre-build
 > vision** as drafted before any code was written. For an accurate
@@ -8,7 +8,7 @@
 > preserved unchanged so original intent stays auditable against shipped
 > reality.
 >
-> **Working title.** "Spool" is a placeholder evoking capture, rewind, and threading runs together. Verify availability and trademark before any public surface. Other candidates: Spindle, Replay (taken — replay.io), Cassette, Stagecraft. Name is a v0-launch blocker, not a build blocker.
+> **Working title.** "Meterbility" is a placeholder evoking capture, rewind, and threading runs together. Verify availability and trademark before any public surface. Other candidates: Spindle, Replay (taken — replay.io), Cassette, Stagecraft. Name is a v0-launch blocker, not a build blocker.
 >
 > **Status.** Pre-build. Spec written before code. Two kickoff gates (§18) must clear before week 1 of implementation.
 >
@@ -18,7 +18,7 @@
 
 ## 1. One-Line Product
 
-**Spool is the debugger for AI agents.** Capture every run, inspect every decision, fork from any step, diff the trajectories.
+**Meterbility is the debugger for AI agents.** Capture every run, inspect every decision, fork from any step, diff the trajectories.
 
 The five-second elevator pitch: *Chrome DevTools, but the thing running isn't a webpage — it's an agent.*
 
@@ -45,7 +45,7 @@ ACM research from late 2025 puts Claude Code's logic-error rate at 1.75× human-
 
 ## 3. Product Vision: Three Surfaces
 
-Spool ships as three integrated surfaces. They share a data model but serve distinct workflows.
+Meterbility ships as three integrated surfaces. They share a data model but serve distinct workflows.
 
 ### 3.1 Inspector — the live view
 
@@ -71,7 +71,7 @@ Lowest priority for v0. Ships in v0.2 once the data plane is stable.
 
 ## 4. The Five DevTools Panels, Mapped
 
-| Chrome DevTools | Spool equivalent | Status in current tools |
+| Chrome DevTools | Meterbility equivalent | Status in current tools |
 |---|---|---|
 | **Elements** | Context Inspector — full bytes the model saw at every step, including system prompt, tool definitions, retrieved docs, conversation history, and any context-window compaction. | Mostly absent. Trace tools show summaries, not bytes. |
 | **Console** | Live Probe — pause a running agent, query its state ("what tools have you considered for this step?"), inject a message, resume. | Absent. All current tools are read-only. |
@@ -314,7 +314,7 @@ This is the productized version of Cherny's "add a line to `CLAUDE.md` every tim
 
 **One-click ephemeral env.** Spin up a fresh isolated environment from a template. Disposable. Parallel.
 
-**Bring-your-own-runtime.** For users who want to use their own infra (local Docker, their own cloud), Spool provides the data plane only.
+**Bring-your-own-runtime.** For users who want to use their own infra (local Docker, their own cloud), Meterbility provides the data plane only.
 
 ---
 
@@ -322,7 +322,7 @@ This is the productized version of Cherny's "add a line to `CLAUDE.md` every tim
 
 ### 8.1 Flow: debugging a failed run
 
-1. Cherny opens Spool, sees yesterday's run with status `errored`.
+1. Cherny opens Meterbility, sees yesterday's run with status `errored`.
 2. Opens run. Step timeline shows 47 steps; last step is red (error).
 3. Clicks last step. Action tab shows `bash("npm test")`. Outcome tab shows test failure with stack trace.
 4. Clicks previous step. Action tab shows file edit. Decision tab shows the model's reasoning for the edit.
@@ -336,7 +336,7 @@ This is the productized version of Cherny's "add a line to `CLAUDE.md` every tim
 1. Vincent has an architect agent prompt he's been tuning for two weeks.
 2. He has a corpus of 8 past runs where the architect produced output he was happy with, all annotated.
 3. He edits the system prompt to be tighter.
-4. He clicks "rerun corpus" — Spool re-runs all 8 historical user messages with the new system prompt.
+4. He clicks "rerun corpus" — Meterbility re-runs all 8 historical user messages with the new system prompt.
 5. Trajectory diff shows 6 runs converged to similar good outputs, 2 diverged.
 6. He opens the 2 divergent runs. Sees that the tighter prompt over-constrains the architect on planning-heavy tasks.
 7. Adjusts the prompt. Reruns. All 8 converge.
@@ -348,7 +348,7 @@ This is the productized version of Cherny's "add a line to `CLAUDE.md` every tim
 2. A platform team running a customer support agent in production wants to validate the upgrade.
 3. They take the last 1000 production runs (anonymized, replayed locally), re-run them against Opus 4.6, and produce a diff report.
 4. 94% of runs converge to similar outputs. 6% diverge.
-5. Of the 6% divergent, Spool clusters them into ~12 buckets. Three buckets are improvements (4.6 handles edge cases 4.5 mishandled). Nine buckets are regressions.
+5. Of the 6% divergent, Meterbility clusters them into ~12 buckets. Three buckets are improvements (4.6 handles edge cases 4.5 mishandled). Nine buckets are regressions.
 6. Team decides to roll out 4.6 with a hard route to 4.5 for the 9 regression buckets, plus open three regression tests for the new behavior.
 
 ### 8.4 Flow: tool design
@@ -364,7 +364,7 @@ This is the productized version of Cherny's "add a line to `CLAUDE.md` every tim
 ### 8.5 Flow: live intervention
 
 1. Cherny launches 12 agents on parallel tasks.
-2. Spool notification: agent #7 is in a suspected loop (same tool with same args 4 times).
+2. Meterbility notification: agent #7 is in a suspected loop (same tool with same args 4 times).
 3. Opens Inspector for #7. Confirms the loop — agent is retrying a failing test with the same fix.
 4. Live Probe: injects a message — "the test is failing because of a stale fixture, not your change. Reset fixtures with `npm run reset:fixtures` before running the test again."
 5. Resumes. Agent completes the task on the next attempt.
@@ -372,12 +372,12 @@ This is the productized version of Cherny's "add a line to `CLAUDE.md` every tim
 ### 8.6 Flow: team handoff
 
 1. Vincent ends his work day with three agents mid-task.
-2. He generates a handoff summary from Spool: status of each, what's been tried, what's pending.
+2. He generates a handoff summary from Meterbility: status of each, what's been tried, what's pending.
 3. Coworker picks up in the morning, opens the handoff, sees the full state, decides which to continue and which to abandon.
 
 ---
 
-## 9. Success Modes (use cases where Spool wins)
+## 9. Success Modes (use cases where Meterbility wins)
 
 1. **Failed run debugging.** The acute pain. Every fleet operator has multiple of these per week.
 2. **Prompt iteration with a real feedback loop.** Replaces vibes-based iteration with corpus-based regression.
@@ -402,7 +402,7 @@ These are ordered by likelihood.
 
 ### 10.1 The data capture is too expensive or too lossy
 
-If Spool captures everything, runs slow down and storage costs balloon. If it captures less, the Debugger loses fidelity.
+If Meterbility captures everything, runs slow down and storage costs balloon. If it captures less, the Debugger loses fidelity.
 
 **Mitigation:** content-addressed storage with aggressive dedup. Async write path so capture doesn't block agent execution. Configurable retention (full bytes for last 30 days, summaries beyond that). Open-source agent for self-hosted capture so storage cost is the user's choice.
 
@@ -424,13 +424,13 @@ Many "agent observability" buyers want a dashboard with metrics for a weekly rev
 
 The named threat. Anthropic could announce a Claude Code debug view at any time. OpenAI ships Codex Cloud features rapidly.
 
-**Mitigation (defensive):** cross-vendor positioning from day one. Spool's value compounds across runtimes; a native tool by definition cannot. Ship integrations for at least three runtimes before any of them ship their own debugger.
+**Mitigation (defensive):** cross-vendor positioning from day one. Meterbility's value compounds across runtimes; a native tool by definition cannot. Ship integrations for at least three runtimes before any of them ship their own debugger.
 
 **Mitigation (offensive):** stay ahead on the *workflow* (fork-and-diff, regression suites, fleet view), not just the data view. A native Anthropic debugger is likely to show traces well but unlikely to ship a cross-run regression suite or a vendor-agnostic fork primitive.
 
 ### 10.5 Privacy / security blocks enterprise adoption
 
-Spool captures full context bytes — prompts, retrieved docs, conversation history. For enterprise buyers this is sensitive. Production runs may include PII, source code, customer data.
+Meterbility captures full context bytes — prompts, retrieved docs, conversation history. For enterprise buyers this is sensitive. Production runs may include PII, source code, customer data.
 
 **Mitigation:** self-hosted from day one. Local-only mode for the v0 (CLI + local SQLite). Enterprise tier with on-prem or VPC deployment. Optional automatic PII redaction pass on capture.
 
@@ -454,7 +454,7 @@ Senior engineering managers, AI program owners, and compliance leads don't open 
 
 ### 10.9 Founder bandwidth
 
-Concurrent ventures: Gilld, Donaldson Lake, Hotpath (or this), property project, NVIDIA application. Spool is a real platform product that demands focused execution.
+Concurrent ventures: Gilld, Donaldson Lake, Hotpath (or this), property project, NVIDIA application. Meterbility is a real platform product that demands focused execution.
 
 **Mitigation:** explicit decision required before kickoff. See §22.
 
@@ -464,11 +464,11 @@ Solvable but underestimated. The CLI must `npx`-install in one command. The web 
 
 ---
 
-## 11. Failure Modes (agent failures Spool helps debug)
+## 11. Failure Modes (agent failures Meterbility helps debug)
 
-A taxonomy of what goes wrong in agent runs, with notes on how Spool addresses each.
+A taxonomy of what goes wrong in agent runs, with notes on how Meterbility addresses each.
 
-| Failure category | Symptom | How Spool helps |
+| Failure category | Symptom | How Meterbility helps |
 |---|---|---|
 | **Tool misuse** | Agent calls a tool with wrong args, ignores a tool that fits, calls a tool repeatedly | I/O Inspector + tool-call breakpoints + tool-design fork flow (§8.4) |
 | **Hallucinated capability** | Agent claims it did something it didn't | Step-by-step action vs outcome diff; outcome assertions in regression suite |
@@ -500,7 +500,7 @@ A taxonomy of what goes wrong in agent runs, with notes on how Spool addresses e
                            │ instrumentation
                            ▼
                 ┌──────────────────────┐
-                │   Spool Agent (SDK)  │  ← language-specific
+                │   Meterbility Agent (SDK)  │  ← language-specific
                 │  - intercepts I/O    │     (TS, Python first)
                 │  - captures bytes    │
                 │  - emits OTel-style  │
@@ -509,7 +509,7 @@ A taxonomy of what goes wrong in agent runs, with notes on how Spool addresses e
                            │ traces + content blobs
                            ▼
                 ┌──────────────────────┐
-                │   Spool Collector    │  ← local CLI process
+                │   Meterbility Collector    │  ← local CLI process
                 │  - dedup + compress  │     or hosted endpoint
                 │  - SHA addressing    │
                 │  - schema validate   │
@@ -525,7 +525,7 @@ A taxonomy of what goes wrong in agent runs, with notes on how Spool addresses e
             └──────────┬───────────────┘
                        ▼
             ┌────────────────────┐
-            │   Spool Server     │  ← local or hosted
+            │   Meterbility Server     │  ← local or hosted
             │  - query API       │
             │  - replay engine   │
             │  - fork engine     │
@@ -544,7 +544,7 @@ A taxonomy of what goes wrong in agent runs, with notes on how Spool addresses e
 
 Two capture modes:
 
-**Hook mode (zero-code).** For runtimes that publish session logs (Claude Code writes JSON sessions to local storage), Spool reads from disk. No instrumentation needed. Latency: end-of-session or polled.
+**Hook mode (zero-code).** For runtimes that publish session logs (Claude Code writes JSON sessions to local storage), Meterbility reads from disk. No instrumentation needed. Latency: end-of-session or polled.
 
 **SDK mode (live).** For custom agents and runtimes that support hooks, the SDK wraps model calls and tool calls. Emits OTel-format spans with full payload bytes. Latency: real-time.
 
@@ -662,7 +662,7 @@ Three tiers, ordered by buyer.
 
 ### 15.1 Open Source (free)
 
-The Spool Agent (SDK) and Spool Collector are MIT-licensed and self-hostable.
+The Meterbility Agent (SDK) and Meterbility Collector are MIT-licensed and self-hostable.
 
 What's open: capture, storage, replay primitives, CLI inspector, trace format spec.
 
@@ -696,7 +696,7 @@ Reference ACV: $50k–$500k depending on scale. Two-quarter sales cycle.
 
 Coding-agent users are price-insensitive at the individual tier (already paying $200/mo+ for Claude/Codex). Team-tier monetization tracks team growth in agent ops. Enterprise tier funds the deep work.
 
-The open-source agent is a Trojan horse: capture is the moat. Once a team's data lives in Spool's trace format, switching costs are real even though the format is open.
+The open-source agent is a Trojan horse: capture is the moat. Once a team's data lives in Meterbility's trace format, switching costs are real even though the format is open.
 
 ---
 
@@ -721,7 +721,7 @@ None of these have fork-and-replay. None of these have a live debugger. Most are
 ### 16.3 Indirect competitors
 
 - **Eval frameworks** (Inspect, OpenAI evals, Promptfoo) — evaluation, not debugging. Different workflow.
-- **Tracing standards** (OpenLLMetry, OpenInference) — open standards for trace format. Spool should adopt or extend rather than compete.
+- **Tracing standards** (OpenLLMetry, OpenInference) — open standards for trace format. Meterbility should adopt or extend rather than compete.
 
 ### 16.4 The "killed by the platform" risk
 
@@ -729,7 +729,7 @@ None of these have fork-and-replay. None of these have a live debugger. Most are
 - **OpenAI** ships Codex Cloud trace view.
 - **Cursor** ships Agents Window inspector.
 
-In each case, Spool's value differentiates on (a) cross-vendor, (b) workflow depth (fork, diff, regression), (c) production / enterprise features the runtime vendors will deprioritize relative to their own market.
+In each case, Meterbility's value differentiates on (a) cross-vendor, (b) workflow depth (fork, diff, regression), (c) production / enterprise features the runtime vendors will deprioritize relative to their own market.
 
 ---
 
@@ -739,10 +739,10 @@ In each case, Spool's value differentiates on (a) cross-vendor, (b) workflow dep
 
 Three founders reach out to:
 
-- Boris Cherny (Anthropic, Claude Code) — highest leverage; if Spool gets his blessing, integration risk drops.
+- Boris Cherny (Anthropic, Claude Code) — highest leverage; if Meterbility gets his blessing, integration risk drops.
 - Peter Steinberger — most public on workflow; Codex CLI user, validates cross-vendor.
 - Jesse Vincent — architect/implementer pattern is the canonical multi-agent workflow.
-- Simon Willison — cautious-convert voice; if he writes about Spool, signal compounds.
+- Simon Willison — cautious-convert voice; if he writes about Meterbility, signal compounds.
 - Armin Ronacher — opinionated on tooling; YOLO mode user, validates capture in heavy-permission setups.
 - Tim Sehn (Dolthub) — platform-team perspective; validates self-hosted enterprise angle.
 
@@ -752,7 +752,7 @@ Threshold: one reply within 14 days = signal to build. Zero replies = iterate on
 
 ### 17.2 Phase 1: dogfood (4–6 weeks)
 
-Founder uses Spool on every Claude Code session for 4 weeks. Daily. Targets: ≥3 multi-session tasks per week. Generates ≥10 forks across 4 weeks. Identifies ≥5 cases where the Debugger surfaced something they wouldn't have found otherwise.
+Founder uses Meterbility on every Claude Code session for 4 weeks. Daily. Targets: ≥3 multi-session tasks per week. Generates ≥10 forks across 4 weeks. Identifies ≥5 cases where the Debugger surfaced something they wouldn't have found otherwise.
 
 ### 17.3 Phase 2: closed alpha (weeks 6–10)
 
@@ -776,15 +776,15 @@ Individual tier first. Then team. Enterprise pipeline starts via inbound from op
 
 Two gates. If either fails, the design is wrong before code is written.
 
-### Gate 1: founder is a heavy Claude Code user on non-Spool work
+### Gate 1: founder is a heavy Claude Code user on non-Meterbility work
 
-≥3 multi-session tasks per week on real projects that are not Spool itself. Building Spool on Spool is a degenerate corpus.
+≥3 multi-session tasks per week on real projects that are not Meterbility itself. Building Meterbility on Meterbility is a degenerate corpus.
 
 **Resolution:** write down the last 10 multi-session agent tasks across other projects. If fewer than 10 in the last 30 days, the founder is not the user.
 
 ### Gate 2: capture surface is verified for Claude Code
 
-Read a real Claude Code session log from disk. Confirm presence of tool calls, file edits, errors, turn boundaries, and thinking blocks. Verify session storage location is stable across versions. Write a marker into a Spool-managed area of `.claude/`. Start a fresh session. Confirm via probe that the marker is visible.
+Read a real Claude Code session log from disk. Confirm presence of tool calls, file edits, errors, turn boundaries, and thinking blocks. Verify session storage location is stable across versions. Write a marker into a Meterbility-managed area of `.claude/`. Start a fresh session. Confirm via probe that the marker is visible.
 
 **Resolution:** a 200-line script that produces a sample captured trace from a real session.
 
@@ -802,17 +802,17 @@ Single-user, local-only, Claude Code only, post-hoc only.
 
 **Ships:**
 
-- Spool CLI (`spool` command, `npx`-installable, TS).
+- Meterbility CLI (`meter` command, `npx`-installable, TS).
 - Claude Code session capture (hook mode, reads from `~/.claude/` session storage).
 - Local SQLite + filesystem blob storage.
-- `spool inspect <run-id>` — terminal-rendered step timeline + step inspector. Pass `--pretty-print` to render `decision`, `action`, `outcome`, and `cost` as schema-aware field layouts instead of raw JSON; the `context` and `files` tabs are unchanged. Default output stays raw so grep/jq pipelines keep working. The web step cards expose the same toggle per-step via a `Pretty (all tabs)` button that persists in `localStorage`.
-- `spool list` — recent runs with filters.
-- `spool fork <run-id> --at <step-id> --edit <edit-type>` — fork mechanism.
-- `spool diff <run-id-a> <run-id-b>` — trajectory diff.
-- `spool annotate <step-id> --verdict ... --note ...` — annotation.
+- `meter inspect <run-id>` — terminal-rendered step timeline + step inspector. Pass `--pretty-print` to render `decision`, `action`, `outcome`, and `cost` as schema-aware field layouts instead of raw JSON; the `context` and `files` tabs are unchanged. Default output stays raw so grep/jq pipelines keep working. The web step cards expose the same toggle per-step via a `Pretty (all tabs)` button that persists in `localStorage`.
+- `meter list` — recent runs with filters.
+- `meter fork <run-id> --at <step-id> --edit <edit-type>` — fork mechanism.
+- `meter diff <run-id-a> <run-id-b>` — trajectory diff.
+- `meter annotate <step-id> --verdict ... --note ...` — annotation.
 - Replay engine (deterministic prefix + fresh suffix).
 - One redaction pass before any blob is stored (regex list).
-- Basic web UI served from CLI (`spool web`) for the inspector and timeline views (the CLI is fine for power users but the web UI sells the demo).
+- Basic web UI served from CLI (`meter web`) for the inspector and timeline views (the CLI is fine for power users but the web UI sells the demo).
 - Documentation: getting started, trace format spec v0.1, integration guide for "build your own capture."
 
 **Does NOT ship in v0:**
@@ -832,7 +832,7 @@ Single-user, local-only, Claude Code only, post-hoc only.
 
 ### v0 success criteria
 
-Founder dogfood: ≥6 multi-session tasks debugged with Spool over a 2-week window.
+Founder dogfood: ≥6 multi-session tasks debugged with Meterbility over a 2-week window.
 
 Headline qualitative success: founder can recall ≥3 concrete moments where the Debugger surfaced something they would not have found without it.
 
@@ -891,14 +891,14 @@ If after 2 weeks of dogfood (a) zero forks produced a meaningfully different tra
 
 The endpoint is not "a debugger." The endpoint is **the standard observation and control plane for agent runtimes**, with the debugger as the wedge.
 
-Once Spool owns the trace format and the workflow on top:
+Once Meterbility owns the trace format and the workflow on top:
 
 - Evaluation product (run agents against eval suites with full Debugger introspection).
 - Training data product (use annotated runs as preference data).
 - Compliance product (auditable agent decision trail for regulated industries).
 - Marketplace product (share regression suites, share tool definitions, share annotated runs across teams).
 
-The Company Brain RFS thesis converges with Spool's trajectory: the institutional memory layer for an org's agent fleet is the natural v2 product.
+The Company Brain RFS thesis converges with Meterbility's trajectory: the institutional memory layer for an org's agent fleet is the natural v2 product.
 
 ---
 
@@ -907,7 +907,7 @@ The Company Brain RFS thesis converges with Spool's trajectory: the institutiona
 - **vs. Langfuse / Braintrust:** we are the debugger; they are the dashboard.
 - **vs. native Anthropic / OpenAI debuggers:** we are cross-vendor; we own the workflow (fork, diff, regression) not just the data view.
 - **vs. Datadog / New Relic LLM modules:** we are agent-native; they are LLM-tracing bolted onto generic APM.
-- **vs. eval frameworks (Inspect, Promptfoo):** we are the introspection layer; eval frameworks become a verb inside Spool.
+- **vs. eval frameworks (Inspect, Promptfoo):** we are the introspection layer; eval frameworks become a verb inside Meterbility.
 - **vs. Replay.io:** they own browser time-travel; we own agent time-travel.
 
 The defensible position is: own the trace format spec, own the fork primitive, own the workflow that compounds across the entire agent stack regardless of which runtime, vertical, or model is in play.
@@ -935,16 +935,16 @@ The defensible position is: own the trace format spec, own the fork primitive, o
 
 Real questions, not rhetorical ones. Each needs a decision before the corresponding milestone.
 
-1. **Naming.** Decision needed before §17.4 (week 10). Candidates: Spool, Spindle, Cassette. Trademark search required.
+1. **Naming.** Decision needed before §17.4 (week 10). Candidates: Meterbility, Spindle, Cassette. Trademark search required.
 2. **TS vs Python first SDK.** Currently TS-first. Reconsider if the closed-alpha cohort is Python-heavy.
 3. **Hosted backend in v0.1 or v0.2.** Hosted in v0.1 adds complexity. Local-only forever is purer but harder to monetize early. Current call: hosted in v0.1, behind a feature flag.
 4. **Open-source license.** MIT vs Apache 2.0 vs Elastic License v2. MIT for the agent and collector. Elastic License v2 for the web UI? Defer to v0.2 OSS launch decision.
 5. **Whether to ship a hosted free tier.** Risks support load. Helps adoption. Defer to v0.2.
 6. **Anthropic relationship strategy.** Court as partner from day one, or build first and approach later? Current call: a single low-key conversation in week 1 via the cold outreach, no formal partnership ask until v0.1.
 7. **Pricing for individual tier.** $20/mo vs $30/mo. Defer until first 10 alpha users surface willingness-to-pay signal.
-8. **Hotpath relationship.** If Spool ships, Hotpath either gets folded into Spool (as the Performance panel) or sunset. Current call: fold. Hotpath as a standalone product is dominated by Spool's broader surface.
-9. **Profile relationship.** Spool's data plane subsumes Profile's use case (cross-session hint injection becomes a Spool feature, not a separate product). Current call: Profile becomes a Spool feature in v0.1 ("auto-distill yesterday's runs into context hints for today's").
-10. **Naming the trace format spec.** "Spool Trace Format" vs proposing an extension to OpenInference / OpenLLMetry. Engaging with the standards bodies before launch is the right move.
+8. **Hotpath relationship.** If Meterbility ships, Hotpath either gets folded into Meterbility (as the Performance panel) or sunset. Current call: fold. Hotpath as a standalone product is dominated by Meterbility's broader surface.
+9. **Profile relationship.** Meterbility's data plane subsumes Profile's use case (cross-session hint injection becomes a Meterbility feature, not a separate product). Current call: Profile becomes a Meterbility feature in v0.1 ("auto-distill yesterday's runs into context hints for today's").
+10. **Naming the trace format spec.** "Meterbility Trace Format" vs proposing an extension to OpenInference / OpenLLMetry. Engaging with the standards bodies before launch is the right move.
 
 ---
 
@@ -952,15 +952,15 @@ Real questions, not rhetorical ones. Each needs a decision before the correspond
 
 Before week 1, the founder commits to one of three paths:
 
-**Path A: Spool is the single venture.** Hotpath gets folded in. Profile gets folded in. Gilld and Donaldson Lake remain but go on maintenance footing. NVIDIA application is withdrawn (or accepted and then declined). YC application leads with Spool under the Software for Agents RFS.
+**Path A: Meterbility is the single venture.** Hotpath gets folded in. Profile gets folded in. Gilld and Donaldson Lake remain but go on maintenance footing. NVIDIA application is withdrawn (or accepted and then declined). YC application leads with Meterbility under the Software for Agents RFS.
 
-**Path B: Spool is the YC swing; Hotpath continues as a parallel ship.** Higher risk, lower probability of either succeeding well. Not recommended.
+**Path B: Meterbility is the YC swing; Hotpath continues as a parallel ship.** Higher risk, lower probability of either succeeding well. Not recommended.
 
-**Path C: Don't build Spool. Ship Hotpath. Or ship the Profile spec. Or ship the shadow-workspace play from RFS #2. Or take the NVIDIA job and run Gilld + Donaldson Lake nights and weekends.**
+**Path C: Don't build Meterbility. Ship Hotpath. Or ship the Profile spec. Or ship the shadow-workspace play from RFS #2. Or take the NVIDIA job and run Gilld + Donaldson Lake nights and weekends.**
 
 Path A is the recommended path if and only if Gates 1, 2, and 3 (§18) clear inside two weeks. If any gate fails, Path C is the right answer.
 
-This spec is not a commitment to build Spool. It is the artifact that lets the founder make an informed decision in two weeks instead of two months.
+This spec is not a commitment to build Meterbility. It is the artifact that lets the founder make an informed decision in two weeks instead of two months.
 
 ---
 
@@ -977,9 +977,9 @@ Three sentences. No pitch. Sent individually, not blasted.
 ## Appendix B: v0 File Layout
 
 ```
-spool/
+meter/
 ├── packages/
-│   ├── cli/                   # `spool` command
+│   ├── cli/                   # `meter` command
 │   ├── agent/                 # capture SDK (TS)
 │   ├── collector/             # local collector daemon
 │   ├── server/                # query API + replay engine

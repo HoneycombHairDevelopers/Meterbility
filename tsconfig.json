@@ -16,34 +16,34 @@
     ],
     "baseUrl": ".",
     "paths": {
-      "@spool-ai/shared": [
+      "@meterbility/shared": [
         "packages/shared/src/index.ts"
       ],
-      "@spool-ai/spec": [
+      "@meterbility/spec": [
         "packages/spec/src/index.ts"
       ],
-      "@spool-ai/agent": [
+      "@meterbility/agent": [
         "packages/agent/src/index.ts"
       ],
-      "@spool-ai/collector": [
+      "@meterbility/collector": [
         "packages/collector/src/index.ts"
       ],
-      "@spool-ai/store-postgres": [
+      "@meterbility/store-postgres": [
         "packages/store-postgres/src/index.ts"
       ],
-      "@spool-ai/proxy": [
+      "@meterbility/proxy": [
         "packages/proxy/src/index.ts"
       ],
-      "@spool-ai/server": [
+      "@meterbility/server": [
         "packages/server/src/index.ts"
       ],
-      "@spool-ai/claude-code-adapter": [
+      "@meterbility/claude-code-adapter": [
         "adapters/claude-code/src/index.ts"
       ],
-      "@spool-ai/codex-cli-adapter": [
+      "@meterbility/codex-cli-adapter": [
         "adapters/codex-cli/src/index.ts"
       ],
-      "@spool-ai/cursor-adapter": [
+      "@meterbility/cursor-adapter": [
         "adapters/cursor/src/index.ts"
       ]
     }

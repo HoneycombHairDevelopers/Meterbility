@@ -1,5 +1,5 @@
 {
-  "name": "@spool-ai/proxy",
+  "name": "@meterbility/proxy",
   "version": "0.3.1",
   "license": "MIT",
   "type": "module",
@@ -11,21 +11,21 @@
     }
   },
   "dependencies": {
-    "@spool-ai/shared": "^0.3.0",
-    "@spool-ai/spec": "^0.3.0",
-    "@spool-ai/collector": "^0.3.0",
+    "@meterbility/shared": "^0.3.0",
+    "@meterbility/spec": "^0.3.0",
+    "@meterbility/collector": "^0.3.0",
     "hono": "^4.6.0",
     "@hono/node-server": "^1.13.0"
   },
-  "description": "Anthropic/OpenAI capture proxy for Spool",
+  "description": "Anthropic/OpenAI capture proxy for Meterbility",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HoneycombHairDevelopers/Spool.git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Meterbility.git",
     "directory": "packages/proxy"
   },
-  "homepage": "https://github.com/HoneycombHairDevelopers/Spool#readme",
+  "homepage": "https://github.com/HoneycombHairDevelopers/Meterbility#readme",
   "bugs": {
-    "url": "https://github.com/HoneycombHairDevelopers/Spool/issues"
+    "url": "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
   },
   "engines": {
     "node": ">=20.6"

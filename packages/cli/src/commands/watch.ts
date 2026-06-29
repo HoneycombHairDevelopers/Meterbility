@@ -4,19 +4,19 @@ import {
   LiveInspector,
   type LiveEvent,
   type FleetEntry,
-} from "@spool-ai/server";
-import { getSetting } from "@spool-ai/collector";
+} from "@meterbility/server";
+import { getSetting } from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 /**
- * `spool watch` — terminal counterpart to the web UI's live SSE stream.
+ * `meter watch` — terminal counterpart to the web UI's live SSE stream.
  *
  * The web UI lets you keep a browser tab open on the fleet view and watch
  * runs scroll past with alerts highlighted. `watch` does the same for
  * terminal users: tails ~/.claude/projects, prints a one-line entry per
  * event (or full JSON with --json), and stays alive until ctrl-c.
  *
- * Filters mirror the same flags `spool web --live` accepts (--watch-tool,
+ * Filters mirror the same flags `meter web --live` accepts (--watch-tool,
  * --stall-seconds), and like web, missing flags fall back to the
  * `live.watch_tools` / `live.stall_seconds` settings table values.
  */
@@ -58,7 +58,7 @@ export function registerWatchCommand(program: Command): void {
         json?: boolean;
       }) => {
         const store = openStore();
-        // Settings fallback (parity with `spool web`).
+        // Settings fallback (parity with `meter web`).
         const watchToolsEffective =
           opts.watchTool.length > 0
             ? opts.watchTool

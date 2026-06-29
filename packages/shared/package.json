@@ -1,5 +1,5 @@
 {
-  "name": "@spool-ai/shared",
+  "name": "@meterbility/shared",
   "version": "0.3.1",
   "license": "MIT",
   "type": "module",
@@ -10,15 +10,15 @@
       "import": "./dist/index.js"
     }
   },
-  "description": "Shared domain types, hashing, redaction, and the Live Probe protocol for Spool",
+  "description": "Shared domain types, hashing, redaction, and the Live Probe protocol for Meterbility",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HoneycombHairDevelopers/Spool.git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Meterbility.git",
     "directory": "packages/shared"
   },
-  "homepage": "https://github.com/HoneycombHairDevelopers/Spool#readme",
+  "homepage": "https://github.com/HoneycombHairDevelopers/Meterbility#readme",
   "bugs": {
-    "url": "https://github.com/HoneycombHairDevelopers/Spool/issues"
+    "url": "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
   },
   "engines": {
     "node": ">=20.6"

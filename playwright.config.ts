@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = Number(process.env.SPOOL_E2E_PORT ?? "4318");
+const PORT = Number(process.env.METERBILITY_E2E_PORT ?? "4318");
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
@@ -23,7 +23,7 @@ export default defineConfig({
     stdout: "pipe",
     stderr: "pipe",
     env: {
-      SPOOL_E2E_PORT: String(PORT),
+      METERBILITY_E2E_PORT: String(PORT),
     },
   },
   projects: [

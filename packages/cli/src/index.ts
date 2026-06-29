@@ -25,8 +25,8 @@ import { registerProbeCommand } from "./commands/probe.ts";
 
 const program = new Command();
 program
-  .name("spool")
-  .description(pc.bold("Spool ") + pc.dim("— the debugger for AI agents"))
+  .name("meter")
+  .description(pc.bold("Meterbility ") + pc.dim("— the debugger for AI agents"))
   .version("0.3.1");
 
 registerDoctorCommand(program);
@@ -53,6 +53,6 @@ registerProbeCommand(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red("error: ") + (err as Error).message);
-  if (process.env.SPOOL_DEBUG) console.error(err);
+  if (process.env.METERBILITY_DEBUG) console.error(err);
   process.exit(1);
 });

@@ -1,5 +1,5 @@
 """
-Thin SQLite wrapper — opens ``$SPOOL_HOME/spool.db``, ensures the schema
+Thin SQLite wrapper — opens ``$METERBILITY_HOME/meterbility.db``, ensures the schema
 is bootstrapped (idempotent), and exposes the underlying connection plus
 a ``BlobStore`` bound to it.
 
@@ -15,7 +15,7 @@ import sqlite3
 from typing import Optional
 
 from .blobs import BlobStore
-from .paths import db_path, spool_home
+from .paths import db_path, meter_home
 from .schema import ensure_schema
 
 
@@ -27,8 +27,8 @@ class Store:
 
     @classmethod
     def open(cls, *, path: Optional[str] = None) -> "Store":
-        """Open (or create) the Spool SQLite store. Idempotent."""
-        spool_home().mkdir(parents=True, exist_ok=True)
+        """Open (or create) the Meterbility SQLite store. Idempotent."""
+        meter_home().mkdir(parents=True, exist_ok=True)
         target = path or str(db_path())
         # ``check_same_thread=False`` — we don't share the connection
         # across threads, but better-sqlite3 (JS) also runs in WAL mode

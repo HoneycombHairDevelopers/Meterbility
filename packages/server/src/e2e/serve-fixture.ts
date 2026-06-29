@@ -1,7 +1,7 @@
 /**
  * E2E fixture server.
  *
- * Boots a real spool web server against a temp SPOOL_HOME, seeds it with
+ * Boots a real meter web server against a temp METERBILITY_HOME, seeds it with
  * a deterministic run + two pre-rendered step cards (so the test page has
  * enough markup to toggle), then exposes a test-only POST that appends a
  * third step and pokes the SSE pipe — that's how the spec exercises the
@@ -28,20 +28,20 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import type { Run, Step } from "@spool-ai/shared";
+} from "@meterbility/collector";
+import type { Run, Step } from "@meterbility/shared";
 import { buildApp } from "../web.ts";
 import { LiveController } from "../live.ts";
 import type { LiveEvent } from "../live.ts";
 
-const PORT = Number(process.env.SPOOL_E2E_PORT ?? "4318");
+const PORT = Number(process.env.METERBILITY_E2E_PORT ?? "4318");
 const HOST = "127.0.0.1";
 
 async function main() {
-  const home = mkdtempSync(join(tmpdir(), "spool-e2e-"));
-  process.env.SPOOL_HOME = home;
+  const home = mkdtempSync(join(tmpdir(), "meter-e2e-"));
+  process.env.METERBILITY_HOME = home;
 
-  const store = Store.open({ path: join(home, "spool.db") });
+  const store = Store.open({ path: join(home, "meterbility.db") });
   const project = upsertProjectByCwd(store, "/tmp/e2e-pretty", "e2e-pretty");
   const agent = upsertAgent(store, project.project_id, "claude-code");
   const runId = `run_${randomUUID()}`;

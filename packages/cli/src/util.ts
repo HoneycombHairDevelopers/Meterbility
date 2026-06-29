@@ -1,7 +1,7 @@
 import pc from "picocolors";
-import { Store } from "@spool-ai/collector";
-import { fmtCents, fmtTokens } from "@spool-ai/shared";
-import type { Run, Step } from "@spool-ai/shared";
+import { Store } from "@meterbility/collector";
+import { fmtCents, fmtTokens } from "@meterbility/shared";
+import type { Run, Step } from "@meterbility/shared";
 
 export { fmtCents, fmtTokens };
 

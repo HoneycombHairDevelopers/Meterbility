@@ -8,12 +8,12 @@ test("Anthropic parseRequest pulls system + history + tools", () => {
     max_tokens: 512,
     system: "you are helpful",
     tools: [{ name: "search", description: "search the web", input_schema: { type: "object" } }],
-    messages: [{ role: "user", content: "find spool" }],
+    messages: [{ role: "user", content: "find meter" }],
   });
   const parsed = anthropicCapture.parseRequest(req);
   assert.equal(parsed.model, "claude-opus-4-7");
   assert.equal(parsed.systemPrompt, "you are helpful");
-  assert.deepEqual(parsed.history, [{ role: "user", content: "find spool" }]);
+  assert.deepEqual(parsed.history, [{ role: "user", content: "find meter" }]);
   assert.equal(Array.isArray(parsed.toolDefinitions), true);
   assert.equal(parsed.isStream, false);
 });
@@ -46,7 +46,7 @@ test("Anthropic parseResponse extracts tool_use action", () => {
     model: "claude-opus-4-7",
     content: [
       { type: "text", text: "let me search" },
-      { type: "tool_use", id: "tu_1", name: "search", input: { q: "spool" } },
+      { type: "tool_use", id: "tu_1", name: "search", input: { q: "meter" } },
     ],
     usage: { input_tokens: 30, output_tokens: 8 },
   });
@@ -56,7 +56,7 @@ test("Anthropic parseResponse extracts tool_use action", () => {
   const a = ex!.action as { tool_name: string; tool_use_id: string; tool_input: unknown };
   assert.equal(a.tool_name, "search");
   assert.equal(a.tool_use_id, "tu_1");
-  assert.deepEqual(a.tool_input, { q: "spool" });
+  assert.deepEqual(a.tool_input, { q: "meter" });
 });
 
 test("Anthropic reassembleStream rebuilds text + tool_use across deltas", () => {
@@ -83,7 +83,7 @@ test("Anthropic reassembleStream rebuilds text + tool_use across deltas", () => 
     'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":"}}',
     "",
     "event: content_block_delta",
-    'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"spool\\"}"}}',
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"meter\\"}"}}',
     "",
     "event: content_block_stop",
     'data: {"type":"content_block_stop","index":1}',
@@ -101,7 +101,7 @@ test("Anthropic reassembleStream rebuilds text + tool_use across deltas", () => 
   assert.equal(ex!.action.kind, "tool_call");
   const a = ex!.action as { tool_name: string; tool_input: unknown };
   assert.equal(a.tool_name, "search");
-  assert.deepEqual(a.tool_input, { q: "spool" });
+  assert.deepEqual(a.tool_input, { q: "meter" });
   assert.equal(ex!.tokens.output, 15);
 });
 
@@ -110,10 +110,10 @@ test("Anthropic parseRequest pulls tool_results out of message blocks", () => {
     model: "claude-opus-4-7",
     max_tokens: 512,
     messages: [
-      { role: "user", content: "find spool" },
+      { role: "user", content: "find meter" },
       {
         role: "assistant",
-        content: [{ type: "tool_use", id: "tu_1", name: "search", input: { q: "spool" } }],
+        content: [{ type: "tool_use", id: "tu_1", name: "search", input: { q: "meter" } }],
       },
       {
         role: "user",

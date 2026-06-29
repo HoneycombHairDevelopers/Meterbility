@@ -344,7 +344,7 @@ export function probeRecords(records: ReadonlyArray<ClaudeRecord | unknown>): Sh
  */
 export function formatWarning(w: ShapeWarning): string {
   const parts: string[] = [
-    `[spool/shape-probe] ${w.recordType} (×${w.count})`,
+    `[meter/shape-probe] ${w.recordType} (×${w.count})`,
   ];
   if (w.missingKeys.length) {
     parts.push(`  missing: ${w.missingKeys.join(", ")}`);

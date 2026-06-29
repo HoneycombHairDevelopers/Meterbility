@@ -4,8 +4,8 @@ import {
   claudeProjectsRoot,
   probeFilePath,
   readState as readProbeState,
-} from "@spool-ai/shared";
-import type { ProbeFsmState } from "@spool-ai/shared";
+} from "@meterbility/shared";
+import type { ProbeFsmState } from "@meterbility/shared";
 import {
   ingestSession,
   discoverSessions,
@@ -13,15 +13,15 @@ import {
   probeRecords,
   formatWarning,
   type ShapeWarning,
-} from "@spool-ai/claude-code-adapter";
+} from "@meterbility/claude-code-adapter";
 import {
   getRun,
   listFileChanges,
   listRuns,
   listSteps,
-} from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
-import type { Run, Step } from "@spool-ai/shared";
+} from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
+import type { Run, Step } from "@meterbility/shared";
 import {
   classifyRunStatus,
   contextUtilization,
@@ -131,7 +131,7 @@ const DEFAULT_OPTS: Required<LiveOptions> = {
 /**
  * Build the fleet snapshot from the store. Pulled out of `LiveInspector`
  * so the web UI can render the same view as a one-shot, even when
- * `spool web` was launched without `--live`. Live mode passes its
+ * `meter web` was launched without `--live`. Live mode passes its
  * `firedAlerts` map; static mode passes nothing and just gets empty
  * alert lists.
  */
@@ -236,7 +236,7 @@ export class LiveInspector extends EventEmitter {
     // growth of such a run would then emit run:created instead of
     // run:updated — and the run detail page only appends on
     // run:updated, so live append silently never started for any run
-    // ingested before `spool web` launched.
+    // ingested before `meter web` launched.
     for (const run of listRuns(this.store, { limit: 100_000 })) {
       this.lastStepCounts.set(run.run_id, run.step_count);
       this.lastStatus.set(run.run_id, run.status);
@@ -252,12 +252,12 @@ export class LiveInspector extends EventEmitter {
     // parser to silently return wrong data. See shape_probe.ts.
     void this.runShapeProbe().catch((err) => {
       // eslint-disable-next-line no-console
-      console.warn("[spool/shape-probe] probe failed (non-fatal):", err);
+      console.warn("[meter/shape-probe] probe failed (non-fatal):", err);
     });
     this.timer = setInterval(() => {
       void this.tick().catch((err) => {
         // eslint-disable-next-line no-console
-        console.error("[spool/live] tick error:", err);
+        console.error("[meter/live] tick error:", err);
       });
     }, this.opts.scanIntervalMs);
   }
@@ -266,11 +266,11 @@ export class LiveInspector extends EventEmitter {
    * Sample the newest few sessions and validate their records against
    * the shapes `types.ts` claims. One warning per unique drift hash
    * (so a single schema change doesn't spam thousands of lines).
-   * Disabled when `SPOOL_DISABLE_SHAPE_PROBE` is set — useful for
+   * Disabled when `METERBILITY_DISABLE_SHAPE_PROBE` is set — useful for
    * tests with intentionally minimal fixtures.
    */
   private async runShapeProbe(): Promise<void> {
-    if (process.env.SPOOL_DISABLE_SHAPE_PROBE) return;
+    if (process.env.METERBILITY_DISABLE_SHAPE_PROBE) return;
     const sessions = await discoverSessions();
     // newest-first; cap so we don't read the whole history on boot.
     const sample = sessions
@@ -376,7 +376,7 @@ export class LiveInspector extends EventEmitter {
         }
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error(`[spool/live] ingest failed for ${path}:`, err);
+        console.error(`[meter/live] ingest failed for ${path}:`, err);
       }
     }
 
@@ -455,7 +455,7 @@ export class LiveInspector extends EventEmitter {
         // run — never let one bad probe file abort polling for every
         // other in-flight probe.
         // eslint-disable-next-line no-console
-        console.error(`[spool/live] probe read failed for ${runId}:`, err);
+        console.error(`[meter/live] probe read failed for ${runId}:`, err);
         continue;
       }
 
@@ -676,7 +676,7 @@ function describeToolInput(input: unknown): string {
 
 /**
  * Runtime-toggleable owner of a LiveInspector. Existed implicitly in
- * v0.2 (each `spool web --live` invocation built an inspector at
+ * v0.2 (each `meter web --live` invocation built an inspector at
  * startup and discarded it on close). v0.3 needs runtime toggling
  * because the web UI's "Live" button starts/stops without restarting
  * the server.

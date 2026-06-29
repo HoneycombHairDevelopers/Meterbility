@@ -3,7 +3,7 @@ import type {
   ContextComponent,
   Outcome,
   TokenUsage,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 
 /**
  * Public SDK types for custom TS agents. The shape is deliberately small
@@ -20,8 +20,8 @@ export interface TracerOptions {
   runTitle?: string;
   /** Free-form tags. */
   tags?: string[];
-  /** Override SPOOL_HOME for this tracer. */
-  spoolHome?: string;
+  /** Override METERBILITY_HOME for this tracer. */
+  meterHome?: string;
   /** Override the source_runtime label. Defaults to "sdk-ts". */
   sourceRuntime?:
     | "sdk-ts"
@@ -38,12 +38,12 @@ export interface TracerOptions {
   gitBranch?: string;
   /**
    * Enable the Live Probe hook. When true, the SDK checks
-   * `$SPOOL_HOME/probe/<run_id>.json` before each model call and:
+   * `$METERBILITY_HOME/probe/<run_id>.json` before each model call and:
    *   - blocks until an operator-initiated pause is released
    *   - prepends any queued inject message to the next user turn
    *
    * Defaults to false — zero overhead when the operator isn't using
-   * the probe. Turn this on when you want `spool probe` / the web
+   * the probe. Turn this on when you want `meter probe` / the web
    * probe panel to be able to graceful-pause this run.
    */
   probeEnabled?: boolean;
