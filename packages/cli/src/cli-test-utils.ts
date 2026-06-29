@@ -25,15 +25,15 @@ import {
   insertStep,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import type { Run, Step } from "@spool-ai/shared";
+} from "@meterbility/collector";
+import type { Run, Step } from "@meterbility/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI_ENTRY = resolve(__dirname, "index.ts");
 const REPO_ROOT = resolve(__dirname, "../../..");
 
 export interface Fixture {
-  /** Test-scoped SPOOL_HOME (mkdtempSync). */
+  /** Test-scoped METERBILITY_HOME (mkdtempSync). */
   home: string;
   /** Optional scaffolded run id. */
   runId?: string;
@@ -50,8 +50,8 @@ export interface CliResult {
 }
 
 /**
- * Run the spool CLI in a subprocess. Returns stdout/stderr/exit code.
- * SPOOL_HOME is scoped to the fixture's temp dir; NO_COLOR is set so
+ * Run the meter CLI in a subprocess. Returns stdout/stderr/exit code.
+ * METERBILITY_HOME is scoped to the fixture's temp dir; NO_COLOR is set so
  * `picocolors` output stays plain for stable assertions.
  */
 export function runCli(
@@ -67,7 +67,7 @@ export function runCli(
       encoding: "utf-8",
       env: {
         ...process.env,
-        SPOOL_HOME: fx.home,
+        METERBILITY_HOME: fx.home,
         NO_COLOR: "1",
         ...opts.env,
       },
@@ -83,12 +83,12 @@ export function runCli(
 }
 
 /**
- * Create a fresh SPOOL_HOME with no scaffolded data. The cheapest
+ * Create a fresh METERBILITY_HOME with no scaffolded data. The cheapest
  * fixture: useful for commands that need a clean store and create
  * their own state (e.g., `init`).
  */
 export function setupEmpty(): Fixture {
-  const home = mkdtempSync(join(tmpdir(), "spool-cli-exh-"));
+  const home = mkdtempSync(join(tmpdir(), "meter-cli-exh-"));
   return {
     home,
     cleanup: () => {
@@ -102,7 +102,7 @@ export function setupEmpty(): Fixture {
 }
 
 /**
- * Create a fresh SPOOL_HOME and seed it with a run + N steps. Most
+ * Create a fresh METERBILITY_HOME and seed it with a run + N steps. Most
  * read-side CLI commands (inspect, files, runs, diff, annotate)
  * need this.
  */
@@ -113,9 +113,9 @@ export function setupFixture(
     title?: string;
   } = {},
 ): Fixture {
-  const home = mkdtempSync(join(tmpdir(), "spool-cli-exh-"));
-  process.env.SPOOL_HOME = home;
-  const store = Store.open({ path: join(home, "spool.db") });
+  const home = mkdtempSync(join(tmpdir(), "meter-cli-exh-"));
+  process.env.METERBILITY_HOME = home;
+  const store = Store.open({ path: join(home, "meterbility.db") });
   try {
     const project = upsertProjectByCwd(store, "/tmp/cli-exh", "cli-exh");
     const agent = upsertAgent(store, project.project_id, "claude-code");

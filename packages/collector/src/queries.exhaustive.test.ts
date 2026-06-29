@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import fc from "fast-check";
-import type { Run, Step, TokenUsage } from "@spool-ai/shared";
+import type { Run, Step, TokenUsage } from "@meterbility/shared";
 import { Store } from "./store.ts";
 import {
   aggregateTokens,
@@ -62,9 +62,9 @@ interface Ctx {
 }
 
 function freshCtx(): Ctx {
-  const home = mkdtempSync(join(tmpdir(), "spool-queries-exh-"));
-  process.env.SPOOL_HOME = home;
-  const store = Store.open({ path: join(home, "spool.db") });
+  const home = mkdtempSync(join(tmpdir(), "meter-queries-exh-"));
+  process.env.METERBILITY_HOME = home;
+  const store = Store.open({ path: join(home, "meterbility.db") });
   return {
     home,
     store,

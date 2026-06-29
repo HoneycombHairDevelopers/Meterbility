@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-> **Summary.** Every Spool dependency — direct and transitive — ships
+> **Summary.** Every Meterbility dependency — direct and transitive — ships
 > under a permissive license compatible with our MIT core. Zero copyleft
 > (GPL, AGPL, SSPL, LGPL, MPL, EPL, CDDL) anywhere in the tree.
 >
@@ -13,20 +13,20 @@
 ## Direct dependencies
 
 The 11 third-party packages explicitly named in one of our `package.json`
-files. (Workspace-internal `@spool-ai/*` packages are not listed; they all
+files. (Workspace-internal `@meterbility/*` packages are not listed; they all
 ship under our MIT/ELv2 split — see [`LICENSE`](LICENSE).)
 
 | Package | Version | License | Consumed by |
 |---|---|---|---|
-| `@anthropic-ai/sdk` | 0.30.1 | MIT | `@spool-ai/server` |
-| `@hono/node-server` | 1.19.14 | MIT | `@spool-ai/proxy`, `@spool-ai/server` |
+| `@anthropic-ai/sdk` | 0.30.1 | MIT | `@meterbility/server` |
+| `@hono/node-server` | 1.19.14 | MIT | `@meterbility/proxy`, `@meterbility/server` |
 | `@types/node` | 20.19.40 | MIT | root |
-| `@types/pg` | 8.20.0 | MIT | `@spool-ai/store-postgres` |
-| `better-sqlite3` | 11.10.0 | MIT | `@spool-ai/collector`, `@spool-ai/cursor-adapter` |
-| `commander` | 12.1.0 | MIT | `@spool-ai/cli` |
-| `hono` | 4.12.18 | MIT | `@spool-ai/proxy`, `@spool-ai/server` |
-| `pg` | 8.20.0 | MIT | `@spool-ai/store-postgres` |
-| `picocolors` | 1.1.1 | ISC | `@spool-ai/cli` |
+| `@types/pg` | 8.20.0 | MIT | `@meterbility/store-postgres` |
+| `better-sqlite3` | 11.10.0 | MIT | `@meterbility/collector`, `@meterbility/cursor-adapter` |
+| `commander` | 12.1.0 | MIT | `@meterbility/cli` |
+| `hono` | 4.12.18 | MIT | `@meterbility/proxy`, `@meterbility/server` |
+| `pg` | 8.20.0 | MIT | `@meterbility/store-postgres` |
+| `picocolors` | 1.1.1 | ISC | `@meterbility/cli` |
 | `tsx` | 4.21.0 | MIT | root (dev) |
 | `typescript` | 5.9.3 | Apache-2.0 | root (dev) |
 
@@ -77,12 +77,12 @@ Optional extras:
 | `[anthropic]` | `anthropic` | MIT | Using `trace_anthropic()` helper |
 | `[dev]` | `pytest` | MIT | Running the test suite |
 
-Both are pulled in lazily — `pip install spool-agent` works with no
+Both are pulled in lazily — `pip install meterbility-agent` works with no
 extras and the import surface is fully usable without them.
 
 ---
 
-## Compatibility with Spool's MIT/ELv2 split
+## Compatibility with Meterbility's MIT/ELv2 split
 
 | Their license | Compatible with our MIT core? | Compatible with our ELv2 `/ee`? |
 |---|---|---|

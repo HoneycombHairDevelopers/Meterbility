@@ -9,7 +9,7 @@ import {
   getRun,
   listFileChanges,
   workingTreeAt,
-} from "@spool-ai/collector";
+} from "@meterbility/collector";
 import { ingestSession } from "./ingest.ts";
 
 /**
@@ -26,13 +26,13 @@ import { ingestSession } from "./ingest.ts";
  */
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-baseline-int-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-baseline-int-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 function writeRepo(layout: Record<string, string>): string {
-  const root = mkdtempSync(join(tmpdir(), "spool-int-repo-"));
+  const root = mkdtempSync(join(tmpdir(), "meter-int-repo-"));
   for (const [rel, content] of Object.entries(layout)) {
     const abs = join(root, rel);
     mkdirSync(join(abs, ".."), { recursive: true });
@@ -42,7 +42,7 @@ function writeRepo(layout: Record<string, string>): string {
 }
 
 function writeSession(records: object[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-int-session-"));
+  const dir = mkdtempSync(join(tmpdir(), "meter-int-session-"));
   const path = join(dir, "session.jsonl");
   writeFileSync(path, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
   return path;
@@ -186,7 +186,7 @@ test("ingest with a missing cwd doesn't crash — run lands without baseline", a
     {
       type: "user", uuid: "u1", parentUuid: null,
       sessionId: "sess-int-gone", timestamp: "2026-05-15T00:00:00Z",
-      cwd: "/var/spool-test-deleted/repo-that-no-longer-exists",
+      cwd: "/var/meter-test-deleted/repo-that-no-longer-exists",
       message: { role: "user", content: "edit something gone" },
     },
     {
@@ -209,7 +209,7 @@ test("ingest with a missing cwd doesn't crash — run lands without baseline", a
           type: "tool_use", id: "tu_a", name: "Edit",
           input: {
             file_path:
-              "/var/spool-test-deleted/repo-that-no-longer-exists/a.ts",
+              "/var/meter-test-deleted/repo-that-no-longer-exists/a.ts",
             old_string: "X", new_string: "Y",
           },
         }],

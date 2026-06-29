@@ -12,7 +12,7 @@
 #   - Local "is this still installable?" check before a PR
 #   - CI smoke after any change to package.json, scripts/, or docs/
 #
-# It does NOT touch ~/.spool, ~/.claude, or any user data — every
+# It does NOT touch ~/.meterbility, ~/.claude, or any user data — every
 # transient state lives under the tempdir and goes away at exit (or
 # when --keep is passed, stays at the printed path for debugging).
 #
@@ -72,7 +72,7 @@ done
 # ─── setup ──────────────────────────────────────────────────────────
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TEMPDIR=$(mktemp -d -t spool-fresh-XXXXXX)
+TEMPDIR=$(mktemp -d -t meter-fresh-XXXXXX)
 LOG="$TEMPDIR/fresh-laptop.log"
 
 # Cleanup unless --keep
@@ -82,11 +82,11 @@ else
   trap 'echo ""; echo "fresh-laptop tempdir kept at: $TEMPDIR"' EXIT
 fi
 
-# Isolate $SPOOL_HOME and $CLAUDE_HOME for the duration of the test —
-# we must not touch the user's real ~/.spool or ~/.claude.
-export SPOOL_HOME="$TEMPDIR/spool-home"
+# Isolate $METERBILITY_HOME and $CLAUDE_HOME for the duration of the test —
+# we must not touch the user's real ~/.meterbility or ~/.claude.
+export METERBILITY_HOME="$TEMPDIR/meter-home"
 export CLAUDE_HOME="$TEMPDIR/claude-home"
-mkdir -p "$SPOOL_HOME" "$CLAUDE_HOME"
+mkdir -p "$METERBILITY_HOME" "$CLAUDE_HOME"
 
 # Track pass/fail across steps. Without --keep we exit early on first
 # failure (set -e); with --keep we collect and report at the end so
@@ -210,16 +210,16 @@ fi
 if [[ $SKIP_CLI -eq 0 ]]; then
   step "7/8  CLI smoke — load + commands respond" bash -c '
     set -e
-    echo "  ./bin/spool --version"
-    ./bin/spool --version
-    echo "  ./bin/spool --help (first 10 lines)"
-    ./bin/spool --help 2>&1 | head -10
-    echo "  ./bin/spool list (empty store)"
-    ./bin/spool list 2>&1 | head -5 || true
-    echo "  ./bin/spool doctor (Claude home is empty test dir, expect no sessions)"
-    ./bin/spool doctor 2>&1 | tail -10 || true
-    echo "  ./bin/spool probe --help"
-    ./bin/spool probe --help 2>&1 | head -15
+    echo "  ./bin/meter --version"
+    ./bin/meter --version
+    echo "  ./bin/meter --help (first 10 lines)"
+    ./bin/meter --help 2>&1 | head -10
+    echo "  ./bin/meter list (empty store)"
+    ./bin/meter list 2>&1 | head -5 || true
+    echo "  ./bin/meter doctor (Claude home is empty test dir, expect no sessions)"
+    ./bin/meter doctor 2>&1 | tail -10 || true
+    echo "  ./bin/meter probe --help"
+    ./bin/meter probe --help 2>&1 | head -15
   '
 else
   echo ""
@@ -228,7 +228,7 @@ fi
 
 step "8/8  Probe cross-language interop (TS writes, Python reads)" bash -c '
   set -e
-  rm -rf "'"$SPOOL_HOME"'/probe"
+  rm -rf "'"$METERBILITY_HOME"'/probe"
   # TS write
   node --import tsx/esm -e "
 import { requestPause, setInject } from \"./packages/shared/src/probe.ts\";
@@ -242,7 +242,7 @@ console.log(\"  TS wrote: pause + inject\");
     python3 -c "
 import sys
 sys.path.insert(0, \"src\")
-from spool_agent import read_state
+from meterbility_agent import read_state
 r = read_state(\"run_fresh\")
 assert r.state == \"pause_requested\", f\"expected pause_requested, got {r.state}\"
 assert r.inject == \"fresh-laptop-test message\", f\"inject mismatch: {r.inject}\"

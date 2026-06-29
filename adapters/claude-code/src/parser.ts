@@ -54,7 +54,7 @@ export function parseBuffer(
           // lines on crash. We log to stderr so it's visible but not fatal.
           // eslint-disable-next-line no-console
           console.warn(
-            `[spool] skipping malformed JSONL at offset ${lineStart}: ${(err as Error).message}`,
+            `[meter] skipping malformed JSONL at offset ${lineStart}: ${(err as Error).message}`,
           );
         }
       }

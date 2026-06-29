@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spool.dev/schemas/trace-format/0.2.0",
-  "title": "Spool Trace Format",
+  "$id": "https://meter.dev/schemas/trace-format/0.2.0",
+  "title": "Meterbility Trace Format",
   "version": "0.2.0",
-  "description": "Wire format for Spool traces. Hosts emit one JSON document per run; each step is content-addressed via SHA256 refs. v0.2 adds cross-vendor source_runtime values, fork/regression metadata, and explicit blob refs everywhere.",
+  "description": "Wire format for Meterbility traces. Hosts emit one JSON document per run; each step is content-addressed via SHA256 refs. v0.2 adds cross-vendor source_runtime values, fork/regression metadata, and explicit blob refs everywhere.",
   "type": "object",
-  "required": ["spool_trace_version", "run", "steps"],
+  "required": ["meter_trace_version", "run", "steps"],
   "properties": {
-    "spool_trace_version": { "enum": ["0.1.0", "0.2.0"] },
+    "meter_trace_version": { "enum": ["0.1.0", "0.2.0"] },
     "run": { "$ref": "#/$defs/Run" },
     "steps": { "type": "array", "items": { "$ref": "#/$defs/Step" } },
     "blobs": {

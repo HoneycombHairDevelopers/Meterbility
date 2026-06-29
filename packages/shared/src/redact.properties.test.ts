@@ -85,7 +85,7 @@ const innocuous = fc.string({
  * Property 1 — Idempotence.
  *
  * Redacting an already-redacted string is a no-op. If this fails, the
- * placeholder format `«spool:redacted:NAME»` accidentally matches some
+ * placeholder format `«meter:redacted:NAME»` accidentally matches some
  * rule's regex, and repeated passes would inflate the redaction count
  * or corrupt the text.
  * ──────────────────────────────────────────────────────────────────── */
@@ -165,16 +165,16 @@ test("property: per-rule redaction count is bounded by the rule's match count on
 });
 
 /* ────────────────────────────────────────────────────────────────────
- * Property 4 — SPOOL_REDACT=off is a perfect pass-through.
+ * Property 4 — METERBILITY_REDACT=off is a perfect pass-through.
  *
  * The off switch must return input verbatim with zero redactions,
  * regardless of how many secrets the input contains. This is the
  * test-mode / debug-mode contract — anyone setting the env var
  * needs the bytes to come through unchanged.
  * ──────────────────────────────────────────────────────────────────── */
-test("property: SPOOL_REDACT=off returns the input verbatim with zero redactions", () => {
-  const original = process.env.SPOOL_REDACT;
-  process.env.SPOOL_REDACT = "off";
+test("property: METERBILITY_REDACT=off returns the input verbatim with zero redactions", () => {
+  const original = process.env.METERBILITY_REDACT;
+  process.env.METERBILITY_REDACT = "off";
   try {
     fc.assert(
       fc.property(
@@ -187,8 +187,8 @@ test("property: SPOOL_REDACT=off returns the input verbatim with zero redactions
       ),
     );
   } finally {
-    if (original === undefined) delete process.env.SPOOL_REDACT;
-    else process.env.SPOOL_REDACT = original;
+    if (original === undefined) delete process.env.METERBILITY_REDACT;
+    else process.env.METERBILITY_REDACT = original;
   }
 });
 
@@ -203,7 +203,7 @@ test("property: SPOOL_REDACT=off returns the input verbatim with zero redactions
  * ──────────────────────────────────────────────────────────────────── */
 test("property: no rule's regex matches the placeholder for any other rule", () => {
   for (const rule of DEFAULT_RULES) {
-    const placeholder = `«spool:redacted:${rule.name}»`;
+    const placeholder = `«meter:redacted:${rule.name}»`;
     for (const other of DEFAULT_RULES) {
       const fresh = new RegExp(other.pattern.source, other.pattern.flags);
       assert.equal(

@@ -1,13 +1,13 @@
 name: Publish to PyPI
 
-# Publishes packages/agent-py (the spool-agent distribution) when a GitHub
+# Publishes packages/agent-py (the meterbility-agent distribution) when a GitHub
 # release is published, or manually via workflow_dispatch.
 #
 # Auth is PyPI *trusted publishing* (OIDC) — no token secret. One-time setup
 # on pypi.org: Account → Publishing → "Add a new pending publisher" with
-#   project:     spool-agent
+#   project:     meterbility-agent
 #   owner:       HoneycombHairDevelopers
-#   repository:  Spool
+#   repository:  Meterbility
 #   workflow:    publish-pypi.yml
 #   environment: pypi
 

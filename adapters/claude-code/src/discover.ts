@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { claudeProjectsRoot, encodeCwdForClaude } from "@spool-ai/shared";
+import { claudeProjectsRoot, encodeCwdForClaude } from "@meterbility/shared";
 
 export interface DiscoveredSession {
   path: string;
@@ -12,7 +12,7 @@ export interface DiscoveredSession {
 
 /**
  * Walk `~/.claude/projects/<encoded-cwd>/*.jsonl` and return every
- * session log Spool can ingest. If `cwd` is given, we restrict to that
+ * session log Meterbility can ingest. If `cwd` is given, we restrict to that
  * project. Otherwise everything is returned, sorted newest-first by
  * mtime so the CLI's `discover` command surfaces the most recent runs
  * to the operator without prompting.

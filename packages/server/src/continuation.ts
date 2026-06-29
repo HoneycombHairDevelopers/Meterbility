@@ -6,9 +6,9 @@ import type {
   Outcome,
   Step,
   TokenUsage,
-} from "@spool-ai/shared";
-import { hashJson } from "@spool-ai/shared";
-import { costCents } from "@spool-ai/spec";
+} from "@meterbility/shared";
+import { hashJson } from "@meterbility/shared";
+import { costCents } from "@meterbility/spec";
 import {
   getRun,
   insertStep,
@@ -17,8 +17,8 @@ import {
   resolveSnapshotBlobRef,
   setRunStatus,
   updateRunTotals,
-} from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
+} from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
 import { randomUUID } from "node:crypto";
 
 /**

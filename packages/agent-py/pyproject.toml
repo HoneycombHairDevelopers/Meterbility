@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spool-agent"
+name = "meterbility-agent"
 version = "0.3.1"
-description = "Spool SDK for Python — trace LLM agent runs into the local Spool store"
+description = "Meterbility SDK for Python — trace LLM agent runs into the local Meterbility store"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "Spool contributors" }]
+authors = [{ name = "Meterbility contributors" }]
 keywords = ["llm", "agent", "tracing", "anthropic", "observability", "debugger"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -31,13 +31,13 @@ anthropic = ["anthropic>=0.40.0"]
 dev = ["pytest>=7.0"]
 
 [project.urls]
-Homepage = "https://github.com/HoneycombHairDevelopers/Spool"
-Repository = "https://github.com/HoneycombHairDevelopers/Spool"
-Documentation = "https://github.com/HoneycombHairDevelopers/Spool#readme"
-Issues = "https://github.com/HoneycombHairDevelopers/Spool/issues"
+Homepage = "https://github.com/HoneycombHairDevelopers/Meterbility"
+Repository = "https://github.com/HoneycombHairDevelopers/Meterbility"
+Documentation = "https://github.com/HoneycombHairDevelopers/Meterbility#readme"
+Issues = "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-spool_agent = ["py.typed"]
+meterbility_agent = ["py.typed"]

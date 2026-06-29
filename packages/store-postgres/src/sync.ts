@@ -1,5 +1,5 @@
-import type { Store as SqliteStore } from "@spool-ai/collector";
-import { listRuns, listSteps, resolveSnapshotBlobRef } from "@spool-ai/collector";
+import type { Store as SqliteStore } from "@meterbility/collector";
+import { listRuns, listSteps, resolveSnapshotBlobRef } from "@meterbility/collector";
 import {
   pgInsertRun,
   pgInsertStep,

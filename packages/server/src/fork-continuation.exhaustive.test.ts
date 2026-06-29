@@ -10,7 +10,7 @@ import type {
   ForkEdit,
   ForkEditType,
   Step,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import {
   Store,
   insertFork,
@@ -20,8 +20,8 @@ import {
   listSteps,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import { SpoolTracer } from "@spool-ai/agent";
+} from "@meterbility/collector";
+import { MeterbilityTracer } from "@meterbility/agent";
 import {
   anthropicResponder,
   fakeResponder,
@@ -51,8 +51,8 @@ import {
 // ─── Fixture builders ──────────────────────────────────────────────
 
 function freshHome(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-fork-exh-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-fork-exh-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
@@ -66,7 +66,7 @@ function freshHome(): string {
  */
 async function seedOriginRun(): Promise<{ store: Store; runId: string }> {
   freshHome();
-  const tracer = new SpoolTracer({ project: "/tmp/o", agent: "t" });
+  const tracer = new MeterbilityTracer({ project: "/tmp/o", agent: "t" });
   const s0 = tracer.startStep({
     model: "claude-opus-4-7",
     history: [{ role: "user", content: "compute 2+2" }],

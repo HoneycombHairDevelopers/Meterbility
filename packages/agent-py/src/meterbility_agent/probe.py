@@ -2,7 +2,7 @@
 Live Probe protocol — Python mirror of ``packages/shared/src/probe.ts``.
 
 Track B / Turn 8 chunk 3. The file format is byte-compatible with the
-TS implementation: both write/read ``$SPOOL_HOME/probe/<run_id>.json``
+TS implementation: both write/read ``$METERBILITY_HOME/probe/<run_id>.json``
 with the same field shape, so a TS-side ``requestPause`` is observed
 by a Python SDK and vice versa. That cross-language symmetry is the
 whole point of putting the protocol in a file (no shared in-process
@@ -43,11 +43,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
-from .paths import spool_home
+from .paths import meter_home
 
 
 #: Runtime probe FSM state. Lives in the on-disk JSON record at
-#: ``~/.spool/probe/<run_id>.json`` and drives the live
+#: ``~/.meterbility/probe/<run_id>.json`` and drives the live
 #: pause/inject/resume protocol between operator and SDK.
 #:
 #: Distinct from the persisted ``Run.probe_state`` column in the TS
@@ -74,7 +74,7 @@ class ProbeRecord:
 
 
 def probe_dir() -> Path:
-    return spool_home() / "probe"
+    return meter_home() / "probe"
 
 
 def probe_file_path(run_id: str) -> Path:

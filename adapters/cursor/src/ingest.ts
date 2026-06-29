@@ -8,8 +8,8 @@ import type {
   Run,
   Step,
   TokenUsage,
-} from "@spool-ai/shared";
-import { hashJson } from "@spool-ai/shared";
+} from "@meterbility/shared";
+import { hashJson } from "@meterbility/shared";
 import {
   getRunBySessionId,
   insertRun,
@@ -19,8 +19,8 @@ import {
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
+} from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
 import { CursorDb, isMeaningfulComposer } from "./parser.ts";
 import {
   bubbleText,
@@ -57,7 +57,7 @@ export interface IngestCursorOptions {
 /**
  * Ingest Cursor composer conversations from the global state.vscdb.
  *
- * Each composer becomes one Spool Run. Each bubble becomes one Step:
+ * Each composer becomes one Meterbility Run. Each bubble becomes one Step:
  *   - user bubbles (type=1) become "message" steps with the user text
  *     as the action.
  *   - assistant bubbles (type=2) become either tool_call steps (when
@@ -207,7 +207,7 @@ async function ingestOneComposer(
     if (isUserBubble(bubble)) {
       // User bubbles become history entries. We *also* persist them as
       // Steps so the operator can scrub through user turns in the
-      // inspector — Spool's mental model is "one Step per turn,"
+      // inspector — Meterbility's mental model is "one Step per turn,"
       // regardless of speaker.
       const ref = await store.blobs.putString(text);
       history.push({ role: "user", content_ref: ref });

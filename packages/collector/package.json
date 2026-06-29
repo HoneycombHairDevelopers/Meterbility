@@ -1,5 +1,5 @@
 {
-  "name": "@spool-ai/collector",
+  "name": "@meterbility/collector",
   "version": "0.3.1",
   "license": "MIT",
   "type": "module",
@@ -11,19 +11,19 @@
     }
   },
   "dependencies": {
-    "@spool-ai/shared": "^0.3.0",
-    "@spool-ai/spec": "^0.3.0",
+    "@meterbility/shared": "^0.3.0",
+    "@meterbility/spec": "^0.3.0",
     "better-sqlite3": "^11.3.0"
   },
-  "description": "SQLite store, content-addressed blob storage, and replay primitives for Spool",
+  "description": "SQLite store, content-addressed blob storage, and replay primitives for Meterbility",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HoneycombHairDevelopers/Spool.git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Meterbility.git",
     "directory": "packages/collector"
   },
-  "homepage": "https://github.com/HoneycombHairDevelopers/Spool#readme",
+  "homepage": "https://github.com/HoneycombHairDevelopers/Meterbility#readme",
   "bugs": {
-    "url": "https://github.com/HoneycombHairDevelopers/Spool/issues"
+    "url": "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
   },
   "engines": {
     "node": ">=20.6"

@@ -10,9 +10,9 @@ import type {
   Run,
   Step,
   TokenUsage,
-} from "@spool-ai/shared";
-import { hashJson } from "@spool-ai/shared";
-import { costCents } from "@spool-ai/spec";
+} from "@meterbility/shared";
+import { hashJson } from "@meterbility/shared";
+import { costCents } from "@meterbility/spec";
 import {
   captureBaseline,
   getIngestOffset,
@@ -29,8 +29,8 @@ import {
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
+} from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
 import { readSessionFromOffset, endOffset, type ParsedRecord } from "./parser.ts";
 import {
   isAssistant,
@@ -241,7 +241,7 @@ export async function ingestSession(
           // the baseline only weakens replay, never breaks ingest.
           // eslint-disable-next-line no-console
           console.warn(
-            `[spool] baseline capture failed for cwd ${meta.cwd}: ${(err as Error).message}`,
+            `[meter] baseline capture failed for cwd ${meta.cwd}: ${(err as Error).message}`,
           );
         }
       }
@@ -258,7 +258,7 @@ export async function ingestSession(
         if (!msg.includes("UNIQUE constraint failed")) {
           // eslint-disable-next-line no-console
           console.warn(
-            `[spool] file_change insert failed for step ${fc.step_id}: ${msg}`,
+            `[meter] file_change insert failed for step ${fc.step_id}: ${msg}`,
           );
         }
       }
@@ -425,7 +425,7 @@ interface BuildArgs {
 }
 
 /**
- * Walk the records and yield one Spool Step per assistant message.
+ * Walk the records and yield one Meterbility Step per assistant message.
  *
  * The conversation history component of each Step's ContextSnapshot is
  * the list of prior user/assistant messages threaded by parentUuid, in

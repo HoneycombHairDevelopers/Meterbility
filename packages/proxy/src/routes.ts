@@ -4,7 +4,7 @@
  * Each entry maps a path prefix the proxy listens on to:
  *   - the upstream URL the request gets forwarded to,
  *   - which capture function knows how to map this provider's
- *     request/response shape into a Spool Step.
+ *     request/response shape into a Meterbility Step.
  *
  * The full request path is preserved when forwarding (proxy receives
  * `/v1/messages`, forwards `https://api.anthropic.com/v1/messages`).

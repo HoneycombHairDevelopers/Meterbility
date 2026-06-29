@@ -7,8 +7,8 @@
  * honors localStorage, keyboard accessibility, and graceful degradation
  * when localStorage is unavailable.
  *
- * Fixture: see ./serve-fixture.ts — boots a real spool server against a
- * temp SPOOL_HOME, seeds a run with two pre-rendered steps (seq 0 + 1),
+ * Fixture: see ./serve-fixture.ts — boots a real meter server against a
+ * temp METERBILITY_HOME, seeds a run with two pre-rendered steps (seq 0 + 1),
  * and exposes POST /__test__/append-step to append a third (seq 2) via
  * the live SSE pipe.
  */
@@ -98,7 +98,7 @@ test.describe("pretty-print toggle", () => {
     // localStorage key should be cleared, not just left dangling.
     const stored = await page.evaluate(
       ([runId, stepId]) =>
-        localStorage.getItem(`spool:pretty:${runId}:${stepId}`),
+        localStorage.getItem(`meter:pretty:${runId}:${stepId}`),
       [FIXTURE.runId, STEP_0],
     );
     expect(stored).toBeNull();
@@ -141,7 +141,7 @@ test.describe("pretty-print toggle", () => {
     // should immediately flip it to pretty before any user interaction.
     await page.evaluate(
       ([runId, stepId]) =>
-        localStorage.setItem(`spool:pretty:${runId}:${stepId}`, "1"),
+        localStorage.setItem(`meter:pretty:${runId}:${stepId}`, "1"),
       [FIXTURE.runId, STEP_2],
     );
 
@@ -152,10 +152,10 @@ test.describe("pretty-print toggle", () => {
     // actually start LiveInspector — our test route fires SSE events
     // directly via the controller's subscriber set.
     await page.evaluate(() => {
-      const meta = document.querySelector('meta[name="spool-live-mode"]');
+      const meta = document.querySelector('meta[name="meter-live-mode"]');
       meta?.setAttribute("content", "1");
       document.dispatchEvent(
-        new CustomEvent("spool:live-state", { detail: { live: true } }),
+        new CustomEvent("meter:live-state", { detail: { live: true } }),
       );
     });
 

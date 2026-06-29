@@ -10,13 +10,13 @@ import {
   upsertAgent,
   upsertProjectByCwd,
   getRun,
-} from "@spool-ai/collector";
-import type { Run } from "@spool-ai/shared";
+} from "@meterbility/collector";
+import type { Run } from "@meterbility/shared";
 import { buildApp } from "./web.ts";
 
 function fresh(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-close-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-close-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 

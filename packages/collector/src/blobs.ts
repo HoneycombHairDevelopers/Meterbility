@@ -6,7 +6,7 @@ import {
   hashJson,
   redactBuffer,
   sha256,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import type Database from "better-sqlite3";
 
 /**
@@ -53,7 +53,7 @@ export function isProbablyText(buf: Buffer): boolean {
 /**
  * Content-addressed blob store.
  *
- * Layout: $SPOOL_HOME/blobs/<aa>/<bb>/<sha256>
+ * Layout: $METERBILITY_HOME/blobs/<aa>/<bb>/<sha256>
  *
  * Two-level sharding (256 × 256) keeps any single directory under a few
  * thousand files even on heavy users. Writes are write-once: if the file

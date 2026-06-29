@@ -1,4 +1,4 @@
-import type { Action, ContextComponent, TokenUsage } from "@spool-ai/shared";
+import type { Action, ContextComponent, TokenUsage } from "@meterbility/shared";
 
 /**
  * Per-provider capture interface. Each capture module knows how to:

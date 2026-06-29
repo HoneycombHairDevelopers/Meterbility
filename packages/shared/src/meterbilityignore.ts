@@ -1,10 +1,10 @@
 /**
- * `.spoolignore` matcher — a gitignore-compatible subset.
+ * `.meterbilityignore` matcher — a gitignore-compatible subset.
  *
  * Scope per SPEC v0.3 §10.2: a single pattern matcher that's used by
  * (a) baseline tree capture (this milestone) and (b) the file-watcher
  * daemon (v0.4). The same matcher also reads `.gitignore` files since
- * the two formats are syntactically compatible for the patterns Spool
+ * the two formats are syntactically compatible for the patterns Meterbility
  * needs to honor.
  *
  * What's supported:
@@ -19,7 +19,7 @@
  *   - Negation (`!pattern`) — gitignore allows un-ignoring; v0.3 doesn't
  *     need it for either the defaults or the configs we ship.
  *   - `[char-class]` brackets — unused in real-world `.gitignore` files
- *     for the patterns Spool cares about.
+ *     for the patterns Meterbility cares about.
  *   - `.gitignore` files in subdirectories (only the root file is read).
  *
  * If a v0.4 user trips on one of these, we'll extend; honest partial
@@ -27,7 +27,7 @@
  */
 
 /**
- * Per SPEC §10.2: the defaults Spool ships when no `.spoolignore` is
+ * Per SPEC §10.2: the defaults Meterbility ships when no `.meterbilityignore` is
  * present at the repo root. Covers build artifacts, language caches,
  * VCS internals, editor/OS noise, coverage, and a "sensitive by
  * default" set (env files, keys, credentials).
@@ -35,7 +35,7 @@
  * The defaults are an ordered list so users / tests can append their
  * own and still see what was inherited.
  */
-export const DEFAULT_SPOOLIGNORE: readonly string[] = [
+export const DEFAULT_METERBILITYIGNORE: readonly string[] = [
   // Build artifacts
   "node_modules/",
   "dist/",
@@ -85,7 +85,7 @@ export class IgnoreMatcher {
 
   /** Defaults-only matcher — the baseline state for any repo. */
   static fromDefaults(): IgnoreMatcher {
-    return IgnoreMatcher.fromLines([...DEFAULT_SPOOLIGNORE]);
+    return IgnoreMatcher.fromLines([...DEFAULT_METERBILITYIGNORE]);
   }
 
   /**
@@ -100,10 +100,10 @@ export class IgnoreMatcher {
 
   /**
    * Defaults + the lines from one or more pattern lists. Used by the
-   * baseline walker to stack `.spoolignore` and `.gitignore` on top
+   * baseline walker to stack `.meterbilityignore` and `.gitignore` on top
    * of the defaults so the dominant common case ("user wrote a custom
-   * `.spoolignore`") doesn't accidentally lose the protections in
-   * `DEFAULT_SPOOLIGNORE`.
+   * `.meterbilityignore`") doesn't accidentally lose the protections in
+   * `DEFAULT_METERBILITYIGNORE`.
    */
   static fromDefaultsPlus(...extra: Array<string[] | undefined>): IgnoreMatcher {
     const m = IgnoreMatcher.fromDefaults();

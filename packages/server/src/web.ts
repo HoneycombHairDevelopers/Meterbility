@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
-import type { Annotation, Run, Step } from "@spool-ai/shared";
+import type { Annotation, Run, Step } from "@meterbility/shared";
 import {
   clearProbe,
   consumeInject as consumeProbeInject,
@@ -9,7 +9,7 @@ import {
   requestPause as probeRequestPause,
   requestResume as probeRequestResume,
   setInject as probeSetInject,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import {
   getBaselineTree,
   getFileChange,
@@ -32,9 +32,9 @@ import {
   isSecret,
   maskSecret,
   type SettingKey,
-} from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
-import { TRACE_FORMAT_VERSION } from "@spool-ai/spec";
+} from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
+import { TRACE_FORMAT_VERSION } from "@meterbility/spec";
 import { diffRuns } from "./diff.ts";
 import { recordProbeIntervention } from "./probe_annotations.ts";
 import {
@@ -66,7 +66,7 @@ import type {
   ContextSnapshot,
   ConversationMessage,
   RetrievedDocument,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import {
   LiveController,
   LiveInspector,
@@ -98,7 +98,7 @@ import {
  * Hono app over the local Store. Two surfaces share the same routes:
  *  - JSON API (`/api/...`) — for future web/UI clients.
  *  - Server-rendered HTML (`/`, `/runs/:id`, `/diff?a=&b=`) — what
- *    `spool web` opens by default.
+ *    `meter web` opens by default.
  */
 export interface BuildAppOptions {
   /**
@@ -182,7 +182,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         : buildFleetEntries(store, { limit: 50 });
     return c.html(
       renderShell(
-        "Spool · Fleet",
+        "Meterbility · Fleet",
         renderFleet(entries, { liveMode: isLive }),
         shellOpts(),
       ),
@@ -252,7 +252,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   });
 
   // v0.3 — Live control endpoints. Lets the web UI flip live mode
-  // without restarting `spool web`. Idempotent: start-when-running
+  // without restarting `meter web`. Idempotent: start-when-running
   // and stop-when-stopped are both no-ops.
   app.get("/api/live/status", (c) =>
     c.json({ live: controller.isLive() }),
@@ -306,14 +306,14 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       renderRun(run, steps, annotations, forks, stepDecisions, fcByStep, probePanel),
       shellOpts(),
     );
-    if (process.env.SPOOL_DEBUG && shell.length > 2_000_000) {
+    if (process.env.METERBILITY_DEBUG && shell.length > 2_000_000) {
       // Dev-only sentinel: pretty-print pre-renders both raw and pretty
       // bodies for every step. For very long runs that doubled markup
       // can push the page over the 2 MB threshold where switching to
-      // lazy-fetch becomes worth it. Surfaced via SPOOL_DEBUG so it
+      // lazy-fetch becomes worth it. Surfaced via METERBILITY_DEBUG so it
       // never spams normal users.
       console.warn(
-        `spool: run ${run.run_id.slice(0, 12)} page is ${(shell.length / 1024 / 1024).toFixed(1)}MB — consider lazy pretty fetch`,
+        `meter: run ${run.run_id.slice(0, 12)} page is ${(shell.length / 1024 / 1024).toFixed(1)}MB — consider lazy pretty fetch`,
       );
     }
     return c.html(shell);
@@ -407,8 +407,8 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   // run. The SDK side must have `tracer.probeEnabled = true` for these
   // operations to actually pause the agent; the panel surfaces that
   // requirement so a confused operator knows why their pause did
-  // nothing. The CLI (`spool probe ...`) goes through the same probe
-  // protocol (`@spool-ai/shared/probe`), so both the web panel and the
+  // nothing. The CLI (`meter probe ...`) goes through the same probe
+  // protocol (`@meterbility/shared/probe`), so both the web panel and the
   // terminal see the same state.
 
   // v0.3 canonical probe routes — per SPEC-V0_3 §4 + §8.4, probe lives
@@ -476,7 +476,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
    * clear the pending one. Body: { message: string, force?: boolean }
    * to queue; { clear: true } to discard a queued message without
    * setting a new one. Refuses to clobber a queued message unless
-   * `force` is true (mirrors `spool probe inject --force`). The
+   * `force` is true (mirrors `meter probe inject --force`). The
    * `probe_edit` annotation is emitted at resume time (see above), not
    * at inject time, so a staged-then-discarded inject leaves no
    * annotation trail. */
@@ -1013,7 +1013,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
             ? async (call) => {
                 if (!allowSet.has(call.tool_name)) {
                   return {
-                    output: { spool_note: `tool '${call.tool_name}' not allowed` },
+                    output: { meter_note: `tool '${call.tool_name}' not allowed` },
                     is_error: false,
                     summary: `skipped: ${call.tool_name}`,
                   };
@@ -1038,7 +1038,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
                   };
                 }
                 return {
-                  output: { spool_note: `tool '${call.tool_name}' has no executor; no-op` },
+                  output: { meter_note: `tool '${call.tool_name}' has no executor; no-op` },
                   is_error: false,
                   summary: `no-op: ${call.tool_name}`,
                 };
@@ -1153,19 +1153,19 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   // ─── Settings page + supporting APIs ─────────────────────────────
   app.get("/settings", async (c) => {
     const { renderSettings } = await import("./html.ts");
-    const slackWebhook = resolveSetting(store, "slack.webhook", "SPOOL_SLACK_WEBHOOK");
+    const slackWebhook = resolveSetting(store, "slack.webhook", "METERBILITY_SLACK_WEBHOOK");
     const apiKey = resolveSetting(store, "anthropic.api_key", "ANTHROPIC_API_KEY");
-    const pgUrl = resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+    const pgUrl = resolveSetting(store, "postgres.url", "METERBILITY_DB_URL");
     return c.html(
       renderShell(
         "Settings",
         renderSettings({
           slackWebhook,
-          slackWebhookFromEnv: !!process.env.SPOOL_SLACK_WEBHOOK,
+          slackWebhookFromEnv: !!process.env.METERBILITY_SLACK_WEBHOOK,
           apiKey,
           apiKeyFromEnv: !!process.env.ANTHROPIC_API_KEY,
           postgresUrl: pgUrl,
-          postgresUrlFromEnv: !!process.env.SPOOL_DB_URL,
+          postgresUrlFromEnv: !!process.env.METERBILITY_DB_URL,
           watchedTools: getSetting(store, "live.watch_tools") ?? "",
           stallSeconds: Number(getSetting(store, "live.stall_seconds") ?? 120),
           defaultModel: getSetting(store, "fork.default_model") ?? "claude-opus-4-7",
@@ -1190,14 +1190,14 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     return c.json({ ok: true });
   });
 
-  // Doctor: returns the same checks as `spool doctor`, as JSON
+  // Doctor: returns the same checks as `meter doctor`, as JSON
   app.get("/api/doctor", async (c) => {
     const { existsSync } = await import("node:fs");
     const { stat } = await import("node:fs/promises");
-    const { claudeHome, claudeProjectsRoot, dbPath, spoolHome } = await import(
-      "@spool-ai/shared"
+    const { claudeHome, claudeProjectsRoot, dbPath, meterHome } = await import(
+      "@meterbility/shared"
     );
-    const { discoverSessions } = await import("@spool-ai/claude-code-adapter");
+    const { discoverSessions } = await import("@meterbility/claude-code-adapter");
     const checks: Array<{
       name: string;
       status: "ok" | "warn" | "fail";
@@ -1215,7 +1215,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
             : "fail",
       detail: `v${node}`,
     });
-    checks.push({ name: "SPOOL_HOME", status: "ok", detail: spoolHome() });
+    checks.push({ name: "METERBILITY_HOME", status: "ok", detail: meterHome() });
     checks.push({
       name: "CLAUDE_HOME",
       status: existsSync(claudeHome()) ? "ok" : "fail",
@@ -1275,7 +1275,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       let composers = 0;
       if (body.runtime === "claude-code") {
         const { discoverSessions, ingestSession } = await import(
-          "@spool-ai/claude-code-adapter"
+          "@meterbility/claude-code-adapter"
         );
         let paths: string[] = [];
         if (body.path) paths = [body.path];
@@ -1294,7 +1294,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         }
       } else if (body.runtime === "codex-cli") {
         const { discoverCodexSessions, ingestCodexSession } = await import(
-          "@spool-ai/codex-cli-adapter"
+          "@meterbility/codex-cli-adapter"
         );
         let paths: string[] = [];
         if (body.path) paths = [body.path];
@@ -1312,7 +1312,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
           }
         }
       } else if (body.runtime === "cursor") {
-        const { ingestCursorGlobal } = await import("@spool-ai/cursor-adapter");
+        const { ingestCursorGlobal } = await import("@meterbility/cursor-adapter");
         const r = await ingestCursorGlobal(store, { limit: body.limit });
         if (r.status === "ok") {
           composers = r.composers_ingested;
@@ -1343,7 +1343,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     };
     const url =
       body.webhook ??
-      resolveSetting(store, "slack.webhook", "SPOOL_SLACK_WEBHOOK");
+      resolveSetting(store, "slack.webhook", "METERBILITY_SLACK_WEBHOOK");
     if (!url) return c.json({ error: "missing webhook" }, 400);
     try {
       const n = new SlackNotifier({ webhookUrl: url });
@@ -1358,10 +1358,10 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.post("/api/db/postgres-init", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { url?: string };
     const url =
-      body.url ?? resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+      body.url ?? resolveSetting(store, "postgres.url", "METERBILITY_DB_URL");
     if (!url) return c.json({ error: "missing url" }, 400);
     try {
-      const { PostgresStore } = await import("@spool-ai/store-postgres");
+      const { PostgresStore } = await import("@meterbility/store-postgres");
       const pg = await PostgresStore.open({ url });
       try {
         const r = await pg.client.query<{ value: string }>(
@@ -1384,11 +1384,11 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       limit?: number;
     };
     const url =
-      body.url ?? resolveSetting(store, "postgres.url", "SPOOL_DB_URL");
+      body.url ?? resolveSetting(store, "postgres.url", "METERBILITY_DB_URL");
     if (!url) return c.json({ error: "missing url" }, 400);
     try {
       const { PostgresStore, syncSqliteToPostgres } = await import(
-        "@spool-ai/store-postgres"
+        "@meterbility/store-postgres"
       );
       const pg = await PostgresStore.open({ url });
       try {
@@ -1404,7 +1404,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     }
   });
 
-  // Run trace export — Spool Trace Format 0.3.0
+  // Run trace export — Meterbility Trace Format 0.3.0
   //
   // Query params:
   //   ?blobs=0             — skip blob inlining (refs only).
@@ -1429,7 +1429,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         )
       : [];
     const trace: Record<string, unknown> = {
-      spool_trace_version: TRACE_FORMAT_VERSION,
+      meter_trace_version: TRACE_FORMAT_VERSION,
       run,
       steps,
       file_changes,
@@ -1471,7 +1471,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     }
     c.header(
       "Content-Disposition",
-      `attachment; filename="${run.run_id}.spool.json"`,
+      `attachment; filename="${run.run_id}.meter.json"`,
     );
     return c.json(trace);
   });
@@ -1599,7 +1599,7 @@ export function serveApp(
     controller,
     get live() {
       // Read-through getter for back-compat — exposes the underlying
-      // inspector if live mode is on. `spool web` reads this to log
+      // inspector if live mode is on. `meter web` reads this to log
       // alerts to the console; nothing else in the codebase mutates it.
       return (controller as unknown as { inspector?: LiveInspector }).inspector;
     },

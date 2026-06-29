@@ -1,5 +1,5 @@
-import { Store, listRuns, listSteps } from "@spool-ai/collector";
-import { ingestSession } from "@spool-ai/claude-code-adapter";
+import { Store, listRuns, listSteps } from "@meterbility/collector";
+import { ingestSession } from "@meterbility/claude-code-adapter";
 
 const path = process.argv[2];
 if (!path) {

@@ -5,8 +5,8 @@ import {
   insertFileChange,
   setRunBaselineTree,
   setSetting,
-} from "@spool-ai/collector";
-import { serializeManifest } from "@spool-ai/collector";
+} from "@meterbility/collector";
+import { serializeManifest } from "@meterbility/collector";
 import { buildApp } from "./web.ts";
 import { freshCtx, scaffoldRun, jsonReq } from "./web-test-utils.ts";
 
@@ -32,8 +32,8 @@ import { freshCtx, scaffoldRun, jsonReq } from "./web-test-utils.ts";
  *   H. Tests subsystem            — 8 routes
  *   I. Settings + doctor + ingest — 8 routes
  *
- * Every test uses `freshCtx()` for SPOOL_HOME isolation and calls
- * `c.cleanup()` in a `finally` so SPOOL_HOME doesn't leak across
+ * Every test uses `freshCtx()` for METERBILITY_HOME isolation and calls
+ * `c.cleanup()` in a `finally` so METERBILITY_HOME doesn't leak across
  * tests.
  */
 
@@ -50,7 +50,7 @@ test("page: GET / returns 200 + HTML shell (fleet view, no runs)", async () => {
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
     const html = await res.text();
     assert.match(html, /<html/i, "shell renders");
-    assert.match(html, /Spool/, "title present");
+    assert.match(html, /Meterbility/, "title present");
   } finally {
     c.cleanup();
   }
@@ -946,15 +946,15 @@ test("slack: POST /api/slack/test with no webhook configured → 400", async () 
   try {
     const app = buildApp(c.store);
     // Ensure no env var leaks in (some dev machines have it set)
-    const prev = process.env.SPOOL_SLACK_WEBHOOK;
-    delete process.env.SPOOL_SLACK_WEBHOOK;
+    const prev = process.env.METERBILITY_SLACK_WEBHOOK;
+    delete process.env.METERBILITY_SLACK_WEBHOOK;
     try {
       const res = await app.fetch(jsonReq("http://x/api/slack/test", {}));
       assert.equal(res.status, 400);
       const body = (await res.json()) as { error: string };
       assert.match(body.error, /webhook/i);
     } finally {
-      if (prev !== undefined) process.env.SPOOL_SLACK_WEBHOOK = prev;
+      if (prev !== undefined) process.env.METERBILITY_SLACK_WEBHOOK = prev;
     }
   } finally {
     c.cleanup();
@@ -967,15 +967,15 @@ test("db: POST /api/db/postgres-init with no url → 400", async () => {
   const c = freshCtx();
   try {
     const app = buildApp(c.store);
-    const prev = process.env.SPOOL_DB_URL;
-    delete process.env.SPOOL_DB_URL;
+    const prev = process.env.METERBILITY_DB_URL;
+    delete process.env.METERBILITY_DB_URL;
     try {
       const res = await app.fetch(jsonReq("http://x/api/db/postgres-init", {}));
       assert.equal(res.status, 400);
       const body = (await res.json()) as { error: string };
       assert.match(body.error, /url/i);
     } finally {
-      if (prev !== undefined) process.env.SPOOL_DB_URL = prev;
+      if (prev !== undefined) process.env.METERBILITY_DB_URL = prev;
     }
   } finally {
     c.cleanup();
@@ -992,11 +992,11 @@ test("export: GET /api/runs/:id/export returns trace shape; unknown id → 404",
     );
     assert.equal(ok.status, 200);
     const body = (await ok.json()) as {
-      spool_trace_version: string;
+      meter_trace_version: string;
       run: { run_id: string };
       steps: unknown[];
     };
-    assert.match(body.spool_trace_version, /^\d+\.\d+\.\d+$/);
+    assert.match(body.meter_trace_version, /^\d+\.\d+\.\d+$/);
     assert.equal(body.run.run_id, runId);
     assert.equal(body.steps.length, 2);
 
@@ -1014,11 +1014,11 @@ test("export: GET /api/runs/:id/export returns trace shape; unknown id → 404",
  *
  * Per SPEC-V0_3 §10 + §12: the exported trace must carry
  * `file_changes[]` and `baseline_trees[]`, declare itself as
- * spool_trace_version "0.3.0", and *default* to omitting file content
+ * meter_trace_version "0.3.0", and *default* to omitting file content
  * blobs (bug reports get shared). `?file_blobs=1` opts in.
  * ==================================================================== */
 
-test("export v0.3: spool_trace_version is exactly 0.3.0", async () => {
+test("export v0.3: meter_trace_version is exactly 0.3.0", async () => {
   const c = freshCtx();
   try {
     const { runId } = scaffoldRun(c.store);
@@ -1027,8 +1027,8 @@ test("export v0.3: spool_trace_version is exactly 0.3.0", async () => {
       new Request(`http://x/api/runs/${runId}/export`),
     );
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { spool_trace_version: string };
-    assert.equal(body.spool_trace_version, "0.3.0");
+    const body = (await res.json()) as { meter_trace_version: string };
+    assert.equal(body.meter_trace_version, "0.3.0");
   } finally {
     c.cleanup();
   }

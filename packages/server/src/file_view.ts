@@ -1,4 +1,4 @@
-import type { FileChange, FileOp, Run, Step } from "@spool-ai/shared";
+import type { FileChange, FileOp, Run, Step } from "@meterbility/shared";
 
 /**
  * `/runs/:run_id/files` page renderer.
@@ -767,7 +767,7 @@ export function renderFilesPage(args: RenderFilesPageArgs): {
   };
 }
 
-// ─── Styles + scripts (inline because Spool's server doesn't ship a
+// ─── Styles + scripts (inline because Meterbility's server doesn't ship a
 // build pipeline; one file per route is the existing pattern) ──
 
 const FILES_PAGE_STYLES = `<style>

@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Propose a capability Spool doesn't have yet
+about: Propose a capability Meterbility doesn't have yet
 title: ""
 labels: enhancement
 assignees: ""

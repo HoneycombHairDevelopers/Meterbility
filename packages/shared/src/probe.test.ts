@@ -22,8 +22,8 @@ import {
  */
 
 function freshHome(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-probe-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-probe-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
@@ -219,7 +219,7 @@ test("readState normalizes unknown state strings to running (defense-in-depth)",
 test("probeFilePath URL-encodes the run id so weird characters don't escape the dir", () => {
   freshHome();
   // Defensive: a malicious or malformed run_id with path traversal in
-  // it shouldn't be able to write outside $SPOOL_HOME/probe/.
+  // it shouldn't be able to write outside $METERBILITY_HOME/probe/.
   const evil = "../../escape";
   const path = probeFilePath(evil);
   assert.ok(

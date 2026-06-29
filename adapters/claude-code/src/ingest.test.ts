@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listRuns, listSteps } from "@spool-ai/collector";
+import { Store, listRuns, listSteps } from "@meterbility/collector";
 import { ingestSession } from "./ingest.ts";
 
 function fresh(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-ingest-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-ingest-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 function writeSession(records: object[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-session-"));
+  const dir = mkdtempSync(join(tmpdir(), "meter-session-"));
   const path = join(dir, "session.jsonl");
   writeFileSync(path, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
   return path;

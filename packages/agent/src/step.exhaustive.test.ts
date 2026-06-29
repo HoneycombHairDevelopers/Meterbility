@@ -4,13 +4,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fc from "fast-check";
-import { Store, getStep, listSteps, listRuns } from "@spool-ai/collector";
-import { SpoolTracer } from "./tracer.ts";
+import { Store, getStep, listSteps, listRuns } from "@meterbility/collector";
+import { MeterbilityTracer } from "./tracer.ts";
 
 /**
- * Tier 9 — exhaustive coverage of SpoolStep (packages/agent/src/step.ts).
+ * Tier 9 — exhaustive coverage of MeterbilityStep (packages/agent/src/step.ts).
  *
- * SpoolStep is the TS SDK's step builder: every traced agent funnels
+ * MeterbilityStep is the TS SDK's step builder: every traced agent funnels
  * through `tracer.startStep() → step.record*() → step.end()`. Before
  * this tier the file had zero direct tests; coverage rode on the four
  * happy-path tests in tracer.test.ts.
@@ -22,14 +22,14 @@ import { SpoolTracer } from "./tracer.ts";
  */
 
 function freshHome(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-step-exh-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-step-exh-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
-function mkTracer(opts: { runTitle?: string } = {}): SpoolTracer {
+function mkTracer(opts: { runTitle?: string } = {}): MeterbilityTracer {
   freshHome();
-  return new SpoolTracer({
+  return new MeterbilityTracer({
     project: "/tmp/step-exh",
     agent: "tester",
     runTitle: opts.runTitle ?? "step-exh-fixture",
@@ -277,7 +277,7 @@ test("end: persists a context snapshot blob (decision_ref + snapshot_id populate
   assert.ok(persisted.decision_ref, "decision ref set");
   // Verify the snapshot blob is actually retrievable from the store.
   const inspect = Store.open();
-  const { resolveSnapshotBlobRef } = await import("@spool-ai/collector");
+  const { resolveSnapshotBlobRef } = await import("@meterbility/collector");
   const ref = resolveSnapshotBlobRef(inspect, persisted.context_snapshot_id);
   const text = await inspect.blobs.tryGetString(ref);
   assert.ok(text, "snapshot blob fetched back");
@@ -472,7 +472,7 @@ async function readContext(stepId: string): Promise<unknown[]> {
   const inspect = Store.open();
   try {
     const step = getStep(inspect, stepId)!;
-    const { resolveSnapshotBlobRef } = await import("@spool-ai/collector");
+    const { resolveSnapshotBlobRef } = await import("@meterbility/collector");
     const ref = resolveSnapshotBlobRef(inspect, step.context_snapshot_id);
     const text = await inspect.blobs.getString(ref);
     const snapshot = JSON.parse(text) as { components: unknown[] };
@@ -594,7 +594,7 @@ test("context: all four fields together produce all four components", async () =
 /* ====================================================================
  * Section 7 — Collector integration (4 tests)
  *
- * Verifies SpoolStep wires correctly into the surrounding tracer: run
+ * Verifies MeterbilityStep wires correctly into the surrounding tracer: run
  * row totals get refreshed, multiple steps share the run_id, status
  * counters increment, and step ordering is preserved.
  * ==================================================================== */

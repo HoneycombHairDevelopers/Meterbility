@@ -1,6 +1,6 @@
 """
-Tier 13 — exhaustive coverage of ``spool_agent.blobs`` (BlobStore) and
-``spool_agent.hashing`` (sha256, canonical_json, hash_json), plus
+Tier 13 — exhaustive coverage of ``meterbility_agent.blobs`` (BlobStore) and
+``meterbility_agent.hashing`` (sha256, canonical_json, hash_json), plus
 cross-language hash + blob compat with the TS collector.
 
 Mirrors TS Tier 5 (``packages/collector/src/blobs.exhaustive.test.ts``)
@@ -35,19 +35,19 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent.parent
 sys.path.insert(0, str(HERE.parent / "src"))
 
-from spool_agent.blobs import BlobStore  # noqa: E402
-from spool_agent.hashing import canonical_json, hash_json, sha256  # noqa: E402
-from spool_agent.paths import blob_path, blob_root  # noqa: E402
-from spool_agent.store import Store  # noqa: E402
+from meterbility_agent.blobs import BlobStore  # noqa: E402
+from meterbility_agent.hashing import canonical_json, hash_json, sha256  # noqa: E402
+from meterbility_agent.paths import blob_path, blob_root  # noqa: E402
+from meterbility_agent.store import Store  # noqa: E402
 
 
 class IsolatedStore(unittest.TestCase):
-    """Per-test SPOOL_HOME + a fresh Store + BlobStore."""
+    """Per-test METERBILITY_HOME + a fresh Store + BlobStore."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self._prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = self._tmp.name
+        self._prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = self._tmp.name
         self.store = Store.open()
         self.bs: BlobStore = self.store.blobs
 
@@ -57,9 +57,9 @@ class IsolatedStore(unittest.TestCase):
         except Exception:
             pass
         if self._prev_home is None:
-            os.environ.pop("SPOOL_HOME", None)
+            os.environ.pop("METERBILITY_HOME", None)
         else:
-            os.environ["SPOOL_HOME"] = self._prev_home
+            os.environ["METERBILITY_HOME"] = self._prev_home
         self._tmp.cleanup()
 
     def _redaction_rows(self, sha: str) -> List[tuple]:
@@ -137,7 +137,7 @@ class TestRedactionLogAndAtomicWrite(IsolatedStore):
         sha = self.bs.put_string(f"key={ANTHROPIC_SECRET}\n")
         stored = self.bs.get_string(sha)
         self.assertNotIn(ANTHROPIC_SECRET, stored, "raw secret must not survive")
-        self.assertIn("«spool:redacted:anthropic-key»", stored)
+        self.assertIn("«meter:redacted:anthropic-key»", stored)
         rows = self._redaction_rows(sha)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0], ("anthropic-key", 1))
@@ -320,13 +320,13 @@ process.stdout.write(hashJson(v));
     return proc.stdout.strip()
 
 
-def _ts_put_string_via_store(spool_home: Path, content: str) -> str:
-    """Have the TS BlobStore put a string at the given SPOOL_HOME and
-    return the SHA. Argv[1] = SPOOL_HOME, content comes via stdin."""
+def _ts_put_string_via_store(meter_home: Path, content: str) -> str:
+    """Have the TS BlobStore put a string at the given METERBILITY_HOME and
+    return the SHA. Argv[1] = METERBILITY_HOME, content comes via stdin."""
     script = """
 import { Store } from "%s";
 import { readFileSync } from "node:fs";
-process.env.SPOOL_HOME = process.argv[1];
+process.env.METERBILITY_HOME = process.argv[1];
 const store = Store.open();
 const content = readFileSync(0, "utf-8");
 const sha = await store.blobs.putString(content);
@@ -344,7 +344,7 @@ process.stdout.write(sha);
             "-e",
             script,
             "--",
-            str(spool_home),
+            str(meter_home),
         ],
         input=content,
         capture_output=True,
@@ -357,11 +357,11 @@ process.stdout.write(sha);
     return proc.stdout.strip()
 
 
-def _ts_get_string_via_store(spool_home: Path, sha: str) -> str:
+def _ts_get_string_via_store(meter_home: Path, sha: str) -> str:
     """Read a blob from the TS BlobStore by SHA."""
     script = """
 import { Store } from "%s";
-process.env.SPOOL_HOME = process.argv[1];
+process.env.METERBILITY_HOME = process.argv[1];
 const store = Store.open();
 const text = await store.blobs.getString(process.argv[2]);
 store.close();
@@ -378,7 +378,7 @@ process.stdout.write(text);
             "-e",
             script,
             "--",
-            str(spool_home),
+            str(meter_home),
             sha,
         ],
         capture_output=True,
@@ -450,8 +450,8 @@ class TestCrossLanguageHashCompat(unittest.TestCase):
         """The content-addressed blob store must be SDK-agnostic: bytes
         Python wrote must be readable by TS at the same SHA."""
         tmp = tempfile.TemporaryDirectory()
-        prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = tmp.name
+        prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = tmp.name
         try:
             store = Store.open()
             content = "cross-language blob payload\n"
@@ -465,9 +465,9 @@ class TestCrossLanguageHashCompat(unittest.TestCase):
             self.assertEqual(ts_text, content)
         finally:
             if prev_home is None:
-                os.environ.pop("SPOOL_HOME", None)
+                os.environ.pop("METERBILITY_HOME", None)
             else:
-                os.environ["SPOOL_HOME"] = prev_home
+                os.environ["METERBILITY_HOME"] = prev_home
             tmp.cleanup()
 
     def test_ts_puts_string_python_reads_it_back(self) -> None:
@@ -475,8 +475,8 @@ class TestCrossLanguageHashCompat(unittest.TestCase):
         at the same SHA. Together with the previous test, pins the
         cross-SDK content-addressing contract in both directions."""
         tmp = tempfile.TemporaryDirectory()
-        prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = tmp.name
+        prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = tmp.name
         try:
             content = "ts-written cross-lang payload\n"
             try:
@@ -492,9 +492,9 @@ class TestCrossLanguageHashCompat(unittest.TestCase):
             self.assertEqual(py_text, content)
         finally:
             if prev_home is None:
-                os.environ.pop("SPOOL_HOME", None)
+                os.environ.pop("METERBILITY_HOME", None)
             else:
-                os.environ["SPOOL_HOME"] = prev_home
+                os.environ["METERBILITY_HOME"] = prev_home
             tmp.cleanup()
 
 

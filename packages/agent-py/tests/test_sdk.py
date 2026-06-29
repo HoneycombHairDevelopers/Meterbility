@@ -2,8 +2,8 @@
 Smoke tests for the Python SDK. Uses ``unittest`` (stdlib only) so the
 test suite has zero install footprint.
 
-Each test isolates ``$SPOOL_HOME`` to a tempdir so it never touches the
-real ``~/.spool`` store.
+Each test isolates ``$METERBILITY_HOME`` to a tempdir so it never touches the
+real ``~/.meterbility`` store.
 """
 
 from __future__ import annotations
@@ -20,34 +20,34 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "src"))
 
-from spool_agent import (  # noqa: E402
-    SpoolTracer,
+from meterbility_agent import (  # noqa: E402
+    MeterbilityTracer,
     message_action,
     tool_call_action,
     trace_anthropic,
 )
-from spool_agent.hashing import canonical_json, hash_json  # noqa: E402
-from spool_agent.pricing import cost_cents  # noqa: E402
-from spool_agent.redact import redact_string  # noqa: E402
+from meterbility_agent.hashing import canonical_json, hash_json  # noqa: E402
+from meterbility_agent.pricing import cost_cents  # noqa: E402
+from meterbility_agent.redact import redact_string  # noqa: E402
 
 
-class IsolatedSpoolHome(unittest.TestCase):
-    """Mixin: redirect SPOOL_HOME for the duration of each test."""
+class IsolatedMeterbilityHome(unittest.TestCase):
+    """Mixin: redirect METERBILITY_HOME for the duration of each test."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self._prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = self._tmp.name
+        self._prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = self._tmp.name
 
     def tearDown(self) -> None:
         if self._prev_home is None:
-            os.environ.pop("SPOOL_HOME", None)
+            os.environ.pop("METERBILITY_HOME", None)
         else:
-            os.environ["SPOOL_HOME"] = self._prev_home
+            os.environ["METERBILITY_HOME"] = self._prev_home
         self._tmp.cleanup()
 
     def _db(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(Path(self._tmp.name) / "spool.db"))
+        return sqlite3.connect(str(Path(self._tmp.name) / "meterbility.db"))
 
 
 class TestHashing(unittest.TestCase):
@@ -69,18 +69,18 @@ class TestRedact(unittest.TestCase):
     def test_redacts_anthropic_key(self) -> None:
         sample = "key=sk-ant-" + ("A" * 30)
         out, counts = redact_string(sample)
-        self.assertIn("«spool:redacted:anthropic-key»", out)
+        self.assertIn("«meter:redacted:anthropic-key»", out)
         self.assertEqual(counts, [("anthropic-key", 1)])
 
     def test_redact_off_passes_through(self) -> None:
-        os.environ["SPOOL_REDACT"] = "off"
+        os.environ["METERBILITY_REDACT"] = "off"
         try:
             sample = "sk-ant-" + ("A" * 30)
             out, counts = redact_string(sample)
             self.assertEqual(out, sample)
             self.assertEqual(counts, [])
         finally:
-            os.environ.pop("SPOOL_REDACT", None)
+            os.environ.pop("METERBILITY_REDACT", None)
 
 
 class TestPricing(unittest.TestCase):
@@ -110,9 +110,9 @@ class TestPricing(unittest.TestCase):
         self.assertTrue(approx)
 
 
-class TestTracerEndToEnd(IsolatedSpoolHome):
+class TestTracerEndToEnd(IsolatedMeterbilityHome):
     def test_one_step_run_lands_in_sqlite(self) -> None:
-        tracer = SpoolTracer(project="test-app", agent="unit-test")
+        tracer = MeterbilityTracer(project="test-app", agent="unit-test")
         run_id = tracer.run_id
         step = tracer.start_step(
             model="claude-opus-4-7",
@@ -159,7 +159,7 @@ class TestTracerEndToEnd(IsolatedSpoolHome):
             self.assertEqual(snaps[0][0], 2)  # system_prompt + history
 
     def test_tool_call_action_persists_input_blob(self) -> None:
-        tracer = SpoolTracer(project="test-app", agent="unit-test")
+        tracer = MeterbilityTracer(project="test-app", agent="unit-test")
         step = tracer.start_step(model="claude-opus-4-7")
         step.record_action(tool_call_action("Read", {"path": "/foo.py"}, "tool_use_1"))
         step.record_tool_result(
@@ -185,7 +185,7 @@ class TestTracerEndToEnd(IsolatedSpoolHome):
             self.assertEqual(outcome["status"], "ok")
 
     def test_error_outcome_marks_run_error(self) -> None:
-        tracer = SpoolTracer(project="test-app", agent="unit-test")
+        tracer = MeterbilityTracer(project="test-app", agent="unit-test")
         step = tracer.start_step(model="claude-opus-4-7")
         step.record_message("oops")
         step.record_outcome(
@@ -207,7 +207,7 @@ class TestTracerEndToEnd(IsolatedSpoolHome):
 
     def test_context_manager_seals_run_on_exception(self) -> None:
         with self.assertRaises(RuntimeError):
-            with SpoolTracer(project="test-app", agent="unit-test") as tracer:
+            with MeterbilityTracer(project="test-app", agent="unit-test") as tracer:
                 step = tracer.start_step(model="claude-opus-4-7")
                 step.record_message("partial").record_tokens(input=1, output=1)
                 step.end()
@@ -220,7 +220,7 @@ class TestTracerEndToEnd(IsolatedSpoolHome):
             self.assertEqual(status, "error")
 
     def test_redaction_log_records_anthropic_key(self) -> None:
-        tracer = SpoolTracer(project="test-app", agent="unit-test")
+        tracer = MeterbilityTracer(project="test-app", agent="unit-test")
         leaked = "auth: sk-ant-" + ("Z" * 40)
         step = tracer.start_step(
             model="claude-opus-4-7",
@@ -287,7 +287,7 @@ class FakeAnthropicClient:
         self.messages = FakeAnthropicMessages(responder)
 
 
-class TestTraceAnthropic(IsolatedSpoolHome):
+class TestTraceAnthropic(IsolatedMeterbilityHome):
     def test_one_message_call_captures_one_step(self) -> None:
         def responder(req):
             return FakeAnthropicResponse(
@@ -296,7 +296,7 @@ class TestTraceAnthropic(IsolatedSpoolHome):
                 output_tokens=3,
             )
 
-        tracer = SpoolTracer(project="test-app", agent="unit-test")
+        tracer = MeterbilityTracer(project="test-app", agent="unit-test")
         traced = trace_anthropic(tracer, FakeAnthropicClient(responder))
         resp = traced.messages.create(
             model="claude-opus-4-7",
@@ -328,14 +328,14 @@ class TestTraceAnthropic(IsolatedSpoolHome):
                         "type": "tool_use",
                         "id": "tu_1",
                         "name": "search",
-                        "input": {"q": "spool"},
+                        "input": {"q": "meter"},
                     }
                 ],
                 input_tokens=20,
                 output_tokens=2,
             )
 
-        tracer = SpoolTracer(project="test-app", agent="unit-test")
+        tracer = MeterbilityTracer(project="test-app", agent="unit-test")
         traced = trace_anthropic(tracer, FakeAnthropicClient(responder))
         traced.messages.create(
             model="claude-opus-4-7",
@@ -352,14 +352,14 @@ class TestTraceAnthropic(IsolatedSpoolHome):
             action = json.loads(row[0])
             self.assertEqual(action["kind"], "tool_call")
             self.assertEqual(action["tool_name"], "search")
-            self.assertEqual(action["tool_input"], {"q": "spool"})
+            self.assertEqual(action["tool_input"], {"q": "meter"})
             self.assertEqual(action["tool_use_id"], "tu_1")
 
     def test_exception_in_call_is_recorded_as_error(self) -> None:
         def responder(req):
             raise RuntimeError("upstream 500")
 
-        tracer = SpoolTracer(project="test-app", agent="unit-test")
+        tracer = MeterbilityTracer(project="test-app", agent="unit-test")
         traced = trace_anthropic(tracer, FakeAnthropicClient(responder))
         with self.assertRaises(RuntimeError):
             traced.messages.create(

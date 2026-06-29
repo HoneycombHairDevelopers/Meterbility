@@ -8,47 +8,47 @@ import {
   requestPause,
   requestResume,
   setInject,
-} from "@spool-ai/shared";
-import { getRun } from "@spool-ai/collector";
+} from "@meterbility/shared";
+import { getRun } from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 /**
- * `spool probe` — Live Probe operator surface. Track B / Turn 8 chunk 4.
+ * `meter probe` — Live Probe operator surface. Track B / Turn 8 chunk 4.
  *
- * Talks to the file-based probe protocol (`@spool-ai/shared`/probe.ts).
+ * Talks to the file-based probe protocol (`@meterbility/shared`/probe.ts).
  * The SDK side runs inside the agent's process when
  * `tracer.probeEnabled` is on; this CLI is what the human types to
  * pause, inject a nudge, and resume.
  *
  * Subcommands:
  *
- *   spool probe status <run-id> [--json]
+ *   meter probe status <run-id> [--json]
  *     Print the current ProbeRecord. Human-readable by default,
  *     machine-shaped with --json. Errors if the run id doesn't resolve.
  *
- *   spool probe pause <run-id> [--json]
+ *   meter probe pause <run-id> [--json]
  *     Operator side: requestPause. Graceful — the SDK finishes the
  *     in-flight model call before acknowledging.
  *
- *   spool probe inject <run-id> -m <msg> | --stdin [--force] [--json]
+ *   meter probe inject <run-id> -m <msg> | --stdin [--force] [--json]
  *     Operator side: setInject. The message gets appended as a new
  *     user turn to the NEXT model call (whether or not the run is
  *     paused). `--stdin` reads from stdin so multi-line messages don't
  *     need shell-escape gymnastics. Warns + errors if an inject is
  *     already queued unless `--force` is passed.
  *
- *   spool probe resume <run-id> [--json]
+ *   meter probe resume <run-id> [--json]
  *     Operator side: requestResume. Preserves any pending inject —
  *     "resume with this message" is a legal pattern.
  *
- *   spool probe clear <run-id>
+ *   meter probe clear <run-id>
  *     Remove the probe file. Used to recover from a stale `paused`
  *     state on a run that's no longer being polled (e.g. SDK crashed
  *     before `tracer.end()` could clean up). Does NOT require the run
  *     to exist in the store — pure file cleanup.
  *
- * Run-id resolution mirrors `spool inspect`: full id or unique 6+-char
- * prefix. Inherited from `getRun()` in @spool-ai/collector.
+ * Run-id resolution mirrors `meter inspect`: full id or unique 6+-char
+ * prefix. Inherited from `getRun()` in @meterbility/collector.
  */
 export function registerProbeCommand(program: Command): void {
   const probe = program

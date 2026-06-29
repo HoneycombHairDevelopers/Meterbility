@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listRuns, listSteps } from "@spool-ai/collector";
-import { SpoolTracer } from "@spool-ai/agent";
+import { Store, listRuns, listSteps } from "@meterbility/collector";
+import { MeterbilityTracer } from "@meterbility/agent";
 import { forkRun, fakeResponder } from "./fork.ts";
 import {
   continueFork,
@@ -13,14 +13,14 @@ import {
 } from "./continuation.ts";
 
 function fresh(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-cont-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-cont-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
 async function seedOriginRun(): Promise<{ store: Store; runId: string }> {
   fresh();
-  const tracer = new SpoolTracer({ project: "/tmp/o", agent: "t" });
+  const tracer = new MeterbilityTracer({ project: "/tmp/o", agent: "t" });
   // s0: user-shaped (we'll use a tool call to keep the schema)
   const s0 = tracer.startStep({
     model: "claude-opus-4-7",

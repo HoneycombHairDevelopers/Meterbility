@@ -1,19 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fc from "fast-check";
-import { DEFAULT_SPOOLIGNORE, IgnoreMatcher } from "./spoolignore.ts";
+import { DEFAULT_METERBILITYIGNORE, IgnoreMatcher } from "./meterbilityignore.ts";
 
 /**
- * Property-based tests for the `.spoolignore` matcher (SPEC v0.3 §10.2).
+ * Property-based tests for the `.meterbilityignore` matcher (SPEC v0.3 §10.2).
  *
- * Existing example-based tests in spoolignore.test.ts pin down the
+ * Existing example-based tests in meterbilityignore.test.ts pin down the
  * documented behaviors (trailing-slash dir-only, leading-slash root
  * anchor, `**` globstar, etc.). These tests express the *general*
  * invariants the matcher must hold for any input — catching whole
  * classes of bugs that ad-hoc examples would miss.
  *
  * Note: v0.3 deliberately does NOT support negation (`!pattern`) per
- * the source comment in spoolignore.ts:18. Tests here assume the v0.3
+ * the source comment in meterbilityignore.ts:18. Tests here assume the v0.3
  * scope; add negation properties when v0.4 lands the feature.
  */
 
@@ -201,7 +201,7 @@ test("property: injecting comments and blank lines into a pattern list never cha
 });
 
 /* ────────────────────────────────────────────────────────────────────
- * Property 7 — DEFAULT_SPOOLIGNORE covers the documented sensitive set.
+ * Property 7 — DEFAULT_METERBILITYIGNORE covers the documented sensitive set.
  *
  * Spot-check that every "sensitive by default" path in SPEC v0.3
  * §10.2 is matched by `fromDefaults()`. Not strictly a property test
@@ -230,8 +230,8 @@ test("property: the SPEC sensitive-default file set is matched by fromDefaults()
   }
   // Sanity: a clearly-non-sensitive file must NOT be ignored.
   assert.equal(m.matches("src/index.ts", false), false);
-  // And DEFAULT_SPOOLIGNORE itself stays non-empty as a regression
+  // And DEFAULT_METERBILITYIGNORE itself stays non-empty as a regression
   // canary — if someone empties the array, every other test would
   // still pass but the security posture is gone.
-  assert.ok(DEFAULT_SPOOLIGNORE.length > 0, "defaults must not be empty");
+  assert.ok(DEFAULT_METERBILITYIGNORE.length > 0, "defaults must not be empty");
 });

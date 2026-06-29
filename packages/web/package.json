@@ -1,5 +1,5 @@
 {
-  "name": "@spool-ai/web",
+  "name": "@meterbility/web",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@spool-ai/shared": "*",
-    "@spool-ai/spec": "*"
+    "@meterbility/shared": "*",
+    "@meterbility/spec": "*"
   }
 }

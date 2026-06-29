@@ -3,18 +3,18 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listRuns, listSteps } from "@spool-ai/collector";
-import { SpoolTracer, helpers, traceAnthropic } from "./index.ts";
+import { Store, listRuns, listSteps } from "@meterbility/collector";
+import { MeterbilityTracer, helpers, traceAnthropic } from "./index.ts";
 
 function fresh(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-sdk-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-sdk-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
 test("SDK tracer creates a run with one step", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/test-proj",
     agent: "tester",
     runTitle: "smoke",
@@ -54,7 +54,7 @@ test("SDK tracer creates a run with one step", async () => {
 
 test("traceAnthropic captures one step per call", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/test-anth",
     agent: "tester",
   });
@@ -97,7 +97,7 @@ test("traceAnthropic captures one step per call", async () => {
 
 test("traceAnthropic captures errors as error outcomes", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/test-err",
     agent: "tester",
   });

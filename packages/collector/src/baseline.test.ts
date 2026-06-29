@@ -7,7 +7,7 @@ import { Store } from "./store.ts";
 import { upsertProjectByCwd, getBaselineTree } from "./queries.ts";
 import { captureBaseline } from "./baseline.ts";
 import { parseManifest } from "./replay.ts";
-import { IgnoreMatcher } from "@spool-ai/shared";
+import { IgnoreMatcher } from "@meterbility/shared";
 
 /**
  * v0.3 Turn 5 — captureBaseline tests.
@@ -15,17 +15,17 @@ import { IgnoreMatcher } from "@spool-ai/shared";
  * Each test runs against a tmpdir-built fake repo so the walker has
  * real bytes to hash without depending on the running machine's
  * actual `pwd`. The tmpdir gets torn down with the process; we
- * never write to the user's home outside of $SPOOL_HOME.
+ * never write to the user's home outside of $METERBILITY_HOME.
  */
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-baseline-store-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-baseline-store-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 function freshRepo(layout: Record<string, string>): string {
-  const root = mkdtempSync(join(tmpdir(), "spool-baseline-repo-"));
+  const root = mkdtempSync(join(tmpdir(), "meter-baseline-repo-"));
   for (const [rel, content] of Object.entries(layout)) {
     const abs = join(root, rel);
     mkdirSync(join(abs, ".."), { recursive: true });
@@ -60,7 +60,7 @@ test("captureBaseline walks cwd and produces a manifest of every captured file",
   store.close();
 });
 
-test("captureBaseline respects .spoolignore defaults: ignores node_modules + .env", async () => {
+test("captureBaseline respects .meterbilityignore defaults: ignores node_modules + .env", async () => {
   const store = freshStore();
   const project = upsertProjectByCwd(store, "/p2", "p2");
   const cwd = freshRepo({
@@ -80,25 +80,25 @@ test("captureBaseline respects .spoolignore defaults: ignores node_modules + .en
   store.close();
 });
 
-test("captureBaseline stacks user .spoolignore on top of defaults", async () => {
+test("captureBaseline stacks user .meterbilityignore on top of defaults", async () => {
   const store = freshStore();
   const project = upsertProjectByCwd(store, "/p3", "p3");
   const cwd = freshRepo({
     "src/x.ts": "x\n",
     "src/y.ts": "y\n",
     "fixtures/big.bin": "binary-ish\n",
-    ".spoolignore": "fixtures/\n",
+    ".meterbilityignore": "fixtures/\n",
   });
   const r = await captureBaseline(store, project.project_id, cwd);
   assert.ok(r);
   const paths = parseManifest(
     await store.blobs.getBuffer(r!.manifest_blob_ref),
   ).map((e) => e.path);
-  // .spoolignore itself is kept (defaults don't ignore it); fixtures/
+  // .meterbilityignore itself is kept (defaults don't ignore it); fixtures/
   // is filtered by the user's rule.
   assert.ok(paths.includes("src/x.ts"));
   assert.ok(paths.includes("src/y.ts"));
-  assert.ok(paths.includes(".spoolignore"));
+  assert.ok(paths.includes(".meterbilityignore"));
   assert.ok(!paths.some((p) => p.startsWith("fixtures/")));
   store.close();
 });
@@ -125,7 +125,7 @@ test("captureBaseline returns undefined for a nonexistent cwd (no throw)", async
   const r = await captureBaseline(
     store,
     project.project_id,
-    "/var/nope/does/not/exist/spool-test",
+    "/var/nope/does/not/exist/meter-test",
   );
   assert.equal(r, undefined);
   store.close();

@@ -88,10 +88,10 @@ const SCENARIOS: Scenario[] = [
     expected: 2,
   },
   {
-    name: "SPOOL_REDACT=off neutralizes the rule",
+    name: "METERBILITY_REDACT=off neutralizes the rule",
     build: (s) => `prefix ${s} suffix\n`,
     expected: 0,
-    env: { SPOOL_REDACT: "off" },
+    env: { METERBILITY_REDACT: "off" },
   },
 ];
 
@@ -124,7 +124,7 @@ for (const rule of RULE_NAMES) {
 
         if (scenario.expected > 0) {
           // Placeholder must appear exactly `expected` times.
-          const placeholder = `«spool:redacted:${rule}»`;
+          const placeholder = `«meter:redacted:${rule}»`;
           const occurrences = result.text.split(placeholder).length - 1;
           assert.equal(
             occurrences,
@@ -203,7 +203,7 @@ test("cross-rule: rule order — anthropic-key wins over the openai-key superset
 });
 
 test("cross-rule: placeholder is inert under all rules — redact(redact(x)) === redact(x)", () => {
-  // The placeholder format `«spool:redacted:NAME»` must never trigger
+  // The placeholder format `«meter:redacted:NAME»` must never trigger
   // any rule on a second pass, or repeated redaction would inflate
   // the count and corrupt the output. Smoke-tested here for the full
   // ruleset; the property-based test exercises the full input space.

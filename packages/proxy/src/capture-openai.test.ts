@@ -47,7 +47,7 @@ test("OpenAI parseResponse extracts tool_calls action", () => {
             {
               id: "call_1",
               type: "function",
-              function: { name: "search", arguments: '{"q":"spool"}' },
+              function: { name: "search", arguments: '{"q":"meter"}' },
             },
           ],
         },
@@ -61,7 +61,7 @@ test("OpenAI parseResponse extracts tool_calls action", () => {
   const a = ex!.action as { tool_name: string; tool_use_id: string; tool_input: unknown };
   assert.equal(a.tool_name, "search");
   assert.equal(a.tool_use_id, "call_1");
-  assert.deepEqual(a.tool_input, { q: "spool" });
+  assert.deepEqual(a.tool_input, { q: "meter" });
 });
 
 test("OpenAI reassembleStream concatenates text deltas + final usage chunk", () => {

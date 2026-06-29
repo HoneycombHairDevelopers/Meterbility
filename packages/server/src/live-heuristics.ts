@@ -1,4 +1,4 @@
-import type { Run, Step } from "@spool-ai/shared";
+import type { Run, Step } from "@meterbility/shared";
 
 export type LiveStatus =
   | "progressing"

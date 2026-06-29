@@ -9,14 +9,14 @@ import {
   listForks,
   listSteps,
   resolveSnapshotBlobRef,
-} from "@spool-ai/collector";
+} from "@meterbility/collector";
 import type {
   ContextSnapshot,
   ConversationMessage,
   FileOp,
   RetrievedDocument,
   Step,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import {
   actionLabel,
   fmtCents,
@@ -24,7 +24,7 @@ import {
   openStore,
   statusColor,
 } from "../util.ts";
-import { reformatJsonString, prettyTab, type PrettyMode } from "@spool-ai/server";
+import { reformatJsonString, prettyTab, type PrettyMode } from "@meterbility/server";
 
 export function registerInspectCommand(program: Command): void {
   program
@@ -88,7 +88,7 @@ export function registerInspectCommand(program: Command): void {
           for (const s of steps) await printStepSummary(s);
           console.log(
             pc.dim(
-              `\nopen one with:  spool inspect ${run.run_id.slice(0, 12)} --at 0`,
+              `\nopen one with:  meter inspect ${run.run_id.slice(0, 12)} --at 0`,
             ),
           );
         }
@@ -149,7 +149,7 @@ async function printStepSummary(s: Step): Promise<void> {
 }
 
 async function printStep(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   step: Step,
   show: string,
   withDiff = false,
@@ -257,10 +257,10 @@ async function printStep(
  * the step produced no captures (the common case for read-only steps
  * like Read/Glob/Grep). When `withDiff` is true, also colorize and
  * print the unified diff body for each captured row — same colorizer
- * the `spool files --diff` view uses, so the muscle memory transfers.
+ * the `meter files --diff` view uses, so the muscle memory transfers.
  */
 async function printStepFiles(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   step: Step,
   withDiff: boolean,
 ): Promise<void> {
@@ -299,7 +299,7 @@ async function printStepFiles(
       console.log(
         indent(
           pc.yellow(
-            "(partial — ran outside captured tools; enable `spool watch --files` in v0.4 for full fidelity)",
+            "(partial — ran outside captured tools; enable `meter watch --files` in v0.4 for full fidelity)",
           ),
           "      ",
         ),
@@ -319,7 +319,7 @@ function opTagInline(op: FileOp): string {
 }
 
 async function printResolvedContext(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   step: Step,
 ): Promise<void> {
   const ref = resolveSnapshotBlobRef(store, step.context_snapshot_id);

@@ -5,11 +5,11 @@ The fleet view from SPEC §3.1 — watch every running agent in one place, get a
 ## Run it
 
 ```bash
-spool web --live
+meter web --live
 # → http://127.0.0.1:4317  (auto-opens browser)
 ```
 
-The `--live` flag tells Spool to watch `~/.claude/projects/` for new sessions and growing session files. Every ~1.5s it scans, runs incremental ingest on anything new, and emits structured events over Server-Sent Events (`/api/live`). The fleet view updates without a page refresh.
+The `--live` flag tells Meterbility to watch `~/.claude/projects/` for new sessions and growing session files. Every ~1.5s it scans, runs incremental ingest on anything new, and emits structured events over Server-Sent Events (`/api/live`). The fleet view updates without a page refresh.
 
 ## What you see
 
@@ -24,14 +24,14 @@ Each card in the grid:
 
 ## Alerts
 
-`spool web --live` flags supported in v0.1:
+`meter web --live` flags supported in v0.1:
 
 ```bash
 # Fire an alert when any watched tool is called.
-spool web --live --watch-tool Bash --watch-tool git_push
+meter web --live --watch-tool Bash --watch-tool git_push
 
 # Adjust the stall threshold (default 120s).
-spool web --live --stall-seconds 60
+meter web --live --stall-seconds 60
 ```
 
 Built-in heuristics (no flags needed):
@@ -51,8 +51,8 @@ Each alert fires once per (run, signature) pair so you don't get spammed. Alerts
 The same machinery is exposed programmatically:
 
 ```ts
-import { Store } from "@spool-ai/collector";
-import { LiveInspector } from "@spool-ai/server";
+import { Store } from "@meterbility/collector";
+import { LiveInspector } from "@meterbility/server";
 
 const store = Store.open();
 const live = new LiveInspector(store, {
@@ -70,5 +70,5 @@ await live.start();
 
 - Polling cadence is 1.5s by default. Faster intervals are possible (`scanIntervalMs`) but the bottleneck is `ingestSession`, which re-reads the file body to thread the parent-uuid chain.
 - Loop detection uses `JSON.stringify(action.tool_input)` for the signature. Tool inputs that include non-deterministic values (timestamps, uuids) won't trip the heuristic — that's by design.
-- Alert state is in-memory. Restarting `spool web --live` re-fires alerts that already triggered in the previous session.
+- Alert state is in-memory. Restarting `meter web --live` re-fires alerts that already triggered in the previous session.
 - Cursor and Codex CLI surfaces aren't watched in v0.1 — only Claude Code. Both write to disk in append-only JSONL formats compatible with the same tick loop, and they'll plug in via `LiveInspector` constructor options in v0.2.

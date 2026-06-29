@@ -11,7 +11,7 @@ import { register } from "tsx/esm/api";
 
 register(); // hook .ts resolution for the subsequent dynamic import
 
-process.env.SPOOL_HOME = workerData.home;
+process.env.METERBILITY_HOME = workerData.home;
 
 const { setInject } = await import("./probe.ts");
 

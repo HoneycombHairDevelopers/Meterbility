@@ -9,9 +9,9 @@ SDK produced.
 Usage::
 
     from anthropic import Anthropic
-    from spool_agent import SpoolTracer, trace_anthropic
+    from meterbility_agent import MeterbilityTracer, trace_anthropic
 
-    tracer = SpoolTracer(project="my-app", agent="support")
+    tracer = MeterbilityTracer(project="my-app", agent="support")
     traced = trace_anthropic(tracer, Anthropic())
 
     resp = traced.messages.create(
@@ -31,19 +31,19 @@ import time
 from typing import Any, Dict, List, Optional
 
 from .probe_hook import apply_probe_to_request
-from .tracer import SpoolTracer
+from .tracer import MeterbilityTracer
 
 
-def trace_anthropic(tracer: SpoolTracer, client: Any) -> Any:
+def trace_anthropic(tracer: MeterbilityTracer, client: Any) -> Any:
     """
     Return a thin proxy that intercepts ``client.messages.create(...)``
-    and emits one Spool Step per call. Other attributes pass through.
+    and emits one Meterbility Step per call. Other attributes pass through.
     """
     return _TracedAnthropic(tracer, client)
 
 
 class _TracedAnthropic:
-    def __init__(self, tracer: SpoolTracer, client: Any) -> None:
+    def __init__(self, tracer: MeterbilityTracer, client: Any) -> None:
         self._tracer = tracer
         self._client = client
         self.messages = _TracedMessages(tracer, client.messages)
@@ -54,7 +54,7 @@ class _TracedAnthropic:
 
 
 class _TracedMessages:
-    def __init__(self, tracer: SpoolTracer, messages: Any) -> None:
+    def __init__(self, tracer: MeterbilityTracer, messages: Any) -> None:
         self._tracer = tracer
         self._messages = messages
 
@@ -129,10 +129,10 @@ def _flatten_history(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
                 if isinstance(b, dict) and b.get("type") == "text":
                     parts.append(str(b.get("text", "")))
             text = "\n".join(parts)
-        # Spool's model accepts user/assistant/tool; map assistant↔assistant,
+        # Meterbility's model accepts user/assistant/tool; map assistant↔assistant,
         # everything else to "user" (rare in Anthropic input shape).
-        spool_role = "assistant" if role == "assistant" else "user"
-        out.append({"role": spool_role, "content": text})
+        meter_role = "assistant" if role == "assistant" else "user"
+        out.append({"role": meter_role, "content": text})
     return out
 
 

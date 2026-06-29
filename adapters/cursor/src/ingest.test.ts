@@ -4,12 +4,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { Store, listRuns, listSteps } from "@spool-ai/collector";
+import { Store, listRuns, listSteps } from "@meterbility/collector";
 import { ingestCursorGlobal } from "./ingest.ts";
 
-function freshSpoolHome(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-cursor-"));
-  process.env.SPOOL_HOME = dir;
+function freshMeterbilityHome(): string {
+  const dir = mkdtempSync(join(tmpdir(), "meter-cursor-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
@@ -88,7 +88,7 @@ function buildCursorDb(args: {
 }
 
 test("ingest one composer with user + assistant tool call + assistant message", async () => {
-  freshSpoolHome();
+  freshMeterbilityHome();
   const dbPath = buildCursorDb({
     composers: [
       {
@@ -158,7 +158,7 @@ test("ingest one composer with user + assistant tool call + assistant message", 
 });
 
 test("erroed tool propagates to step status", async () => {
-  freshSpoolHome();
+  freshMeterbilityHome();
   const dbPath = buildCursorDb({
     composers: [
       {
@@ -193,7 +193,7 @@ test("erroed tool propagates to step status", async () => {
 });
 
 test("missing db returns no_db status, no throw", async () => {
-  freshSpoolHome();
+  freshMeterbilityHome();
   const store = Store.open();
   const r = await ingestCursorGlobal(store, { dbPath: "/nope/state.vscdb" });
   assert.equal(r.status, "no_db");
@@ -202,7 +202,7 @@ test("missing db returns no_db status, no throw", async () => {
 });
 
 test("limit + since options filter composers", async () => {
-  freshSpoolHome();
+  freshMeterbilityHome();
   const dbPath = buildCursorDb({
     composers: [
       {

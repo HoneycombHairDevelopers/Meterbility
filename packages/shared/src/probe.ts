@@ -5,8 +5,8 @@
  * ## Why file-based
  *
  * The Probe SDK has to work in the same scenarios capture does:
- * machine offline, no spool server running, multiple SDKs (TS + Python)
- * potentially talking to the same run. A file under `$SPOOL_HOME/probe/`
+ * machine offline, no meter server running, multiple SDKs (TS + Python)
+ * potentially talking to the same run. A file under `$METERBILITY_HOME/probe/`
  * meets all three — every process can read/write it without a port,
  * without a daemon, without IPC bootstrap.
  *
@@ -17,7 +17,7 @@
  *
  * ## File layout
  *
- *   $SPOOL_HOME/probe/<run_id>.json
+ *   $METERBILITY_HOME/probe/<run_id>.json
  *
  * One file per active run. Absent file == "no probe activity" == the
  * SDK runs normally. The file is created when an operator requests a
@@ -64,11 +64,11 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { spoolHome } from "./paths.ts";
+import { meterHome } from "./paths.ts";
 
 /**
  * Runtime probe FSM state. Lives in the on-disk JSON record at
- * `~/.spool/probe/<run_id>.json` and drives the live pause/inject/
+ * `~/.meterbility/probe/<run_id>.json` and drives the live pause/inject/
  * resume protocol between operator and SDK.
  *
  * Not to be confused with `ProbeState` on `Run` (see types.ts), which
@@ -107,7 +107,7 @@ function defaultRecord(runId: string, nowMs: number): ProbeRecord {
 }
 
 export function probeDir(): string {
-  return join(spoolHome(), "probe");
+  return join(meterHome(), "probe");
 }
 
 export function probeFilePath(runId: string): string {
@@ -149,7 +149,7 @@ export function readState(runId: string, now: () => number = Date.now): ProbeRec
  *
  * @internal — exported only so `probe.exhaustive.test.ts` can hit
  *   every coercion branch directly without disk I/O ceremony.
- *   `@spool-ai/shared` is a workspace-private package (`"private": true`
+ *   `@meterbility/shared` is a workspace-private package (`"private": true`
  *   in package.json) and isn't published to npm, so no external
  *   consumer can depend on this surface.
  */
@@ -297,7 +297,7 @@ export function requestResume(runId: string, now: () => number = Date.now): Prob
 
 /**
  * Terminal cleanup — remove the probe file. Called when the run ends
- * so a stale `paused` state doesn't linger in `$SPOOL_HOME/probe/`.
+ * so a stale `paused` state doesn't linger in `$METERBILITY_HOME/probe/`.
  * Safe to call when the file doesn't exist.
  */
 export function clearProbe(runId: string): void {

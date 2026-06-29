@@ -2,18 +2,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Resolve the Spool data directory. Honors SPOOL_HOME, defaults to ~/.spool.
+ * Resolve the Meterbility data directory. Honors METERBILITY_HOME, defaults to ~/.meterbility.
  */
-export function spoolHome(): string {
-  return process.env.SPOOL_HOME ?? join(homedir(), ".spool");
+export function meterHome(): string {
+  return process.env.METERBILITY_HOME ?? join(homedir(), ".meter");
 }
 
 export function dbPath(): string {
-  return join(spoolHome(), "spool.db");
+  return join(meterHome(), "meterbility.db");
 }
 
 export function blobRoot(): string {
-  return join(spoolHome(), "blobs");
+  return join(meterHome(), "blobs");
 }
 
 export function blobPath(sha256: string): string {
@@ -40,7 +40,7 @@ export function claudeProjectsRoot(): string {
  *
  * Layout: `<claudeHome>/file-history/<session-uuid>/<backupFileName>`.
  * The backup filename is the SHA Claude assigned at backup time; we
- * re-hash on read into Spool's blob store so identical bytes dedup.
+ * re-hash on read into Meterbility's blob store so identical bytes dedup.
  */
 export function claudeFileHistoryDir(sessionId: string): string {
   return join(claudeHome(), "file-history", sessionId);

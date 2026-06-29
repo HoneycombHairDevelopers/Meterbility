@@ -3,7 +3,7 @@ import {
   consumeInject,
   readState,
   type ProbeRecord,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 
 /**
  * SDK-side Probe hook — Track B / Turn 8 chunk 2.

@@ -5,15 +5,15 @@ import type {
   ForkEditType,
   Outcome,
   TokenUsage,
-} from "@spool-ai/shared";
+} from "@meterbility/shared";
 import {
   getRun,
   getStep,
   getStepBySequence,
   insertFork,
   listSteps,
-} from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
+} from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
 import { appendLiveStep, materializePrefix } from "./replay.ts";
 
 export interface ForkArgs {
@@ -118,7 +118,7 @@ function validateEdit(edit: ForkEdit): void {
 }
 
 export interface LiveResponderArgs {
-  origin_step: import("@spool-ai/shared").Step;
+  origin_step: import("@meterbility/shared").Step;
   context_snapshot_id: string;
   edit: ForkEdit;
 }

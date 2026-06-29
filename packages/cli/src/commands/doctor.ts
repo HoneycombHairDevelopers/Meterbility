@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Command } from "commander";
 import pc from "picocolors";
-import { claudeHome, claudeProjectsRoot, dbPath, spoolHome } from "@spool-ai/shared";
-import { discoverSessions } from "@spool-ai/claude-code-adapter";
+import { claudeHome, claudeProjectsRoot, dbPath, meterHome } from "@meterbility/shared";
+import { discoverSessions } from "@meterbility/claude-code-adapter";
 
 type CheckStatus = "ok" | "warn" | "fail";
 interface CheckResult {
@@ -14,17 +14,17 @@ interface CheckResult {
 
 /**
  * The kickoff gate, productized. Verifies the environment, the Claude
- * Code session surface, and the Spool data plane — the same checklist
+ * Code session surface, and the Meterbility data plane — the same checklist
  * SPEC §18 calls out as the must-pass before week one.
  *
  * --json emits a machine-readable summary so CI workflows / setup scripts
- * can gate on `spool doctor --json | jq -e '.summary.fail == 0'` without
+ * can gate on `meter doctor --json | jq -e '.summary.fail == 0'` without
  * scraping ANSI output.
  */
 export function registerDoctorCommand(program: Command): void {
   program
     .command("doctor")
-    .description("Verify Spool can capture and store agent runs (Gate 2 check)")
+    .description("Verify Meterbility can capture and store agent runs (Gate 2 check)")
     .option("--json", "Emit results as a single JSON object instead of pretty output")
     .action(async (opts: { json?: boolean }) => {
       const checks: CheckResult[] = [];
@@ -32,7 +32,7 @@ export function registerDoctorCommand(program: Command): void {
         checks.push({ status, label, detail });
       };
 
-      // Node version — Spool uses `node --import tsx/esm` which requires
+      // Node version — Meterbility uses `node --import tsx/esm` which requires
       // Node 20.6+. Older runtimes are accepted but flagged as warn since
       // the test runner and launcher will not work cleanly.
       const node = process.versions.node;
@@ -49,8 +49,8 @@ export function registerDoctorCommand(program: Command): void {
         record("fail", "Node version >= 20.6", `found v${node}`);
       }
 
-      // Spool home
-      record("ok", "SPOOL_HOME", spoolHome());
+      // Meterbility home
+      record("ok", "METERBILITY_HOME", meterHome());
 
       // Claude home
       if (existsSync(claudeHome())) {
@@ -93,7 +93,7 @@ export function registerDoctorCommand(program: Command): void {
 
       // DB writable
       try {
-        const { Store } = await import("@spool-ai/collector");
+        const { Store } = await import("@meterbility/collector");
         const store = Store.open();
         store.close();
         const s = await stat(dbPath());
@@ -112,7 +112,7 @@ export function registerDoctorCommand(program: Command): void {
 
       if (opts.json) {
         const payload = {
-          spool_home: spoolHome(),
+          meter_home: meterHome(),
           claude_home: claudeHome(),
           claude_projects_root: claudeProjectsRoot(),
           db_path: dbPath(),

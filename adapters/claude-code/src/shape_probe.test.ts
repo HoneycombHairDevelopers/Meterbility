@@ -277,7 +277,7 @@ test("formatWarning: produces a multi-line block with type and count", () => {
     surpriseField: 1,
   })!;
   const text = formatWarning({ ...w, count: 7 });
-  assert.match(text, /\[spool\/shape-probe\] file-history-snapshot \(×7\)/);
+  assert.match(text, /\[meter\/shape-probe\] file-history-snapshot \(×7\)/);
   assert.match(text, /missing: snapshot/);
   assert.match(text, /unexpected: surpriseField/);
 });

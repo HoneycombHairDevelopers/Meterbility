@@ -1,5 +1,5 @@
 """
-Tier 14 — exhaustive coverage of ``spool_agent.anthropic_helper``
+Tier 14 — exhaustive coverage of ``meterbility_agent.anthropic_helper``
 (``trace_anthropic`` + internal helpers).
 
 Existing coverage:
@@ -42,8 +42,8 @@ from typing import Any, Dict, List
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "src"))
 
-from spool_agent import SpoolTracer, trace_anthropic  # noqa: E402
-from spool_agent.anthropic_helper import (  # noqa: E402
+from meterbility_agent import MeterbilityTracer, trace_anthropic  # noqa: E402
+from meterbility_agent.anthropic_helper import (  # noqa: E402
     _action_from_response,
     _attr,
     _flatten_history,
@@ -52,35 +52,35 @@ from spool_agent.anthropic_helper import (  # noqa: E402
     _tokens_from_response,
     _truncate,
 )
-from spool_agent.probe_hook import ProbeRuntime  # noqa: E402
+from meterbility_agent.probe_hook import ProbeRuntime  # noqa: E402
 
 
 # ─── Fixtures ──────────────────────────────────────────────────────
 
 
-class IsolatedSpoolHome(unittest.TestCase):
+class IsolatedMeterbilityHome(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self._prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = self._tmp.name
+        self._prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = self._tmp.name
 
     def tearDown(self) -> None:
         if self._prev_home is None:
-            os.environ.pop("SPOOL_HOME", None)
+            os.environ.pop("METERBILITY_HOME", None)
         else:
-            os.environ["SPOOL_HOME"] = self._prev_home
+            os.environ["METERBILITY_HOME"] = self._prev_home
         self._tmp.cleanup()
 
-    def _tracer(self, **kwargs: Any) -> SpoolTracer:
+    def _tracer(self, **kwargs: Any) -> MeterbilityTracer:
         defaults: Dict[str, Any] = {
             "project": "/tmp/anth-exh",
             "agent": "tester",
         }
         defaults.update(kwargs)
-        return SpoolTracer(**defaults)
+        return MeterbilityTracer(**defaults)
 
     def _db(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(Path(self._tmp.name) / "spool.db"))
+        return sqlite3.connect(str(Path(self._tmp.name) / "meterbility.db"))
 
 
 class FakeMessages:
@@ -121,7 +121,7 @@ class FakeAnthropic:
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestProxyBehavior(IsolatedSpoolHome):
+class TestProxyBehavior(IsolatedMeterbilityHome):
     def test_trace_anthropic_returns_proxy_with_messages_attribute(self) -> None:
         tracer = self._tracer()
         try:
@@ -285,7 +285,7 @@ class TestFlatten(unittest.TestCase):
         self.assertEqual(out[0]["content"], "thinking...\nnow I'll call Read")
 
     def test_history_role_assistant_preserved_others_to_user(self) -> None:
-        """Spool's data model is user/assistant/tool; Anthropic only ever
+        """Meterbility's data model is user/assistant/tool; Anthropic only ever
         sends user/assistant on input. Anything not 'assistant' maps to
         'user' defensively."""
         out = _flatten_history(
@@ -378,7 +378,7 @@ class TestActionFromResponse(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestErrorPath(IsolatedSpoolHome):
+class TestErrorPath(IsolatedMeterbilityHome):
     def test_exception_captures_error_outcome_and_re_raises(self) -> None:
         tracer = self._tracer()
         try:
@@ -465,7 +465,7 @@ class TestErrorPath(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestProbeIntegrationEdges(IsolatedSpoolHome):
+class TestProbeIntegrationEdges(IsolatedMeterbilityHome):
     def test_probe_disabled_skips_runtime_entirely(self) -> None:
         """Cost contract: probe_enabled=False (default) means
         apply_probe_to_request is NEVER called. We verify by injecting
@@ -522,7 +522,7 @@ class TestProbeIntegrationEdges(IsolatedSpoolHome):
         """probe_enabled=True + an operator queued an inject → the next
         request's messages list gets the inject appended as a user turn.
         The captured Step's history reflects what the model actually saw."""
-        from spool_agent.probe import set_inject
+        from meterbility_agent.probe import set_inject
 
         tracer = self._tracer(probe_enabled=True)
         run_id = tracer.run_id

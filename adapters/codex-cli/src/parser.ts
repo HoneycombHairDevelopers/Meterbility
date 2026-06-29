@@ -38,7 +38,7 @@ export function parseBuffer(
         } catch (err) {
           // eslint-disable-next-line no-console
           console.warn(
-            `[spool/codex] skipping malformed JSONL at ${lineStart}: ${(err as Error).message}`,
+            `[meter/codex] skipping malformed JSONL at ${lineStart}: ${(err as Error).message}`,
           );
         }
       }

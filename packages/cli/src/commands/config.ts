@@ -8,7 +8,7 @@ import {
   maskSecret,
   setSetting,
   type SettingKey,
-} from "@spool-ai/collector";
+} from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 const KNOWN_KEYS: SettingKey[] = [
@@ -23,7 +23,7 @@ const KNOWN_KEYS: SettingKey[] = [
 ];
 
 /**
- * `spool config` — read/write the same `settings` table the web Settings
+ * `meter config` — read/write the same `settings` table the web Settings
  * page mutates. Provides terminal-side parity so users who live in the CLI
  * don't need to spin up the web UI just to set a Slack webhook or a default
  * fork model.
@@ -37,7 +37,7 @@ export function registerConfigCommand(program: Command): void {
   const config = program
     .command("config")
     .description(
-      "Get/set persisted Spool settings (mirrors the web UI's Settings page)",
+      "Get/set persisted Meterbility settings (mirrors the web UI's Settings page)",
     );
 
   config
@@ -65,7 +65,7 @@ export function registerConfigCommand(program: Command): void {
           console.log(pc.dim("(no settings configured)"));
           console.log(
             pc.dim(
-              "  set one with:  spool config set <key> <value>\n  known keys:   " +
+              "  set one with:  meter config set <key> <value>\n  known keys:   " +
                 KNOWN_KEYS.join(", "),
             ),
           );
@@ -95,7 +95,7 @@ export function registerConfigCommand(program: Command): void {
           console.error(pc.red(`not set: ${key}`));
           process.exit(1);
         }
-        // Raw on stdout so it's pipe-friendly: `export X=$(spool config get foo)`
+        // Raw on stdout so it's pipe-friendly: `export X=$(meter config get foo)`
         process.stdout.write(v + "\n");
       } finally {
         store.close();

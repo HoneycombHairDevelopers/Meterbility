@@ -1,6 +1,6 @@
 """
-Tier 11 — exhaustive coverage of ``spool_agent.tracer`` (SpoolTracer +
-SpoolStep), the Python SDK's user-facing runtime.
+Tier 11 — exhaustive coverage of ``meterbility_agent.tracer`` (MeterbilityTracer +
+MeterbilityStep), the Python SDK's user-facing runtime.
 
 Mirrors TS Tier 9 (``packages/agent/src/step.exhaustive.test.ts``)
 section-for-section so a future audit can diff the two test rosters
@@ -37,39 +37,39 @@ from typing import Any, Dict, List
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "src"))
 
-from spool_agent import SpoolTracer  # noqa: E402
-from spool_agent.tracer import SpoolStep  # noqa: E402
+from meterbility_agent import MeterbilityTracer  # noqa: E402
+from meterbility_agent.tracer import MeterbilityStep  # noqa: E402
 
 
 # ─── Shared fixture ────────────────────────────────────────────────────
 
 
-class IsolatedSpoolHome(unittest.TestCase):
-    """Redirect SPOOL_HOME to a per-test tempdir."""
+class IsolatedMeterbilityHome(unittest.TestCase):
+    """Redirect METERBILITY_HOME to a per-test tempdir."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self._prev_home = os.environ.get("SPOOL_HOME")
-        os.environ["SPOOL_HOME"] = self._tmp.name
+        self._prev_home = os.environ.get("METERBILITY_HOME")
+        os.environ["METERBILITY_HOME"] = self._tmp.name
 
     def tearDown(self) -> None:
         if self._prev_home is None:
-            os.environ.pop("SPOOL_HOME", None)
+            os.environ.pop("METERBILITY_HOME", None)
         else:
-            os.environ["SPOOL_HOME"] = self._prev_home
+            os.environ["METERBILITY_HOME"] = self._prev_home
         self._tmp.cleanup()
 
     def _db(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(Path(self._tmp.name) / "spool.db"))
+        return sqlite3.connect(str(Path(self._tmp.name) / "meterbility.db"))
 
-    def _tracer(self, **kwargs: Any) -> SpoolTracer:
+    def _tracer(self, **kwargs: Any) -> MeterbilityTracer:
         defaults: Dict[str, Any] = {
             "project": "/tmp/tracer-exh",
             "agent": "tester",
             "run_title": "tracer-exh-fixture",
         }
         defaults.update(kwargs)
-        return SpoolTracer(**defaults)
+        return MeterbilityTracer(**defaults)
 
 
 ZERO_TOKENS: Dict[str, int] = {
@@ -85,7 +85,7 @@ ZERO_TOKENS: Dict[str, int] = {
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestStepBuilder(IsolatedSpoolHome):
+class TestStepBuilder(IsolatedMeterbilityHome):
     def test_step_id_format(self) -> None:
         """step_id has `stp_` prefix and a real UUID body."""
         tracer = self._tracer()
@@ -260,7 +260,7 @@ class TestStepBuilder(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestStepTags(IsolatedSpoolHome):
+class TestStepTags(IsolatedMeterbilityHome):
     def test_tag_adds_new_tag(self) -> None:
         tracer = self._tracer()
         try:
@@ -303,7 +303,7 @@ class TestStepTags(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestStepPersistence(IsolatedSpoolHome):
+class TestStepPersistence(IsolatedMeterbilityHome):
     def _step_row(self, step_id: str) -> Dict[str, Any]:
         """Read the persisted step row back via SQL."""
         with self._db() as conn:
@@ -458,7 +458,7 @@ class TestStepPersistence(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestStatusDerivation(IsolatedSpoolHome):
+class TestStatusDerivation(IsolatedMeterbilityHome):
     def test_outcome_ok_maps_to_status_ok(self) -> None:
         tracer = self._tracer()
         try:
@@ -513,7 +513,7 @@ class TestStatusDerivation(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestLatency(IsolatedSpoolHome):
+class TestLatency(IsolatedMeterbilityHome):
     def test_explicit_latency_preserved(self) -> None:
         tracer = self._tracer()
         try:
@@ -555,7 +555,7 @@ class TestLatency(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestContextComposition(IsolatedSpoolHome):
+class TestContextComposition(IsolatedMeterbilityHome):
     def _read_context(self, snapshot_id: str) -> List[Dict[str, Any]]:
         """Read context components back through the BlobStore."""
         with self._db() as conn:
@@ -564,8 +564,8 @@ class TestContextComposition(IsolatedSpoolHome):
                 (snapshot_id,),
             ).fetchone()
         self.assertIsNotNone(row, "snapshot not in DB")
-        from spool_agent.paths import spool_home
-        blob_root = Path(spool_home()) / "blobs"
+        from meterbility_agent.paths import meter_home
+        blob_root = Path(meter_home()) / "blobs"
         sha = row[0]
         path = blob_root / sha[:2] / sha[2:4] / sha
         text = path.read_text(encoding="utf-8")
@@ -683,7 +683,7 @@ class TestContextComposition(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestCollectorIntegration(IsolatedSpoolHome):
+class TestCollectorIntegration(IsolatedMeterbilityHome):
     def test_multiple_steps_share_run_id(self) -> None:
         tracer = self._tracer()
         run_id = tracer.run_id
@@ -761,7 +761,7 @@ class TestCollectorIntegration(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestTracerLifecycle(IsolatedSpoolHome):
+class TestTracerLifecycle(IsolatedMeterbilityHome):
     def test_context_manager_normal_exit_seals_run_ok(self) -> None:
         with self._tracer() as tracer:
             run_id = tracer.run_id
@@ -800,7 +800,7 @@ class TestTracerLifecycle(IsolatedSpoolHome):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestStepProperties(IsolatedSpoolHome):
+class TestStepProperties(IsolatedMeterbilityHome):
     N_ITERATIONS = 20
 
     def test_step_id_format_holds_across_many_constructions(self) -> None:

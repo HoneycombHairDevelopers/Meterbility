@@ -2,13 +2,13 @@ import { mkdir } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import { dbPath, spoolHome } from "@spool-ai/shared";
+import { dbPath, meterHome } from "@meterbility/shared";
 import { ensureSchema } from "./schema.ts";
 import { BlobStore } from "./blobs.ts";
 
 /**
  * One-stop entry into the local data plane. `open()` creates the
- * `$SPOOL_HOME` tree if needed, applies the schema, and exposes both the
+ * `$METERBILITY_HOME` tree if needed, applies the schema, and exposes both the
  * raw SQLite handle (for queries.ts) and the blob store.
  */
 export class Store {
@@ -22,7 +22,7 @@ export class Store {
 
   static open(opts?: { path?: string }): Store {
     const path = opts?.path ?? dbPath();
-    mkdirSync(spoolHome(), { recursive: true });
+    mkdirSync(meterHome(), { recursive: true });
     mkdirSync(dirname(path), { recursive: true });
     const db = new Database(path);
     ensureSchema(db);
@@ -31,7 +31,7 @@ export class Store {
 
   static async openAsync(opts?: { path?: string }): Promise<Store> {
     const path = opts?.path ?? dbPath();
-    await mkdir(spoolHome(), { recursive: true });
+    await mkdir(meterHome(), { recursive: true });
     await mkdir(dirname(path), { recursive: true });
     return this.open(opts);
   }

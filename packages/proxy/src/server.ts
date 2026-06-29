@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { serve, type ServerType } from "@hono/node-server";
-import { Store, getStep } from "@spool-ai/collector";
+import { Store, getStep } from "@meterbility/collector";
 import { anthropicCapture } from "./capture-anthropic.ts";
 import { openaiCapture } from "./capture-openai.ts";
 import { RunGrouper } from "./grouping.ts";
@@ -21,7 +21,7 @@ import type { ProviderCapture } from "./types.ts";
  * to the configured upstream for the matching provider. The body and
  * headers pass through untouched (auth headers included — they're
  * never persisted, only forwarded). After the upstream responds, the
- * proxy parses the request + response into a Spool Step and writes it
+ * proxy parses the request + response into a Meterbility Step and writes it
  * to the local store. Streaming responses are tee'd so the client gets
  * chunks as soon as they arrive — capture happens in parallel.
  *
@@ -30,7 +30,7 @@ import type { ProviderCapture } from "./types.ts";
  *   ANTHROPIC_BASE_URL=http://127.0.0.1:8765
  *   OPENAI_BASE_URL=http://127.0.0.1:8765/v1
  *
- * Or all-at-once via the `spool run` wrapper.
+ * Or all-at-once via the `meter run` wrapper.
  *
  * Per-provider capture lives in capture-anthropic.ts / capture-openai.ts.
  * Run grouping (deciding when two requests belong together) lives in
@@ -89,8 +89,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     return c.json({ error: `proxy internal error: ${(err as Error).message}` }, 500);
   });
 
-  // Health endpoint — handy for `spool run` to poll readiness.
-  app.get("/__spool/health", (c) => c.json({ ok: true, providers: PROVIDER_ROUTES.map((r) => r.provider) }));
+  // Health endpoint — handy for `meter run` to poll readiness.
+  app.get("/__meter/health", (c) => c.json({ ok: true, providers: PROVIDER_ROUTES.map((r) => r.provider) }));
 
   // Catch-all: route by path prefix.
   app.all("/*", async (c) => {
@@ -99,7 +99,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
       return c.json(
         {
           error:
-            "no Spool proxy route for this path. Supported: " +
+            "no Meterbility proxy route for this path. Supported: " +
             PROVIDER_ROUTES.map((r) => r.path).join(", "),
         },
         404,
@@ -199,7 +199,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
   const actualPort =
     typeof addr === "object" && addr && typeof addr.port === "number" ? addr.port : port;
   const url = `http://${host}:${actualPort}`;
-  log(`spool proxy listening on ${url}`);
+  log(`meter proxy listening on ${url}`);
   log(`  anthropic → ${(opts.upstreams?.anthropic ?? "https://api.anthropic.com")}/v1/messages`);
   log(`  openai    → ${(opts.upstreams?.openai ?? "https://api.openai.com")}/v1/chat/completions`);
 
@@ -239,10 +239,10 @@ interface PersistArgs {
 
 async function persistCapture(args: PersistArgs): Promise<void> {
   const parsed = args.capture.parseRequest(args.reqBody);
-  const explicitRunId = args.headers.get("x-spool-run-id") ?? undefined;
+  const explicitRunId = args.headers.get("x-meterbility-run-id") ?? undefined;
   const explicitProject =
-    args.headers.get("x-spool-project") ?? undefined;
-  const explicitAgent = args.headers.get("x-spool-agent") ?? undefined;
+    args.headers.get("x-meterbility-project") ?? undefined;
+  const explicitAgent = args.headers.get("x-meterbility-agent") ?? undefined;
   const runResolution = args.grouper.resolve(parsed, explicitRunId, Date.now());
 
   const spec: ProjectAgentSpec = {
@@ -390,7 +390,7 @@ function forwardHeaders(headers: Headers): Headers {
     const lk = k.toLowerCase();
     if (HOP_BY_HOP.has(lk)) return;
     if (lk === "host") return; // node fetch sets host based on URL
-    if (lk.startsWith("x-spool-")) return; // internal annotations don't go upstream
+    if (lk.startsWith("x-meterbility-")) return; // internal annotations don't go upstream
     out.set(k, v);
   });
   return out;

@@ -20,7 +20,7 @@ export function codexSessionsRoot(): string {
 
 /**
  * Walk `~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl` and
- * return every session log Spool can ingest, newest first.
+ * return every session log Meterbility can ingest, newest first.
  */
 export async function discoverCodexSessions(): Promise<DiscoveredCodexSession[]> {
   const root = codexSessionsRoot();

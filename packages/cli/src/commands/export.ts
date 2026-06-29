@@ -8,14 +8,14 @@ import {
   listFileChanges,
   listSteps,
   resolveSnapshotBlobRef,
-} from "@spool-ai/collector";
-import { TRACE_FORMAT_VERSION } from "@spool-ai/spec";
+} from "@meterbility/collector";
+import { TRACE_FORMAT_VERSION } from "@meterbility/spec";
 import { openStore } from "../util.ts";
 
 /**
- * Export a run to the canonical Spool Trace Format JSON file (v0.3.0).
+ * Export a run to the canonical Meterbility Trace Format JSON file (v0.3.0).
  *
- * This is how Spool talks to other tools and the open spec — one
+ * This is how Meterbility talks to other tools and the open spec — one
  * self-contained document with the run, every step, every FileChange,
  * the baseline tree (if any), and every referenced blob inlined
  * (base64-encoded UTF-8 for safe round-tripping).
@@ -34,7 +34,7 @@ import { openStore } from "../util.ts";
 export function registerExportCommand(program: Command): void {
   program
     .command("export <run-id>")
-    .description("Export a run to the open Spool Trace Format (0.3.0)")
+    .description("Export a run to the open Meterbility Trace Format (0.3.0)")
     .option("-o, --output <path>", "Output file (default: stdout)")
     .option(
       "--no-blobs",
@@ -62,7 +62,7 @@ export function registerExportCommand(program: Command): void {
             )
           : [];
         const trace: Record<string, unknown> = {
-          spool_trace_version: TRACE_FORMAT_VERSION,
+          meter_trace_version: TRACE_FORMAT_VERSION,
           run,
           steps,
           file_changes,

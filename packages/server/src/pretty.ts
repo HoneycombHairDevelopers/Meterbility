@@ -1,6 +1,6 @@
 /**
  * pretty.ts — schema-aware pretty-print for the four step-detail tabs
- * (action, outcome, decision, cost) shown by `spool inspect` and the
+ * (action, outcome, decision, cost) shown by `meter inspect` and the
  * web step cards.
  *
  * Raw JSON stays the default everywhere; pretty mode is opt-in via the
@@ -11,7 +11,7 @@
  * `opts.toolResultText`.
  */
 
-import { fmtCents, fmtTokens } from "@spool-ai/shared";
+import { fmtCents, fmtTokens } from "@meterbility/shared";
 
 export type PrettyMode = "ansi" | "plain" | "html";
 

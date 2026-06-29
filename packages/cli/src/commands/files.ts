@@ -7,26 +7,26 @@ import {
   getStepBySequence,
   listFileChanges,
   listSteps,
-} from "@spool-ai/collector";
-import type { FileChange, FileOp, Run, Step } from "@spool-ai/shared";
+} from "@meterbility/collector";
+import type { FileChange, FileOp, Run, Step } from "@meterbility/shared";
 import { openStore } from "../util.ts";
 
 /**
- * v0.3 Track A — `spool files <run-id>`.
+ * v0.3 Track A — `meter files <run-id>`.
  *
  * The CLI surface for the file-capture data (SPEC §7.1). Four shapes:
  *
- *   1. `spool files <run-id>`
+ *   1. `meter files <run-id>`
  *      Default: a git-status-style cumulative summary across the whole
  *      run. One row per unique path, terminal op (A/M/D/R), `+N −M`
  *      stats, footer with totals + baseline metadata. Matches the
  *      example output in §8.1 of the spec.
  *
- *   2. `spool files <run-id> --at <step>`
+ *   2. `meter files <run-id> --at <step>`
  *      Same row format but scoped to the FileChanges that happened AT
  *      that step. Useful for "what did step 5 change?"
  *
- *   3. `spool files <run-id> --diff <path>`
+ *   3. `meter files <run-id> --diff <path>`
  *      Cumulative unified diff for one path across the run. Optional
  *      `--from <step_a> --to <step_b>` restricts to a step window —
  *      handy for "what changed between step 3 and step 7 to this file?"
@@ -102,7 +102,7 @@ export function registerFilesCommand(program: Command): void {
 // ─── Mode 1: default cumulative summary ──────────────────────────────
 
 async function runSummaryMode(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   run: Run,
   opts: { json?: boolean },
 ): Promise<void> {
@@ -153,7 +153,7 @@ async function runSummaryMode(
     if (!run.baseline_tree_id) {
       console.log(
         pc.dim(
-          "  v0.3 file capture is opt-in per project — run `spool init` in the project's cwd to enable",
+          "  v0.3 file capture is opt-in per project — run `meter init` in the project's cwd to enable",
         ),
       );
     }
@@ -189,7 +189,7 @@ async function runSummaryMode(
 // ─── Mode 2: per-step ────────────────────────────────────────────────
 
 async function runAtMode(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   run: Run,
   opts: { at?: string; json?: boolean },
 ): Promise<void> {
@@ -229,7 +229,7 @@ async function runAtMode(
 // ─── Mode 3: --diff for one path ─────────────────────────────────────
 
 async function runDiffMode(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   run: Run,
   opts: { diff?: string; from?: string; to?: string; json?: boolean },
 ): Promise<void> {
@@ -302,7 +302,7 @@ async function runDiffMode(
     if (fc.partial_diff) {
       console.log(
         pc.yellow(
-          "  partial: this change ran outside captured tools (e.g. Bash). Enable `spool watch --files` in v0.4 for full fidelity.",
+          "  partial: this change ran outside captured tools (e.g. Bash). Enable `meter watch --files` in v0.4 for full fidelity.",
         ),
       );
       continue;
@@ -478,11 +478,11 @@ function rowToJson(arg: CollapsedRow | FileChange): unknown {
 
 /**
  * Accepts either a numeric sequence (`--at 5`) or a step-id prefix
- * (`--at stp_abc`). Mirrors the convention `spool inspect` uses so
+ * (`--at stp_abc`). Mirrors the convention `meter inspect` uses so
  * the muscle memory is shared. Strict: a missing step is an error.
  */
 function resolveStep(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   run: Run,
   needle: string,
 ): Step {
@@ -505,7 +505,7 @@ function resolveStep(
  * error on miss — passing a bogus step-id is always a user mistake.
  */
 function resolveStepSeqLoose(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   run: Run,
   needle: string,
 ): number {
@@ -526,7 +526,7 @@ function resolveStepSeqLoose(
  * steps already loaded.
  */
 function filterByStepSeq(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   fcs: FileChange[],
   fromSeq: number,
   toSeq: number,

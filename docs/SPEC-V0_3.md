@@ -1,4 +1,4 @@
-# Spool — v0.3 Milestone Spec
+# Meterbility — v0.3 Milestone Spec
 
 > **What this is.** The forward-looking spec for the v0.3 milestone. Three
 > things ship together, scoped responsibly: (1) Claude-Code-hook file-change
@@ -55,10 +55,10 @@ The audit (run against `SPEC.md` §19–22) showed:
   sandbox templates, team tier, Live Probe, cost dashboards, OSS launch)
   didn't ship as written.
 - **v0.2 added what the original SPEC didn't anticipate.** Proxy capture,
-  `spool run -- <cmd>`, multi-step fork continuation, Cerulean design system,
+  `meter run -- <cmd>`, multi-step fork continuation, Cerulean design system,
   Anthropic 5m/1h cache split, settings table + page, resolved-context
-  viewer, run sealing, and a clutch of CLI quality-of-life (`spool watch`,
-  `spool open`, `spool config`, `spool doctor --json`).
+  viewer, run sealing, and a clutch of CLI quality-of-life (`meter watch`,
+  `meter open`, `meter config`, `meter doctor --json`).
 
 Two outright wins from those substitutions:
 
@@ -72,7 +72,7 @@ Two outright wins from those substitutions:
 One real omission worth naming:
 
 - **Live Probe is still owed.** Sandbox templates and team tier are
-  deferrable — neither is critical-path for what Spool is for. Live
+  deferrable — neither is critical-path for what Meterbility is for. Live
   Probe is different. Pause-inject-resume is the only primitive on the
   original v0.2 list that's a *debugger primitive* in the DevTools
   sense; fork is great for post-hoc analysis but Live Probe is the
@@ -94,8 +94,8 @@ Three ships, in priority order:
 
 | # | Feature | Why now | Estimated effort |
 |---|---|---|---|
-| 1 | Claude-Code-hook file-change capture | Coding agents are the dominant Spool user; "what did the agent actually do to my code?" is the single biggest inspection gap | 4 weeks |
-| 2 | Live Probe (pause + inject + resume) | Closes v0.2's only real debugger-primitive debt; turns Spool from post-hoc inspector into actual debugger | 2 weeks |
+| 1 | Claude-Code-hook file-change capture | Coding agents are the dominant Meterbility user; "what did the agent actually do to my code?" is the single biggest inspection gap | 4 weeks |
+| 2 | Live Probe (pause + inject + resume) | Closes v0.2's only real debugger-primitive debt; turns Meterbility from post-hoc inspector into actual debugger | 2 weeks |
 | 3 | Public OSS launch | Forcing function for productionization debt the team has stopped seeing | 2 weeks |
 
 Estimated total: **8 weeks**, parallelizable across feature 1 and
@@ -116,7 +116,7 @@ draft. Cut hard on day one rather than chasing scope mid-cycle:
   additive-only).
 - Lazy baseline tree capture + `working_tree_at(run, step)` function.
   No working-tree panel UI yet.
-- Files tab on the step card, `/runs/:run_id/files` page, `spool files` CLI.
+- Files tab on the step card, `/runs/:run_id/files` page, `meter files` CLI.
 - Live Probe: pause / inject context / resume for SDK-instrumented runs.
 - Public OSS launch: license, contributing docs, public repo, install
   story for strangers.
@@ -136,13 +136,13 @@ draft. Cut hard on day one rather than chasing scope mid-cycle:
 
 **Explicitly not built in any near milestone:**
 
-- Spool's own AI edit tool. Spool is a debugger, not an agent.
+- Meterbility's own AI edit tool. Meterbility is a debugger, not an agent.
 - A third patch format. Unified diff + V4A parsing covers everything.
 - A merge engine. Sequential single-actor semantics are sufficient.
 - A live filesystem overlay (Shadow Workspace style). Cursor tried,
   Cursor deprecated.
 - Reimplementing `/rewind` (Claude Code) or the review pane (Codex).
-  Those exist upstream. Spool's value is cross-run comparison,
+  Those exist upstream. Meterbility's value is cross-run comparison,
   trajectory replay, and fork — which neither upstream tool does.
 
 ### 2.3 Success criteria
@@ -163,7 +163,7 @@ What "v0.3 shipped" means, all three features:
 - Files tab renders for every coding-agent run in the test corpora;
   binary files show "binary changed" without rendering bytes; redacted
   files show the redaction marker.
-- `spool files <run-id>` prints git-status-style summary, exits 0.
+- `meter files <run-id>` prints git-status-style summary, exits 0.
 
 **Live Probe:**
 
@@ -171,7 +171,7 @@ What "v0.3 shipped" means, all three features:
   edit (system prompt, message append, tool toggle) can be applied.
   Resume re-emits the next model call with the edited context. The
   step records the probe edit as a first-class annotation.
-- CLI: `spool probe <run-id> --pause`, `--inject <type> --payload-file`,
+- CLI: `meter probe <run-id> --pause`, `--inject <type> --payload-file`,
   `--resume`.
 - Web: pause/inject/resume controls on the live run page for SDK-mode
   runs only. Proxy and hook modes show "Live Probe unavailable for
@@ -180,8 +180,8 @@ What "v0.3 shipped" means, all three features:
 **OSS launch:**
 
 - Public GitHub repo with MIT license. Issues enabled. Contributing.md.
-- `npm install -g @spool-ai/cli && spool web` works on a fresh
-  Node 20+ machine with no Spool-internal knowledge.
+- `npm install -g @meterbility/cli && meter web` works on a fresh
+  Node 20+ machine with no Meterbility-internal knowledge.
 - README has a < 5-minute "first run captured" path that doesn't require
   reading more than the README.
 - A "fresh laptop install" test runs in CI on macOS and Linux against
@@ -235,7 +235,7 @@ in the presence of Bash.
 | Catches `Edit` / `MultiEdit` / `Write` / `apply_patch` | yes | yes |
 | Catches `sed`, `mv`, `npm install`, build scripts | no | yes |
 | Attribution | exact | heuristic (temporal proximity) |
-| Noise | none | high; needs `.spoolignore` |
+| Noise | none | high; needs `.meterbilityignore` |
 | Cross-platform | yes | requires per-OS bindings |
 
 In v0.3, tool-call inspection is the only signal. Bash steps emit stub
@@ -398,7 +398,7 @@ exist.
 1. On each `file-history-snapshot` record, for each entry in
    `trackedFileBackups`:
    - Copy `~/.claude/file-history/<session>/<backupFileName>` into the
-     Spool blob store (re-hash on read; record `before_blob_ref`).
+     Meterbility blob store (re-hash on read; record `before_blob_ref`).
    - Record path and a pending FileChange (op TBD).
 2. On the following `assistant` message, walk its `content[]` blocks.
    For each `tool_use` with name `Edit | MultiEdit | Write | NotebookEdit`:
@@ -431,7 +431,7 @@ exist.
 
 The first FileChange of a run triggers capture. The collector:
 
-1. Walks the run's cwd, respecting `.spoolignore` + `.gitignore` (§10).
+1. Walks the run's cwd, respecting `.meterbilityignore` + `.gitignore` (§10).
 2. Hashes each file's bytes (via existing blob store).
 3. Writes the sorted manifest blob.
 4. Records the `baseline_tree` row.
@@ -442,7 +442,7 @@ the same git HEAD share the same baseline. Dominant dedup win.
 
 Git advisory metadata: if cwd is a git repo, record `git_head`
 (`git rev-parse HEAD`) and `git_dirty` (any output from
-`git status --porcelain`). Both nullable; Spool never depends on git.
+`git status --porcelain`). Both nullable; Meterbility never depends on git.
 
 ### 3.6 Replay algorithm
 
@@ -512,12 +512,12 @@ next model call fires.
 Live Probe only ships for **SDK-mode runs** in v0.3. Proxy and hook
 modes are out:
 
-- **SDK mode** (`@spool-ai/agent`, `spool-agent`): Spool owns the loop. The
+- **SDK mode** (`@meterbility/agent`, `meterbility-agent`): Meterbility owns the loop. The
   SDK can block before the next `tracer.startStep()` call. Pause is real.
-- **Hook mode** (Claude Code, Codex, Cursor): Spool is a passive
+- **Hook mode** (Claude Code, Codex, Cursor): Meterbility is a passive
   observer of someone else's runtime. We can't pause Claude Code from
   outside without interfering with its execution.
-- **Proxy mode**: Spool intercepts HTTP. We could in principle delay a
+- **Proxy mode**: Meterbility intercepts HTTP. We could in principle delay a
   request, but the upstream LLM call would still fire and there's no
   clean way to mutate the request body without breaking client
   contracts. Deferred.
@@ -579,9 +579,9 @@ free-form text in v0.2.
 **TypeScript:**
 
 ```ts
-import { SpoolTracer } from "@spool-ai/agent";
+import { MeterbilityTracer } from "@meterbility/agent";
 
-const tracer = new SpoolTracer({
+const tracer = new MeterbilityTracer({
   project: "my-app",
   agent: "support",
   probeEnabled: true,        // opt-in; default false for production
@@ -599,16 +599,16 @@ proceeding. Default `false` because production agents typically don't
 want startup-time uncertainty about whether a probe might fire. Dev/
 debug builds opt in.
 
-Python mirrors the same flag on `SpoolTracer`.
+Python mirrors the same flag on `MeterbilityTracer`.
 
 ### 4.7 CLI
 
 ```sh
-spool probe <run-id> --pause
-spool probe <run-id> --inject add_context --payload-file ctx.json
-spool probe <run-id> --inject change_model --payload claude-sonnet-4-6
-spool probe <run-id> --resume
-spool probe <run-id> --status                # show paused/resumed/none
+meter probe <run-id> --pause
+meter probe <run-id> --inject add_context --payload-file ctx.json
+meter probe <run-id> --inject change_model --payload claude-sonnet-4-6
+meter probe <run-id> --resume
+meter probe <run-id> --status                # show paused/resumed/none
 ```
 
 `--pause` and `--resume` are idempotent. `--inject` requires the run to
@@ -660,7 +660,7 @@ OSS launch isn't a go-to-market check-the-box. It's a *forcing function*
 for productionization debt the team has stopped seeing. Every assumption
 about `~/.claude/projects/<encoded-cwd>/` paths, every implicit cwd,
 every place schema diverges from documentation — these surface the
-moment a stranger installs Spool on a fresh laptop. Indefinitely
+moment a stranger installs Meterbility on a fresh laptop. Indefinitely
 deferring lets debt compound. Date-pinning the launch is what makes it
 a forcing function.
 
@@ -671,13 +671,13 @@ slips, it slips with the rest of v0.3, not independently.
 
 | Item | Scope |
 |---|---|
-| **Public repo** | `github.com/<org>/spool`. MIT license. Issues + Discussions enabled. PR template, issue templates (bug / feature / security). |
-| **Install story** | `npm install -g @spool-ai/cli` works on a fresh Node 20+ install. `pip install spool-agent` works in a clean venv. Documented in README; tested in CI on macOS 14+ and Ubuntu 22+. |
-| **README** | < 5-minute "first run captured" path. No prior Spool knowledge. Demo gif. Architecture diagram (the v0.2 §13 package map, lightly edited). |
+| **Public repo** | `github.com/<org>/meter`. MIT license. Issues + Discussions enabled. PR template, issue templates (bug / feature / security). |
+| **Install story** | `npm install -g @meterbility/cli` works on a fresh Node 20+ install. `pip install meterbility-agent` works in a clean venv. Documented in README; tested in CI on macOS 14+ and Ubuntu 22+. |
+| **README** | < 5-minute "first run captured" path. No prior Meterbility knowledge. Demo gif. Architecture diagram (the v0.2 §13 package map, lightly edited). |
 | **CONTRIBUTING.md** | Local dev setup, test commands, coding conventions (TypeScript style, Python style, the additive-only schema rule, the redaction-required-on-blob-write rule, the "one accent color" rule). |
 | **SECURITY.md** | Responsible disclosure email, the redaction posture (v0.2 §5.3 + this spec §10.1), the network-bind warning (§10.5). |
 | **Docs site or docs/ directory** | Minimum: getting-started, CLI reference, web UI tour, capture modes, design rationale (decisions journal extracted from v0.2 §17 + this spec §15). |
-| **Telemetry posture** | Opt-in only, off by default, single env var to disable (`SPOOL_TELEMETRY=off`). Documented in SECURITY.md. v0.3 ships with telemetry stubbed off; actual telemetry deferred. |
+| **Telemetry posture** | Opt-in only, off by default, single env var to disable (`METERBILITY_TELEMETRY=off`). Documented in SECURITY.md. v0.3 ships with telemetry stubbed off; actual telemetry deferred. |
 | **Versioning + release** | Semver, tagged releases on GitHub, automated npm + PyPI publish on tag. Trace format version (v0.2 §11) becomes part of the public contract. |
 | **License audit** | Every dependency MIT/Apache/BSD compatible. SPDX headers on source files. |
 
@@ -688,10 +688,10 @@ slips, it slips with the rest of v0.3, not independently.
   TypeScript/Python public API surface may break minor-version-to-minor
   until 1.0.
 - **Hosted backend.** Stays an optional opt-in (the Postgres path, v0.2
-  §5.5). Spool is local-first; hosted is for team-tier later.
+  §5.5). Meterbility is local-first; hosted is for team-tier later.
 - **A support SLA.** Issues and Discussions are best-effort.
 - **Backward compatibility for in-progress alpha integrations.** People
-  who somehow have non-public versions of Spool need to migrate; we
+  who somehow have non-public versions of Meterbility need to migrate; we
   don't promise to support their forks.
 
 ### 5.4 The "fresh laptop" test
@@ -738,15 +738,15 @@ Cross-reference: `SPEC-V0_2.md` §3.
 ### 7.1 New commands
 
 ```sh
-spool files <run-id> [--at <step>] [--diff <path>]
+meter files <run-id> [--at <step>] [--diff <path>]
                      [--from <step_a> --to <step_b>] [--json]
-spool probe <run-id> --pause | --resume | --status
+meter probe <run-id> --pause | --resume | --status
                      | --inject <edit-type> --payload-file <path>
                      | --inject <edit-type> --payload <inline>
-spool init                       # scaffolds .spool/config.toml + .spoolignore
+meter init                       # scaffolds .meterbility/config.toml + .meterbilityignore
 ```
 
-Default `spool files <run-id>` output:
+Default `meter files <run-id>` output:
 
 ```text
 RUN  01HGX...  (Claude Code · 14 steps · 6 files touched)
@@ -761,16 +761,16 @@ Final +142 −91  across 6 files
 Baseline:  git HEAD a3f1c2e  (clean)
 ```
 
-`spool files <run-id> --tree <step>` is **deferred to v0.5** when the
+`meter files <run-id> --tree <step>` is **deferred to v0.5** when the
 working-tree panel UI exists (no UI consumer until then).
 
 ### 7.2 Augmentations to existing commands
 
-- **`spool inspect <run-id> --show files`** — new `--show` value alongside
+- **`meter inspect <run-id> --show files`** — new `--show` value alongside
   `decision | action | outcome | cost | context | all`.
-- **`spool inspect <run-id> --at <step> --show files --diff`** — render
+- **`meter inspect <run-id> --at <step> --show files --diff`** — render
   unified diff for that step.
-- **`spool export`** includes FileChange rows and baseline tree manifest
+- **`meter export`** includes FileChange rows and baseline tree manifest
   refs. **Does not** inline file content blobs unless
   `--include-file-blobs` is passed. Default-off because bug reports get
   shared.
@@ -782,7 +782,7 @@ Two new keys join the v0.2 §3.7 chain:
 | Flag | Setting key | Env var |
 |---|---|---|
 | `--include-file-blobs` (export) | `export.include_file_blobs` | — |
-| `spool probe` SDK probe enable | `probe.enabled_default` | `SPOOL_PROBE_ENABLED` |
+| `meter probe` SDK probe enable | `probe.enabled_default` | `METERBILITY_PROBE_ENABLED` |
 
 ---
 
@@ -803,7 +803,7 @@ tab shows:
   headers in cerulean.
 - Binary files: badge `binary`, size delta, no diff body.
 - Redacted files: badge `redacted`, reason text, no diff body.
-- Partial-diff files: badge `partial`, tooltip pointing at `spool watch`
+- Partial-diff files: badge `partial`, tooltip pointing at `meter watch`
   (v0.4).
 
 ### 8.2 Run detail page additions
@@ -899,7 +899,7 @@ The existing redaction pass (v0.2 §5.3) gets two new rules:
 
 - **`env-file`** — paths matching `.env`, `.env.*`, `*.env`,
   `*credentials*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`. Blob
-  content replaced with `«spool:redacted:env-file»`.
+  content replaced with `«meter:redacted:env-file»`.
 - **`inline-secret`** — content matches AWS access keys, GitHub PATs,
   Anthropic keys, OpenAI keys, JWT-shaped tokens, RSA private key
   headers, Slack tokens. Replaces just the matched substring; blob
@@ -908,19 +908,19 @@ The existing redaction pass (v0.2 §5.3) gets two new rules:
 Ruleset in packages/shared/src/redaction/secrets.ts, modeled on
 detect-secrets / trufflehog rule sets.
 
-Every firing logs to `redaction_log` per v0.2 behavior. `SPOOL_REDACT=off`
+Every firing logs to `redaction_log` per v0.2 behavior. `METERBILITY_REDACT=off`
 continues to disable globally.
 
 The redaction extension lands **with** the PR 1 binary-safety fix
 (§3.2) — they're the same redaction subsystem.
 
-### 10.2 `.spoolignore`
+### 10.2 `.meterbilityignore`
 
-A `.spoolignore` at the repo root is respected by:
+A `.meterbilityignore` at the repo root is respected by:
 
 - Baseline tree capture (§3.5).
 - Tool-call-derived FileChanges — ignored paths get a stub FileChange
-  with `redacted = true` and reason `«spool:redacted:spoolignored»`. The
+  with `redacted = true` and reason `«meter:redacted:meterbilityignored»`. The
   *existence* of the edit is recorded; the content is not.
 - File-watcher events (v0.4) — completely filtered.
 
@@ -972,7 +972,7 @@ to touch a gitignored file, so we capture but flag `gitignored = true`
 
 ### 10.3 Repo-level opt-in
 
-.spool/config.toml:
+.meterbility/config.toml:
 
 ```toml
 [capture.files]
@@ -988,11 +988,11 @@ When absent or `enabled = false`: FileChange rows still emit (so the
 `partial_diff = true`, `redacted = true`. UI: "file capture not enabled
 for this project."
 
-`spool init` (§7.1) scaffolds both the config and `.spoolignore`.
+`meter init` (§7.1) scaffolds both the config and `.meterbilityignore`.
 
 ### 10.4 Trace export defaults
 
-`spool export <run-id>` (v0.2 §3.6) inlines blobs by default for
+`meter export <run-id>` (v0.2 §3.6) inlines blobs by default for
 self-contained traces. **File content blobs are excluded unless
 `--include-file-blobs` is passed.**
 
@@ -1004,18 +1004,18 @@ Reasoning:
 - Recipients without blobs still see metadata: paths, ops, line counts,
   patch_text (which itself routes through the redaction pass).
 
-Documented prominently in `spool export --help`.
+Documented prominently in `meter export --help`.
 
 ### 10.5 Network bind warning
 
-When `spool web` binds anywhere other than `127.0.0.1`, the server warns
+When `meter web` binds anywhere other than `127.0.0.1`, the server warns
 at startup that file contents are now reachable. `/api/blob/:hash`
 requires an auth token (new `web.bind_token` setting) when bound non-locally.
 
 ### 10.6 Probe authorization
 
 Live Probe operations require the same local-machine assumption as the
-rest of Spool. `POST /api/runs/:id/probe/*` endpoints accept any
+rest of Meterbility. `POST /api/runs/:id/probe/*` endpoints accept any
 request when bound to `127.0.0.1`; require `web.bind_token` when bound
 elsewhere. No separate auth model.
 
@@ -1032,7 +1032,7 @@ elsewhere. No separate auth model.
 | > 50 MB | Skip entirely. Stub FileChange with `redacted` flag. |
 
 Configurable via `capture.files.max_file_size_bytes` in
-.spool/config.toml.
+.meterbility/config.toml.
 
 ### 11.2 Storage cost expectations
 
@@ -1065,8 +1065,8 @@ pipeline:
   "indexing project files..." for long initial walks.
 
 Target: 100k-file Linux source tree, baseline in < 5 seconds on a 2024-
-era laptop. Below this bar we'll publish; above we surface in `spool
-doctor` and recommend `.spoolignore` tuning.
+era laptop. Below this bar we'll publish; above we surface in `meter
+doctor` and recommend `.meterbilityignore` tuning.
 
 ### 11.5 Probe latency
 
@@ -1092,7 +1092,7 @@ per the v0.2 §11 rule.
 
 ```json
 {
-  "spool_trace_version": "0.3.0",
+  "meter_trace_version": "0.3.0",
   "run": { /* existing */
     "baseline_tree_id": "...",
     "probe_state": "resumed" | null
@@ -1129,9 +1129,9 @@ other section appears to contradict this table, this table wins.
 
 | Track | Deliverables |
 |---|---|
-| Track A — File capture | Binary-safety fix (PR 1) · schema v4 (file_change, baseline_tree, runs.baseline_tree_id) · Claude Code hook adapter for Edit/MultiEdit/Write/NotebookEdit · Bash stubs · lazy baseline capture · `working_tree_at` library · Files tab on step card · `/runs/:run_id/files` page · `spool files` CLI · trace format 0.3.0 · redaction extensions · `.spoolignore` defaults · `spool init` |
-| Track B — Live Probe | `runs.probe_state` column · SDK pause/inject/resume in TS + Python · `spool probe` CLI · Probe panel on run detail page · SSE events · annotation conventions for probe_edit / probe_pause |
-| Track C — OSS launch | Public repo · MIT license · `npm install -g @spool-ai/cli` works on fresh machines · CONTRIBUTING + SECURITY · README < 5-min path · "fresh laptop" test by 3 outside reviewers · versioning + tagged releases · CI on macOS + Linux |
+| Track A — File capture | Binary-safety fix (PR 1) · schema v4 (file_change, baseline_tree, runs.baseline_tree_id) · Claude Code hook adapter for Edit/MultiEdit/Write/NotebookEdit · Bash stubs · lazy baseline capture · `working_tree_at` library · Files tab on step card · `/runs/:run_id/files` page · `meter files` CLI · trace format 0.3.0 · redaction extensions · `.meterbilityignore` defaults · `meter init` |
+| Track B — Live Probe | `runs.probe_state` column · SDK pause/inject/resume in TS + Python · `meter probe` CLI · Probe panel on run detail page · SSE events · annotation conventions for probe_edit / probe_pause |
+| Track C — OSS launch | Public repo · MIT license · `npm install -g @meterbility/cli` works on fresh machines · CONTRIBUTING + SECURITY · README < 5-min path · "fresh laptop" test by 3 outside reviewers · versioning + tagged releases · CI on macOS + Linux |
 
 ### 13.2 v0.4 — "Cross-vendor capture" (weeks 9–14)
 
@@ -1140,7 +1140,7 @@ other section appears to contradict this table, this table wins.
 | Codex CLI file capture | Parse `apply_patch_call` records from `~/.codex/sessions/.../*.jsonl` |
 | Cursor file capture | Proxy + watcher only; documented limit |
 | SDK helpers | `captureFilesystemDeltaDuring`, `WrappedTextEditorTool`, `WrappedApplyPatchTool` |
-| File-watcher daemon | `spool watch --files`, opt-in; Bash side-effect capture |
+| File-watcher daemon | `meter watch --files`, opt-in; Bash side-effect capture |
 | Proxy partials | Anthropic `text_editor` + OpenAI `apply_patch` capture from wire payload |
 | Side-by-side diff | UI toggle on the unified-diff default |
 | Cost dashboards | Carried from v0.2 debt — fleet-level cost breakdown views |
@@ -1154,7 +1154,7 @@ other section appears to contradict this table, this table wins.
 | Working-tree panel | Left-column file tree at any selected step |
 | Working-tree scrubber | Drag-to-rewind across steps |
 | Codex-style scope toggles | Last step / Since start / Since fork-point / vs parent run |
-| Sandbox templates | Carried from v0.2 debt — pre-built isolated environments for `spool fork --continue live` |
+| Sandbox templates | Carried from v0.2 debt — pre-built isolated environments for `meter fork --continue live` |
 
 ### 13.4 v1 — "Broaden + harden" (months 7–10)
 
@@ -1216,11 +1216,11 @@ These need answers during build, not before approval, but track them:
 7. **Probe interaction with `--continue live` forks.** A forked run with
    `--continue live` could in principle also be probed. Allowed in v0.3
    but only if the live continuation uses an SDK-instrumented agent (the
-   default `spool fork --continue live` CLI uses a built-in safe-mode
+   default `meter fork --continue live` CLI uses a built-in safe-mode
    Bash executor that doesn't go through the SDK). Document; don't
    block.
 
-8. **OSS launch and the trademark question.** "Spool" availability check
+8. **OSS launch and the trademark question.** "Meterbility" availability check
    per SPEC.md's "Working title" preface needs to clear *before* the
    public repo lands. If the name has to change, this is the gate.
 
@@ -1233,7 +1233,7 @@ Appending to v0.2 §17.
 ### v0.3 scope
 
 - **Three features, not five.** Codex audit and the v0.2 retrospective
-  agreed: Spool's roadmaps consistently bite off more than a milestone
+  agreed: Meterbility's roadmaps consistently bite off more than a milestone
   can chew. v0.3 picks file capture, Live Probe, and OSS launch and
   protects them. Everything else defers to v0.4 / v0.5 / v1 on a
   schedule with one source of truth (§13).
@@ -1244,8 +1244,8 @@ Appending to v0.2 §17.
   with full schema support already in place — no migration tax in v0.4.
 - **Live Probe lands in v0.3, not v0.4.** It's the only real debugger
   primitive on the v0.2 debt list. Fork is post-hoc; Live Probe is the
-  breakpoint equivalent. Without it, Spool is "post-hoc inspector with
-  fork"; with it, Spool is "debugger." Worth the 2-week investment to
+  breakpoint equivalent. Without it, Meterbility is "post-hoc inspector with
+  fork"; with it, Meterbility is "debugger." Worth the 2-week investment to
   close that conceptual gap before the OSS launch.
 - **OSS launch is a feature.** Calling it "go-to-market" lets it slip
   indefinitely. Calling it a forcing function for productionization
@@ -1276,7 +1276,7 @@ Appending to v0.2 §17.
   partial > dishonest full. Bash steps emit stub FileChanges with
   `partial_diff = true` so users know what's missing.
 - **Claude Code re-uses upstream `file-history/` store.** It's already
-  content-addressed; copy-by-SHA into Spool's store is cheap and dedups
+  content-addressed; copy-by-SHA into Meterbility's store is cheap and dedups
   natively. We don't re-implement what upstream does well.
 - **Sub-agent FileChanges attach to the parent's `Task` step in v0.3.**
   First-class sub-agent runs come later; attribution is correct enough
@@ -1303,7 +1303,7 @@ Appending to v0.2 §17.
   Skip-redact for non-text or explicit caller opt-out.
 - **`--include-file-blobs` opt-in on export.** Default-on would leak
   code to bug reports.
-- **Repo-level opt-in via .spool/config.toml.** Capturing code from a
+- **Repo-level opt-in via .meterbility/config.toml.** Capturing code from a
   random `cd` should require deliberation. Matches v0.2 §17's
   local-first stance: user is in control.
 - **Network-bind warning + auth token for blob and probe endpoints.**
@@ -1371,8 +1371,8 @@ Appending to v0.2 §18.
 - **Filesystem-watch-derived.** A FileChange whose provenance is an OS
   file-system event observed during a step's wall-clock window.
   Attribution is heuristic. (v0.4.)
-- **`.spoolignore`.** A `.gitignore`-style file at repo root controlling
-  which paths Spool captures. Defaults ship with the CLI.
+- **`.meterbilityignore`.** A `.gitignore`-style file at repo root controlling
+  which paths Meterbility captures. Defaults ship with the CLI.
 - **Live Probe.** The pause-inject-resume primitive that operates on a
   currently-executing SDK-instrumented run. The breakpoint equivalent
   for agent debugging.
@@ -1382,7 +1382,7 @@ Appending to v0.2 §18.
 - **`probeEnabled`.** SDK flag (default false) that opts an agent loop
   into pause-on-`startStep` behavior.
 - **Fresh-laptop test.** The OSS launch gate: three outside reviewers
-  each install Spool from public docs on a clean machine, capture
+  each install Meterbility from public docs on a clean machine, capture
   their first run, and file at least one issue before greenlight.
 
 ---

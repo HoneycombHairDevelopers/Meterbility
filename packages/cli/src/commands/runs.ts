@@ -5,11 +5,11 @@ import {
   listRuns,
   setRunStatus,
   updateRunTotals,
-} from "@spool-ai/collector";
+} from "@meterbility/collector";
 import { openStore } from "../util.ts";
 
 /**
- * `spool runs <subcommand>` — run-management ops.
+ * `meter runs <subcommand>` — run-management ops.
  *
  * Today this hosts `close` for sealing in-progress runs. Proxy-captured
  * runs (and any tracer that exited without calling `tracer.end()`) hang
@@ -55,7 +55,7 @@ export function registerRunsCommand(program: Command): void {
         if (!id && !opts.all) {
           console.error(
             pc.red(
-              "spool runs close: provide a run id, or pass --all to close every in_progress run.",
+              "meter runs close: provide a run id, or pass --all to close every in_progress run.",
             ),
           );
           process.exit(2);
@@ -105,9 +105,9 @@ export function registerRunsCommand(program: Command): void {
 }
 
 function singleTarget(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   id: string,
-): Array<import("@spool-ai/shared").Run> {
+): Array<import("@meterbility/shared").Run> {
   const run = getRun(store, id);
   if (!run) {
     console.error(pc.red(`run not found: ${id}`));
@@ -125,9 +125,9 @@ function singleTarget(
 }
 
 function bulkTargets(
-  store: import("@spool-ai/collector").Store,
+  store: import("@meterbility/collector").Store,
   opts: { olderThan?: number; source?: string },
-): Array<import("@spool-ai/shared").Run> {
+): Array<import("@meterbility/shared").Run> {
   const all = listRuns(store, { limit: 1000 });
   const cutoffMs = opts.olderThan
     ? Date.now() - opts.olderThan * 60_000

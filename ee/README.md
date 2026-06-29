@@ -1,6 +1,6 @@
 # /ee — Enterprise Edition
 
-This directory is reserved for Spool's commercial-source modules and is
+This directory is reserved for Meterbility's commercial-source modules and is
 licensed under the **Elastic License 2.0** (see [`LICENSE`](./LICENSE)).
 
 Everything OUTSIDE this directory ships under MIT.
@@ -9,10 +9,10 @@ Everything OUTSIDE this directory ships under MIT.
 
 Per the open-core boundary set at v0.3 launch:
 
-- **Multi-tenant fleet orchestration** — running Spool as a hosted control
+- **Multi-tenant fleet orchestration** — running Meterbility as a hosted control
   plane across many customer agents with isolation guarantees.
 - **SSO / RBAC / SCIM** — enterprise identity integration beyond
-  `spool config user`.
+  `meter config user`.
 - **Audit logs** — tamper-evident operator-action history beyond the local
   annotation table.
 - **Long-retention modules** — storage tiers and lifecycle policies for
@@ -20,7 +20,7 @@ Per the open-core boundary set at v0.3 launch:
 
 ## What stays MIT (does NOT belong here)
 
-The OSS core that powers single-operator, self-hosted Spool:
+The OSS core that powers single-operator, self-hosted Meterbility:
 
 - The capture surfaces (`adapters/*`, `packages/agent`, `packages/agent-py`,
   `packages/proxy`)

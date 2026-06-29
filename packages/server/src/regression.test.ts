@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, listRuns } from "@spool-ai/collector";
-import { SpoolTracer } from "@spool-ai/agent";
+import { Store, listRuns } from "@meterbility/collector";
+import { MeterbilityTracer } from "@meterbility/agent";
 import {
   createTest,
   deriveAssertionsFromRun,
@@ -12,17 +12,17 @@ import {
   listTests,
   runTest,
 } from "./regression.ts";
-import { listSteps } from "@spool-ai/collector";
+import { listSteps } from "@meterbility/collector";
 
 function fresh(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-regression-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-regression-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
 async function buildSampleRun(): Promise<{ runId: string; store: Store }> {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/regtest",
     agent: "tester",
   });

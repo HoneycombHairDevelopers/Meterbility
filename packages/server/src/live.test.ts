@@ -5,7 +5,7 @@ import {
   contextUtilization,
   detectLoop,
 } from "./live-heuristics.ts";
-import type { Run, Step } from "@spool-ai/shared";
+import type { Run, Step } from "@meterbility/shared";
 
 function step(partial: Partial<Step>): Step {
   return {

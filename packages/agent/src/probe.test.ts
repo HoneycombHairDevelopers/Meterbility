@@ -9,9 +9,9 @@ import {
   requestPause,
   requestResume,
   setInject,
-} from "@spool-ai/shared";
-import { Store, listSteps, listRuns } from "@spool-ai/collector";
-import { SpoolTracer, traceAnthropic } from "./index.ts";
+} from "@meterbility/shared";
+import { Store, listSteps, listRuns } from "@meterbility/collector";
+import { MeterbilityTracer, traceAnthropic } from "./index.ts";
 import { applyProbeToRequest, type ProbeRuntime } from "./probe.ts";
 
 /**
@@ -22,8 +22,8 @@ import { applyProbeToRequest, type ProbeRuntime } from "./probe.ts";
  */
 
 function fresh(): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-probe-hook-"));
-  process.env.SPOOL_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "meter-probe-hook-"));
+  process.env.METERBILITY_HOME = dir;
   return dir;
 }
 
@@ -142,7 +142,7 @@ test("applyProbeToRequest handles pause + inject together (the natural operator 
 
 test("probeEnabled=false skips probe entirely — no file is touched, inject is ignored", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/p-off",
     agent: "tester",
     // probeEnabled NOT set → defaults to false
@@ -172,7 +172,7 @@ test("probeEnabled=false skips probe entirely — no file is touched, inject is 
 
 test("probeEnabled=true with no probe activity is a no-op on the request", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/p-noop",
     agent: "tester",
     probeEnabled: true,
@@ -200,7 +200,7 @@ test("probeEnabled=true with no probe activity is a no-op on the request", async
 
 test("probeEnabled=true with pause_requested blocks the call and resumes cleanly", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/p-pause",
     agent: "tester",
     probeEnabled: true,
@@ -238,7 +238,7 @@ test("probeEnabled=true with pause_requested blocks the call and resumes cleanly
 
 test("probeEnabled=true picks up an inject and the captured Step reflects it", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/p-inj",
     agent: "tester",
     probeEnabled: true,
@@ -277,7 +277,7 @@ test("probeEnabled=true picks up an inject and the captured Step reflects it", a
 
 test("tracer.end() clears the probe file (terminal cleanup)", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/p-clear",
     agent: "tester",
     probeEnabled: true,
@@ -294,7 +294,7 @@ test("tracer.end() clears the probe file (terminal cleanup)", async () => {
 
 test("tracer.end() is safe to call when probe was never used", async () => {
   fresh();
-  const tracer = new SpoolTracer({
+  const tracer = new MeterbilityTracer({
     project: "/tmp/p-noop-clear",
     agent: "tester",
     // probeEnabled not set; no probe activity

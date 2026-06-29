@@ -2,7 +2,7 @@
 Regex redaction — mirrors packages/shared/src/redact.ts.
 
 Applied to every blob before persist. Disable globally via
-``SPOOL_REDACT=off``. Each rule replaces matches with a tagged
+``METERBILITY_REDACT=off``. Each rule replaces matches with a tagged
 placeholder so redactions are visible in the stored bytes.
 """
 
@@ -15,7 +15,7 @@ from typing import List, Tuple
 
 
 def _placeholder(name: str) -> str:
-    return f"«spool:redacted:{name}»"
+    return f"«meter:redacted:{name}»"
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ def redact_string(
     ``counts`` is a list of ``(rule_name, count)`` for every rule that
     matched at least once.
     """
-    if os.environ.get("SPOOL_REDACT") == "off":
+    if os.environ.get("METERBILITY_REDACT") == "off":
         return text, []
     out = text
     counts: List[Tuple[str, int]] = []

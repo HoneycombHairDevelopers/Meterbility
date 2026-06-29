@@ -1,5 +1,5 @@
 """
-Tier 10 — exhaustive coverage of ``spool_agent.redact`` + cross-language
+Tier 10 — exhaustive coverage of ``meterbility_agent.redact`` + cross-language
 parity with the TS redactor at ``packages/shared/src/redact.ts``.
 
 Three layers, mirroring TS Tier 1 (``redact.combinatorial.test.ts`` and
@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent.parent  # packages/agent-py/tests → repo root
 sys.path.insert(0, str(HERE.parent / "src"))
 
-from spool_agent.redact import (  # noqa: E402
+from meterbility_agent.redact import (  # noqa: E402
     DEFAULT_RULES,
     redact_bytes,
     redact_string,
@@ -79,19 +79,19 @@ RULE_NAMES = [r.name for r in DEFAULT_RULES]
 
 
 class IsolatedRedactEnv(unittest.TestCase):
-    """Each test starts with SPOOL_REDACT unset so the redactor's
+    """Each test starts with METERBILITY_REDACT unset so the redactor's
     default-on behavior is reliable."""
 
     def setUp(self) -> None:
-        self._prev = os.environ.get("SPOOL_REDACT")
-        if "SPOOL_REDACT" in os.environ:
-            del os.environ["SPOOL_REDACT"]
+        self._prev = os.environ.get("METERBILITY_REDACT")
+        if "METERBILITY_REDACT" in os.environ:
+            del os.environ["METERBILITY_REDACT"]
 
     def tearDown(self) -> None:
         if self._prev is not None:
-            os.environ["SPOOL_REDACT"] = self._prev
-        elif "SPOOL_REDACT" in os.environ:
-            del os.environ["SPOOL_REDACT"]
+            os.environ["METERBILITY_REDACT"] = self._prev
+        elif "METERBILITY_REDACT" in os.environ:
+            del os.environ["METERBILITY_REDACT"]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -112,15 +112,15 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
         scenario_name: str,
         text: str,
         expected_count: int,
-        spool_redact_off: bool = False,
+        meter_redact_off: bool = False,
     ) -> None:
         """Generic cell-checker. Asserts (a) count for this rule matches
         ``expected_count``, (b) when expected_count > 0 the raw secret
         does NOT survive and the placeholder appears N times, (c) when
         expected_count == 0 the output equals the input verbatim."""
         secret = SAMPLES[rule_name]
-        if spool_redact_off:
-            os.environ["SPOOL_REDACT"] = "off"
+        if meter_redact_off:
+            os.environ["METERBILITY_REDACT"] = "off"
         out, counts = redact_string(text)
         by_rule = dict(counts)
         actual = by_rule.get(rule_name, 0)
@@ -130,7 +130,7 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             f"{rule_name} × {scenario_name}: expected {expected_count}, got {actual}",
         )
         if expected_count > 0:
-            placeholder = f"«spool:redacted:{rule_name}»"
+            placeholder = f"«meter:redacted:{rule_name}»"
             self.assertEqual(
                 out.count(placeholder),
                 expected_count,
@@ -181,13 +181,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_anthropic_spool_redact_off(self) -> None:
+    def test_anthropic_meter_redact_off(self) -> None:
         self._assert_cell(
             "anthropic-key",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['anthropic-key']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     def test_openai_no_match(self) -> None:
@@ -225,13 +225,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_openai_spool_redact_off(self) -> None:
+    def test_openai_meter_redact_off(self) -> None:
         self._assert_cell(
             "openai-key",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['openai-key']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     def test_github_no_match(self) -> None:
@@ -269,13 +269,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_github_spool_redact_off(self) -> None:
+    def test_github_meter_redact_off(self) -> None:
         self._assert_cell(
             "github-token",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['github-token']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     def test_aws_no_match(self) -> None:
@@ -313,13 +313,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_aws_spool_redact_off(self) -> None:
+    def test_aws_meter_redact_off(self) -> None:
         self._assert_cell(
             "aws-access-key",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['aws-access-key']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     def test_bearer_no_match(self) -> None:
@@ -357,13 +357,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_bearer_spool_redact_off(self) -> None:
+    def test_bearer_meter_redact_off(self) -> None:
         self._assert_cell(
             "bearer",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['bearer']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     def test_private_key_no_match(self) -> None:
@@ -401,13 +401,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_private_key_spool_redact_off(self) -> None:
+    def test_private_key_meter_redact_off(self) -> None:
         self._assert_cell(
             "private-key",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['private-key']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     # ── v0.3 extensions: slack-token × 6 scenarios ────────────────────
@@ -447,13 +447,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_slack_spool_redact_off(self) -> None:
+    def test_slack_meter_redact_off(self) -> None:
         self._assert_cell(
             "slack-token",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['slack-token']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     # ── v0.3 extensions: jwt × 6 scenarios ────────────────────────────
@@ -493,13 +493,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_jwt_spool_redact_off(self) -> None:
+    def test_jwt_meter_redact_off(self) -> None:
         self._assert_cell(
             "jwt",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['jwt']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     # ── v0.3 extensions: stripe-live-key × 6 scenarios ────────────────
@@ -539,13 +539,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_stripe_spool_redact_off(self) -> None:
+    def test_stripe_meter_redact_off(self) -> None:
         self._assert_cell(
             "stripe-live-key",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['stripe-live-key']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
     # ── v0.3 extensions: env-secret × 6 scenarios ─────────────────────
@@ -585,13 +585,13 @@ class TestRedactCombinatorial(IsolatedRedactEnv):
             2,
         )
 
-    def test_env_secret_spool_redact_off(self) -> None:
+    def test_env_secret_meter_redact_off(self) -> None:
         self._assert_cell(
             "env-secret",
-            "SPOOL_REDACT=off",
+            "METERBILITY_REDACT=off",
             f"prefix {SAMPLES['env-secret']} suffix\n",
             0,
-            spool_redact_off=True,
+            meter_redact_off=True,
         )
 
 
@@ -750,9 +750,9 @@ class TestRedactProperties(IsolatedRedactEnv):
                     f"iter {i}: {rule_name} count {count} > standalone {standalone}",
                 )
 
-    def test_spool_redact_off_is_perfect_passthrough(self) -> None:
-        """SPOOL_REDACT=off returns input verbatim with zero counts."""
-        os.environ["SPOOL_REDACT"] = "off"
+    def test_meter_redact_off_is_perfect_passthrough(self) -> None:
+        """METERBILITY_REDACT=off returns input verbatim with zero counts."""
+        os.environ["METERBILITY_REDACT"] = "off"
         for i in range(self.N_ITERATIONS):
             parts: List[str] = []
             for j in range(1 + (i % 3)):

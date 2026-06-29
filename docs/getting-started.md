@@ -1,6 +1,6 @@
 # Getting started
 
-Spool is the debugger for AI agents. v0 captures Claude Code sessions and lets you inspect, fork, diff, and annotate them locally.
+Meterbility is the debugger for AI agents. v0 captures Claude Code sessions and lets you inspect, fork, diff, and annotate them locally.
 
 ## Prereqs
 
@@ -12,37 +12,37 @@ Spool is the debugger for AI agents. v0 captures Claude Code sessions and lets y
 ```bash
 # from a clone of this repo:
 npm install
-./bin/spool doctor
+./bin/meter doctor
 ```
 
 `doctor` runs the Gate 2 check from SPEC §18. If every line says PASS, the capture surface is live.
 
 ```bash
-./bin/spool ingest claude-code --limit 5
+./bin/meter ingest claude-code --limit 5
 ```
 
-Reads the newest 5 Claude Code sessions and turns each one into a Spool **Run**. Re-running is idempotent — only new bytes are processed.
+Reads the newest 5 Claude Code sessions and turns each one into a Meterbility **Run**. Re-running is idempotent — only new bytes are processed.
 
 ```bash
-./bin/spool list
+./bin/meter list
 ```
 
 Shows the captured runs, newest first. Each line:
 
 ```
-run_4de2ad47  in_progress    99 steps    $31.18  main              Spool product specification draft
+run_4de2ad47  in_progress    99 steps    $31.18  main              Meterbility product specification draft
 ```
 
 The 12-character prefix is what every other command accepts.
 
 ```bash
-./bin/spool inspect run_4de2ad47
+./bin/meter inspect run_4de2ad47
 ```
 
 Prints a run header, a colored timeline, and every step's summary.
 
 ```bash
-./bin/spool inspect run_4de2ad47 --at 5 --show all
+./bin/meter inspect run_4de2ad47 --at 5 --show all
 ```
 
 Opens step #5 with all five tabs (decision, action, outcome, cost, context).
@@ -52,7 +52,7 @@ Opens step #5 with all five tabs (decision, action, outcome, cost, context).
 The headline primitive:
 
 ```bash
-./bin/spool fork run_4de2ad47 \
+./bin/meter fork run_4de2ad47 \
   --at 5 \
   --edit replace_user_message \
   --text "Focus only on the API layer" \
@@ -67,7 +67,7 @@ This:
 Then diff the trajectories:
 
 ```bash
-./bin/spool diff run_4de2ad47 <new-fork-id>
+./bin/meter diff run_4de2ad47 <new-fork-id>
 ```
 
 You should see a shared prefix, a single divergence row at the edited step, and then `only_a` / `only_b` for the steps the two runs took afterwards.
@@ -75,7 +75,7 @@ You should see a shared prefix, a single divergence row at the edited step, and 
 ## Web UI
 
 ```bash
-./bin/spool web
+./bin/meter web
 ```
 
 Opens http://127.0.0.1:4317 with a run list, step timelines, and trajectory diffs. Step content is loaded on demand from the content-addressed blob store via `/api/blob/<sha>`.
@@ -83,8 +83,8 @@ Opens http://127.0.0.1:4317 with a run list, step timelines, and trajectory diff
 ## Annotate
 
 ```bash
-./bin/spool annotate run_4de2ad47 --verdict good_decision --note "The architect made the right call here"
-./bin/spool annotate stp_abc123 --verdict bad_decision --note "Should have stopped to ask before editing the test"
+./bin/meter annotate run_4de2ad47 --verdict good_decision --note "The architect made the right call here"
+./bin/meter annotate stp_abc123 --verdict bad_decision --note "Should have stopped to ask before editing the test"
 ```
 
 Annotations are the human signal that feeds the regression suite (v0.1).
@@ -92,23 +92,23 @@ Annotations are the human signal that feeds the regression suite (v0.1).
 ## Export
 
 ```bash
-./bin/spool export run_4de2ad47 -o run.spool.json
+./bin/meter export run_4de2ad47 -o run.meter.json
 ```
 
-Writes the run as a single JSON file in the [Spool Trace Format](trace-format.md). Round-trippable, base64-inlined blobs by default.
+Writes the run as a single JSON file in the [Meterbility Trace Format](trace-format.md). Round-trippable, base64-inlined blobs by default.
 
 ## Where data lives
 
-Default `$SPOOL_HOME` is `~/.spool`:
+Default `$METERBILITY_HOME` is `~/.meterbility`:
 
-- `~/.spool/spool.db` — SQLite metadata (runs, steps, forks, annotations).
-- `~/.spool/blobs/<aa>/<bb>/<sha256>` — content-addressed blob store.
+- `~/.meterbility/meterbility.db` — SQLite metadata (runs, steps, forks, annotations).
+- `~/.meterbility/blobs/<aa>/<bb>/<sha256>` — content-addressed blob store.
 
-Disable redaction with `SPOOL_REDACT=off` (default rules redact known secret patterns — see `packages/shared/src/redact.ts`).
+Disable redaction with `METERBILITY_REDACT=off` (default rules redact known secret patterns — see `packages/shared/src/redact.ts`).
 
 ## What's not in v0
 
-- No live capture (open Claude Code, then `spool ingest`).
+- No live capture (open Claude Code, then `meter ingest`).
 - No team / hosted backend.
 - No scheduled regression suite.
 - No sandbox templates.

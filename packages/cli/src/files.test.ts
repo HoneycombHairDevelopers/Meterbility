@@ -5,13 +5,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { Store, listRuns } from "@spool-ai/collector";
-import { ingestSession } from "@spool-ai/claude-code-adapter";
+import { Store, listRuns } from "@meterbility/collector";
+import { ingestSession } from "@meterbility/claude-code-adapter";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Turn 6 — `spool files` CLI tests.
+ * Turn 6 — `meter files` CLI tests.
  *
  * Strategy: ingest a real session through the same path the
  * adapter tests use, then shell out to the actual CLI binary so the
@@ -19,7 +19,7 @@ const TEST_DIR = dirname(fileURLToPath(import.meta.url));
  * action implementation end-to-end. The store and stripped-down
  * CLAUDE_HOME live under tmpdir; no global state escapes the test.
  *
- * `spool inspect --show files` is exercised via the same subprocess
+ * `meter inspect --show files` is exercised via the same subprocess
  * so the `--show` enum extension can't silently regress.
  */
 
@@ -29,14 +29,14 @@ const CLI_ENTRY = resolve(TEST_DIR, "index.ts");
 const REPO_ROOT = resolve(TEST_DIR, "../../..");
 
 function freshStore(): { home: string; store: Store } {
-  const home = mkdtempSync(join(tmpdir(), "spool-files-cli-"));
-  process.env.SPOOL_HOME = home;
-  const store = Store.open({ path: join(home, "spool.db") });
+  const home = mkdtempSync(join(tmpdir(), "meter-files-cli-"));
+  process.env.METERBILITY_HOME = home;
+  const store = Store.open({ path: join(home, "meterbility.db") });
   return { home, store };
 }
 
 function writeRepo(layout: Record<string, string>): string {
-  const root = mkdtempSync(join(tmpdir(), "spool-files-cli-repo-"));
+  const root = mkdtempSync(join(tmpdir(), "meter-files-cli-repo-"));
   for (const [rel, content] of Object.entries(layout)) {
     const abs = join(root, rel);
     mkdirSync(join(abs, ".."), { recursive: true });
@@ -46,7 +46,7 @@ function writeRepo(layout: Record<string, string>): string {
 }
 
 function writeSession(records: object[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "spool-files-cli-sess-"));
+  const dir = mkdtempSync(join(tmpdir(), "meter-files-cli-sess-"));
   const path = join(dir, "session.jsonl");
   writeFileSync(path, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
   return path;
@@ -83,7 +83,7 @@ function runCli(
 /**
  * Builds the canonical fixture every test in this file uses: a fake
  * project with two source files, a Claude session that edits one of
- * them, ingest done, and the SPOOL_HOME pre-populated so the
+ * them, ingest done, and the METERBILITY_HOME pre-populated so the
  * subprocess CLI sees real data.
  */
 async function setupFixture(): Promise<{
@@ -141,19 +141,19 @@ async function setupFixture(): Promise<{
   const runs = listRuns(store);
   const runId = runs[0]!.run_id;
   store.close();
-  // The CLI subprocess will re-open via SPOOL_HOME. CLAUDE_HOME points
+  // The CLI subprocess will re-open via METERBILITY_HOME. CLAUDE_HOME points
   // at an empty dir so anything Claude-specific the CLI might try (like
   // doctor) finds an isolated state.
-  const claudeHome = mkdtempSync(join(tmpdir(), "spool-files-cli-claude-"));
+  const claudeHome = mkdtempSync(join(tmpdir(), "meter-files-cli-claude-"));
   return { home, runId, repoCwd, claudeHome };
 }
 
 // ─── Default summary mode ────────────────────────────────────────────
 
-test("spool files <run> renders the cumulative summary with header, row, and footer", async () => {
+test("meter files <run> renders the cumulative summary with header, row, and footer", async () => {
   const fx = await setupFixture();
   const r = runCli(["files", fx.runId], {
-    SPOOL_HOME: fx.home,
+    METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     NO_COLOR: "1",
   });
@@ -169,10 +169,10 @@ test("spool files <run> renders the cumulative summary with header, row, and foo
   assert.match(r.stdout, /Baseline:/);
 });
 
-test("spool files <run> --json emits structured output with the expected fields", async () => {
+test("meter files <run> --json emits structured output with the expected fields", async () => {
   const fx = await setupFixture();
   const r = runCli(["files", fx.runId, "--json"], {
-    SPOOL_HOME: fx.home,
+    METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     NO_COLOR: "1",
   });
@@ -201,10 +201,10 @@ test("spool files <run> --json emits structured output with the expected fields"
 
 // ─── --at mode ───────────────────────────────────────────────────────
 
-test("spool files <run> --at 0 scopes to one step's changes", async () => {
+test("meter files <run> --at 0 scopes to one step's changes", async () => {
   const fx = await setupFixture();
   const r = runCli(["files", fx.runId, "--at", "0"], {
-    SPOOL_HOME: fx.home,
+    METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     NO_COLOR: "1",
   });
@@ -214,10 +214,10 @@ test("spool files <run> --at 0 scopes to one step's changes", async () => {
   assert.match(r.stdout, /M  src\/greet\.ts/);
 });
 
-test("spool files <run> --at 0 --json carries step_id and sequence", async () => {
+test("meter files <run> --at 0 --json carries step_id and sequence", async () => {
   const fx = await setupFixture();
   const r = runCli(["files", fx.runId, "--at", "0", "--json"], {
-    SPOOL_HOME: fx.home,
+    METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     NO_COLOR: "1",
   });
@@ -235,10 +235,10 @@ test("spool files <run> --at 0 --json carries step_id and sequence", async () =>
 
 // ─── --diff mode ─────────────────────────────────────────────────────
 
-test("spool files <run> --diff <path> prints a colorized unified diff", async () => {
+test("meter files <run> --diff <path> prints a colorized unified diff", async () => {
   const fx = await setupFixture();
   const r = runCli(["files", fx.runId, "--diff", "src/greet.ts"], {
-    SPOOL_HOME: fx.home,
+    METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     NO_COLOR: "1",
   });
@@ -250,14 +250,14 @@ test("spool files <run> --diff <path> prints a colorized unified diff", async ()
   assert.match(r.stdout, /\+function hello/);
 });
 
-test("spool files <run> --diff <path> --from/--to scopes the step window", async () => {
+test("meter files <run> --diff <path> --from/--to scopes the step window", async () => {
   const fx = await setupFixture();
   // The only change is at step 0; restricting to step 1+ should
   // show "no changes in window."
   const r = runCli(
     ["files", fx.runId, "--diff", "src/greet.ts", "--from", "1"],
     {
-      SPOOL_HOME: fx.home,
+      METERBILITY_HOME: fx.home,
       CLAUDE_HOME: fx.claudeHome,
       NO_COLOR: "1",
     },
@@ -268,10 +268,10 @@ test("spool files <run> --diff <path> --from/--to scopes the step window", async
 
 // ─── Error paths ─────────────────────────────────────────────────────
 
-test("spool files <unknown-run> exits 1 with a clear error", async () => {
+test("meter files <unknown-run> exits 1 with a clear error", async () => {
   const fx = await setupFixture();
   const r = runCli(["files", "run_does_not_exist_at_all"], {
-    SPOOL_HOME: fx.home,
+    METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     NO_COLOR: "1",
   });
@@ -279,7 +279,7 @@ test("spool files <unknown-run> exits 1 with a clear error", async () => {
   assert.match(r.stderr, /run not found/);
 });
 
-test("spool files <run> --diff <path> --from <bogus-step-id> exits 1 with step-not-found", async () => {
+test("meter files <run> --diff <path> --from <bogus-step-id> exits 1 with step-not-found", async () => {
   // Non-numeric --from / --to inputs are validated strictly because
   // they're definitely user typos. Numeric inputs out of range are
   // accepted (treated as empty window) — that's the legitimate
@@ -288,7 +288,7 @@ test("spool files <run> --diff <path> --from <bogus-step-id> exits 1 with step-n
   const r = runCli(
     ["files", fx.runId, "--diff", "src/greet.ts", "--from", "stp_does_not_exist"],
     {
-      SPOOL_HOME: fx.home,
+      METERBILITY_HOME: fx.home,
       CLAUDE_HOME: fx.claudeHome,
       NO_COLOR: "1",
     },
@@ -299,12 +299,12 @@ test("spool files <run> --diff <path> --from <bogus-step-id> exits 1 with step-n
 
 // ─── inspect --show files extension ──────────────────────────────────
 
-test("spool inspect <run> --at 0 --show files lists the FileChange rows", async () => {
+test("meter inspect <run> --at 0 --show files lists the FileChange rows", async () => {
   const fx = await setupFixture();
   const r = runCli(
     ["inspect", fx.runId, "--at", "0", "--show", "files"],
     {
-      SPOOL_HOME: fx.home,
+      METERBILITY_HOME: fx.home,
       CLAUDE_HOME: fx.claudeHome,
       NO_COLOR: "1",
     },
@@ -315,34 +315,34 @@ test("spool inspect <run> --at 0 --show files lists the FileChange rows", async 
   assert.match(r.stdout, /M  src\/greet\.ts/);
 });
 
-test("spool inspect <run> --at 0 --show files --diff inlines the unified diff", async () => {
+test("meter inspect <run> --at 0 --show files --diff inlines the unified diff", async () => {
   const fx = await setupFixture();
   const r = runCli(
     ["inspect", fx.runId, "--at", "0", "--show", "files", "--diff"],
     {
-      SPOOL_HOME: fx.home,
+      METERBILITY_HOME: fx.home,
       CLAUDE_HOME: fx.claudeHome,
       NO_COLOR: "1",
     },
   );
   assert.equal(r.status, 0, r.stderr);
-  // Same diff body the standalone `spool files --diff` would print.
+  // Same diff body the standalone `meter files --diff` would print.
   assert.match(r.stdout, /-function greet/);
   assert.match(r.stdout, /\+function hello/);
 });
 
 // ─── Empty / no-capture cases ────────────────────────────────────────
 
-test("spool files <run> on a baseline-less run with no FileChanges gives a helpful empty message", async () => {
+test("meter files <run> on a baseline-less run with no FileChanges gives a helpful empty message", async () => {
   // Build a fresh store with a manually-inserted run that has no
   // FileChanges and no baseline. The "no file changes" message
-  // should fire AND mention `spool init`.
+  // should fire AND mention `meter init`.
   const { home, store } = freshStore();
-  const claudeHome = mkdtempSync(join(tmpdir(), "spool-empty-cli-"));
+  const claudeHome = mkdtempSync(join(tmpdir(), "meter-empty-cli-"));
   // Need a real run row. Use the queries layer directly to keep the
   // fixture minimal.
   const { upsertProjectByCwd, upsertAgent, insertRun } = await import(
-    "@spool-ai/collector"
+    "@meterbility/collector"
   );
   const project = upsertProjectByCwd(store, "/tmp/empty-proj", "empty");
   const agent = upsertAgent(store, project.project_id, "claude-code");
@@ -364,13 +364,13 @@ test("spool files <run> on a baseline-less run with no FileChanges gives a helpf
   });
   store.close();
   const r = runCli(["files", runId], {
-    SPOOL_HOME: home,
+    METERBILITY_HOME: home,
     CLAUDE_HOME: claudeHome,
     NO_COLOR: "1",
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /no file changes captured for this run/);
-  // The hint about `spool init` only fires when there's no baseline,
+  // The hint about `meter init` only fires when there's no baseline,
   // which is also true here.
-  assert.match(r.stdout, /spool init/);
+  assert.match(r.stdout, /meter init/);
 });

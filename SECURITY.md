@@ -17,7 +17,7 @@ the repo.
 
 The more of this you can supply, the faster we can fix it:
 
-- Spool version (output of `./bin/spool --version` and the commit SHA).
+- Meterbility version (output of `./bin/meter --version` and the commit SHA).
 - Affected component (`packages/<name>`, `adapters/<name>`, or a CLI
   command).
 - Minimum-viable reproduction — ideally a shell session or a tiny
@@ -62,9 +62,9 @@ We won't pursue legal action against good-faith security research that:
 - Anything in this repository: the OSS core (MIT) under `packages/`,
   `adapters/`, `scripts/`, `bin/`; the ELv2 modules under `ee/` (when
   present); the docs.
-- Distributed artifacts published from this repo (npm `@spool-ai/*`
-  packages when we publish, the `spool-agent` PyPI package).
-- The reference Spool web server when run locally per the documented
+- Distributed artifacts published from this repo (npm `@meterbility/*`
+  packages when we publish, the `meterbility-agent` PyPI package).
+- The reference Meterbility web server when run locally per the documented
   install instructions.
 
 ### Out of scope
@@ -73,7 +73,7 @@ We won't pursue legal action against good-faith security research that:
   upstream project. (We monitor advisories via the license audit + a
   forthcoming Dependabot setup and will pick up patches as they
   release.)
-- Hosted Spool cloud — separate disclosure surface, separate contact.
+- Hosted Meterbility cloud — separate disclosure surface, separate contact.
   When the hosted service launches, this section will name it.
 - Social engineering of maintainers.
 - Issues in third-party clones of the codebase.
@@ -85,18 +85,18 @@ We won't pursue legal action against good-faith security research that:
 
 ## Threat model (what we assume vs. what we defend)
 
-Spool is **local-first by default**. The web server binds to
+Meterbility is **local-first by default**. The web server binds to
 `127.0.0.1` and has no authentication; the SQLite store and probe
-files live under `$SPOOL_HOME` (default `~/.spool`) with the user's
+files live under `$METERBILITY_HOME` (default `~/.meterbility`) with the user's
 own filesystem permissions.
 
 **We assume:**
 
 - The user trusts every process on their machine that can read
-  `$SPOOL_HOME`.
-- The user does not expose `spool web` on a public interface without
+  `$METERBILITY_HOME`.
+- The user does not expose `meter web` on a public interface without
   adding their own auth layer (a reverse proxy, an SSH tunnel, a VPN).
-- The Claude Code / Codex / Cursor session files Spool reads from were
+- The Claude Code / Codex / Cursor session files Meterbility reads from were
   produced by trusted clients.
 
 **We defend against:**
@@ -110,7 +110,7 @@ own filesystem permissions.
   URL-encodes run ids before using them as filenames (see
   `packages/shared/src/probe.ts` `probeFilePath`). A run id of
   `../../escape` lands at `probe/%2F..%2Fescape.json`, not outside
-  `$SPOOL_HOME`.
+  `$METERBILITY_HOME`.
 - **SQL injection.** All queries use prepared statements
   (`better-sqlite3`, `pg`). Identifier-only paths (table/column names)
   are not interpolated from user input.
@@ -124,7 +124,7 @@ own filesystem permissions.
 
 **We do NOT defend against:**
 
-- An adversary with read access to `$SPOOL_HOME` — they have your
+- An adversary with read access to `$METERBILITY_HOME` — they have your
   entire trace history including any unredacted content blobs.
 - An adversary who can connect to `127.0.0.1:4317` — the web UI is
   unauthenticated. Lock down your loopback or run behind auth.
@@ -140,13 +140,13 @@ known and where the documentation lives:
 
 - **"The web UI has no auth"** — by design, local-first. Not a vuln.
   Document recommendation: behind an SSH tunnel or reverse proxy.
-- **"`$SPOOL_HOME` is world-readable on default macOS"** — file
+- **"`$METERBILITY_HOME` is world-readable on default macOS"** — file
   permissions inherit from the user's umask. We don't `chmod` the
   directory; if your environment requires it, set `umask 077` before
-  the first `spool` invocation.
+  the first `meter` invocation.
 - **"Probe files persist after a crash"** — known. `tracer.end()`
   cleans up; an SDK crash before `end()` leaves a probe file behind.
-  Use `spool probe clear <run-id>` for stale recovery.
+  Use `meter probe clear <run-id>` for stale recovery.
 
 Anything else, please report.
 

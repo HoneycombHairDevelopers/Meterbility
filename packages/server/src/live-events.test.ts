@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store } from "@spool-ai/collector";
+import { Store } from "@meterbility/collector";
 import { LiveInspector, type LiveEvent } from "./live.ts";
 
 /**
@@ -16,12 +16,12 @@ import { LiveInspector, type LiveEvent } from "./live.ts";
  * fresh CLAUDE_HOME and inspecting the events the inspector emits.
  */
 
-function freshHome(): { spool: string; claude: string } {
-  const spool = mkdtempSync(join(tmpdir(), "spool-live-events-"));
+function freshHome(): { meter: string; claude: string } {
+  const meter = mkdtempSync(join(tmpdir(), "meter-live-events-"));
   const claude = mkdtempSync(join(tmpdir(), "claude-fake-"));
-  process.env.SPOOL_HOME = spool;
+  process.env.METERBILITY_HOME = meter;
   process.env.CLAUDE_HOME = claude;
-  return { spool, claude };
+  return { meter, claude };
 }
 
 function writeFakeSession(claudeHome: string, projectName: string, sessionId: string, records: object[]): string {
@@ -188,7 +188,7 @@ test("pre-existing run growing post-boot fires run:updated, not run:created", as
 
   const store = Store.open();
   // Ingest BEFORE the inspector exists — run row + EOF offset in store.
-  const { ingestSession } = await import("@spool-ai/claude-code-adapter");
+  const { ingestSession } = await import("@meterbility/claude-code-adapter");
   const pre = await ingestSession(store, path);
   assert.equal(pre.status, "ok", "precondition: session ingested before boot");
 

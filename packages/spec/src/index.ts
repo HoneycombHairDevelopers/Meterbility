@@ -3,7 +3,7 @@ export * from "./pricing.ts";
 /**
  * Trace format version.
  *
- * - **0.1.0** — v0 of Spool. Run + steps only.
+ * - **0.1.0** — v0 of Meterbility. Run + steps only.
  * - **0.2.0** — v0.1. Cross-vendor source_runtime values, fork/regression
  *   metadata, agent-SDK content_ref convention (true blob hashes everywhere).
  * - **0.3.0** — v0.3 (this constant). Adds file-capture data: `file_changes`
@@ -14,7 +14,7 @@ export * from "./pricing.ts";
  *
  * Backward compatibility: v0.1.0 + v0.2.0 traces import cleanly — every
  * additive field is optional and the run.source_runtime values overlap.
- * Spool writes 0.3.0 going forward; older readers should fall back to
+ * Meterbility writes 0.3.0 going forward; older readers should fall back to
  * skipping unknown components rather than failing.
  */
 export const TRACE_FORMAT_VERSION = "0.3.0";

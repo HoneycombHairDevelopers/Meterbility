@@ -1,4 +1,4 @@
-import type { ModelPricing } from "@spool-ai/shared";
+import type { ModelPricing } from "@meterbility/shared";
 
 /**
  * Cents per million tokens. Source: Anthropic public pricing as of May 2026.
@@ -10,7 +10,7 @@ import type { ModelPricing } from "@spool-ai/shared";
  * Code uses the 1-hour cache for the long-lived system prompt + tool
  * defs, which is typically the dominant cost line on long sessions.
  *
- * Numbers chosen conservatively — pricing tables drift, and Spool's role is
+ * Numbers chosen conservatively — pricing tables drift, and Meterbility's role is
  * "give the operator a magnitude," not "audit the invoice."
  */
 export const PRICING: ModelPricing[] = [

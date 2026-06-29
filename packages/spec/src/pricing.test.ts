@@ -4,7 +4,7 @@ import { costCents, pricingFor } from "./pricing.ts";
 
 /**
  * Regressions that pin the cost-formula behavior. These caught a real bug
- * where Spool priced 1h cache writes at the 5m rate, under-reporting cost
+ * where Meterbility priced 1h cache writes at the 5m rate, under-reporting cost
  * by ~37% on long Claude Code sessions.
  */
 

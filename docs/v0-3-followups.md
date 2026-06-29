@@ -31,13 +31,13 @@ even when the controller isn't running an inspector. That means the
 server holds an open HTTP response per browser tab indefinitely.
 
 The previous behavior (v0.2 and earlier) was to only register the SSE
-route when `spool web` was launched with `--live`. The route either
+route when `meter web` was launched with `--live`. The route either
 existed or it didn't.
 
 ### Why it's the right call for v0.3
 
 The whole point of Turn 7's "Live toggle in the header" UX is that the
-user shouldn't have to restart `spool web` to flip live mode on. For
+user shouldn't have to restart `meter web` to flip live mode on. For
 the button to start producing events without a page reload, the SSE
 stream has to already be open when they click — otherwise the first
 event after toggling on would be missed (the controller emits while
@@ -57,14 +57,14 @@ LiveController" so that:
 ### The trigger that makes it bite
 
 This is **invisible for local-first usage** — `127.0.0.1` plus a single
-operator means at most a handful of open EventSources per `spool web`
+operator means at most a handful of open EventSources per `meter web`
 process. Browsers cap their own concurrent connections to a single
 origin (Chromium: 6, Firefox: 6) so a tab-spammer maxes out around the
 same ceiling.
 
 It **starts mattering** when:
 
-- `spool web` is bound to a non-loopback interface (per §10.5 of the
+- `meter web` is bound to a non-loopback interface (per §10.5 of the
   v0.3 spec, this also warrants a startup warning + auth token on
   `/api/blob/:hash`). With N operators on a team-tier deployment,
   each refreshing N′ tabs, the server holds N × N′ idle SSE
@@ -133,7 +133,7 @@ means either:
 
 - The proxy writes to a JSONL file the watcher polls (adds I/O,
   duplicates the in-memory write path, and recouples capture sources
-  Spool has spent the v0.2 cycle decoupling).
+  Meterbility has spent the v0.2 cycle decoupling).
 - We introduce a second event bus that both the watcher and the proxy
   publish to (the right answer, but a real refactor — the watcher's
   internal state (`firedAlerts`, `lastSizes`, `knownPaths`) is built
@@ -147,13 +147,13 @@ the Files tab + run-detail page; they just don't get live append.
 
 ### The trigger that makes it bite
 
-Anyone using `spool proxy` or `spool run -- <command>` to capture
+Anyone using `meter proxy` or `meter run -- <command>` to capture
 Anthropic/OpenAI calls and watching their progress on the `/runs/:id`
 page will see a static page until they refresh. The header LIVE badge
 + pulsing dot make the gap feel worse — visually the page promises
 real-time and silently doesn't deliver.
 
-How often this actually hurts depends on what fraction of Spool users
+How often this actually hurts depends on what fraction of Meterbility users
 are on proxy capture vs Claude Code hook capture. The proxy is the
 zero-instrumentation onboarding path, so we should assume "common
 enough to be embarrassing on a demo."

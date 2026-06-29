@@ -1,7 +1,7 @@
 import { writeFile, readFile } from "node:fs/promises";
 import { Command } from "commander";
 import pc from "picocolors";
-import { getRun, listSteps, listRuns } from "@spool-ai/collector";
+import { getRun, listSteps, listRuns } from "@meterbility/collector";
 import {
   addAssertion,
   createTest,
@@ -13,7 +13,7 @@ import {
   runTest,
   type Assertion,
   type AssertionKind,
-} from "@spool-ai/server";
+} from "@meterbility/server";
 import { openStore } from "../util.ts";
 
 const KINDS: AssertionKind[] = [
@@ -43,7 +43,7 @@ export function registerTestCommand(program: Command): void {
       try {
         const tests = listTests(store);
         if (tests.length === 0) {
-          console.log(pc.dim("no tests defined. Try: spool test create <name> --from <run-id>"));
+          console.log(pc.dim("no tests defined. Try: meter test create <name> --from <run-id>"));
           return;
         }
         for (const t of tests) {

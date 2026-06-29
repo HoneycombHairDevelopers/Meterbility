@@ -10,14 +10,14 @@ import {
   setRunStatus,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
+} from "@meterbility/collector";
 import {
   probeFilePath,
   readState,
   requestPause,
   setInject,
-} from "@spool-ai/shared";
-import type { Run } from "@spool-ai/shared";
+} from "@meterbility/shared";
+import type { Run } from "@meterbility/shared";
 import { buildApp } from "./web.ts";
 
 /**
@@ -26,13 +26,13 @@ import { buildApp } from "./web.ts";
  * Strategy: spin up a real Hono app over a real Store, drive it
  * through `app.fetch(new Request(...))` so the test exercises route
  * registration, body parsing, and probe-protocol integration end-to-
- * end. Each test gets a fresh SPOOL_HOME tempdir.
+ * end. Each test gets a fresh METERBILITY_HOME tempdir.
  */
 
 function freshStore(): Store {
-  const dir = mkdtempSync(join(tmpdir(), "spool-probe-web-"));
-  process.env.SPOOL_HOME = dir;
-  return Store.open({ path: join(dir, "spool.db") });
+  const dir = mkdtempSync(join(tmpdir(), "meter-probe-web-"));
+  process.env.METERBILITY_HOME = dir;
+  return Store.open({ path: join(dir, "meterbility.db") });
 }
 
 function scaffold(

@@ -1,13 +1,13 @@
 # Postgres backend (optional)
 
-SPEC §15.3 — the team tier needs shared run history across multiple operators. Spool's local default stays SQLite; Postgres is a parallel deployment target you can opt into per-organization.
+SPEC §15.3 — the team tier needs shared run history across multiple operators. Meterbility's local default stays SQLite; Postgres is a parallel deployment target you can opt into per-organization.
 
 ## Status: experimental in v0.1
 
 What works:
 
-- Schema provisioning (`spool db postgres-init`)
-- One-way sync of local SQLite → Postgres (`spool db postgres-sync`)
+- Schema provisioning (`meter db postgres-init`)
+- One-way sync of local SQLite → Postgres (`meter db postgres-sync`)
 - Read APIs (`pgListRuns`, `pgGetRun`, `pgListSteps`)
 - Blob storage (inline `bytea` column rather than filesystem sharding)
 
@@ -20,12 +20,12 @@ What doesn't yet:
 
 ```bash
 # Point at any Postgres URL. Free tier of Neon, Supabase, Render works.
-export SPOOL_DB_URL="postgres://user:pass@host:5432/spool"
+export METERBILITY_DB_URL="postgres://user:pass@host:5432/meter"
 
-spool db postgres-init
+meter db postgres-init
 #   → connected  schema_version=2
 
-spool db postgres-sync
+meter db postgres-sync
 #   → synced 12 runs · 487 steps · 1042 blobs (8.4MB) in 1820ms
 ```
 
@@ -54,7 +54,7 @@ If your runs are unusually large (hundreds of MB per run), point `blobs.content`
 
 ## Roadmap
 
-- v0.2 will let `spool web` read directly from Postgres via `--store postgres`.
+- v0.2 will let `meter web` read directly from Postgres via `--store postgres`.
 - v0.2 will introduce the team tier (multi-user, RBAC) on top of Postgres.
 - v0.2 will add `postgres-sync --watch` for continuous replication.
 

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { SlackNotifier } from "@spool-ai/server";
+import { SlackNotifier } from "@meterbility/server";
 
 export function registerSlackCommand(program: Command): void {
   const slack = program
@@ -12,13 +12,13 @@ export function registerSlackCommand(program: Command): void {
     .description("Send a one-off Slack message to verify the webhook")
     .option(
       "--webhook <url>",
-      "Webhook URL (or set SPOOL_SLACK_WEBHOOK)",
+      "Webhook URL (or set METERBILITY_SLACK_WEBHOOK)",
     )
     .action(async (opts: { webhook?: string }) => {
-      const url = opts.webhook ?? process.env.SPOOL_SLACK_WEBHOOK;
+      const url = opts.webhook ?? process.env.METERBILITY_SLACK_WEBHOOK;
       if (!url) {
         throw new Error(
-          "missing --webhook or SPOOL_SLACK_WEBHOOK environment variable",
+          "missing --webhook or METERBILITY_SLACK_WEBHOOK environment variable",
         );
       }
       const n = new SlackNotifier({ webhookUrl: url });

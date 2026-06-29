@@ -1,6 +1,6 @@
-# Spool Desktop — Product Specification
+# Meterbility Desktop — Product Specification
 
-> **Working title.** "Spool Desktop." If the parent product renames, this renames in sympathy.
+> **Working title.** "Meterbility Desktop." If the parent product renames, this renames in sympathy.
 >
 > **Status.** Pre-build. Drafted after the web UI shipped and the CLI stabilized at 47 tests / 12 commands. Companion to [SPEC.md](SPEC.md); reuses its data plane (SQLite + content-addressed blob store + trace format v0.2) verbatim.
 >
@@ -10,11 +10,11 @@
 
 ## 1. One-Line Product
 
-**Spool Desktop is a native menu-bar companion that captures, alerts on, and inspects AI agent runs without a browser tab.**
+**Meterbility Desktop is a native menu-bar companion that captures, alerts on, and inspects AI agent runs without a browser tab.**
 
 The web UI was a server — start it, find the localhost link, click through tabs. Desktop is **always-on**: capture runs in the background, alert you via the OS notification surface, surface the fleet in a menu-bar status item, and open inspection in a real window that lives in `Cmd+Tab`.
 
-The five-second pitch: *Spool, but it earns its dock icon.*
+The five-second pitch: *Meterbility, but it earns its dock icon.*
 
 ---
 
@@ -22,9 +22,9 @@ The five-second pitch: *Spool, but it earns its dock icon.*
 
 The web UI works. But:
 
-1. **A localhost server is a friction tax.** "Did I `spool web` today?" "What port was it on?" "Did it crash overnight?" Spool is most valuable when it's always running, and a backgrounded `npm` process isn't always running in the way users mean.
-2. **Browser tabs are where context goes to die.** A fleet operator running 10 agents already has 30 tabs open. Spool buried among them is Spool ignored.
-3. **`spool web --live` notifications are stdout-only.** Alerts the operator sees only if they remember to look at the terminal. macOS users expect Notification Center; ignoring that is leaving signal on the table.
+1. **A localhost server is a friction tax.** "Did I `meter web` today?" "What port was it on?" "Did it crash overnight?" Meterbility is most valuable when it's always running, and a backgrounded `npm` process isn't always running in the way users mean.
+2. **Browser tabs are where context goes to die.** A fleet operator running 10 agents already has 30 tabs open. Meterbility buried among them is Meterbility ignored.
+3. **`meter web --live` notifications are stdout-only.** Alerts the operator sees only if they remember to look at the terminal. macOS users expect Notification Center; ignoring that is leaving signal on the table.
 4. **Secrets live in env vars.** `ANTHROPIC_API_KEY`, Slack webhooks — all currently shell-environment. A desktop app gets Keychain integration for free, which most users expect once an app earns dock-icon status.
 
 The bet: **the operator's threshold for "tool I check daily" is much higher than "tool I trigger from a terminal."** Desktop crosses that threshold.
@@ -33,11 +33,11 @@ The bet: **the operator's threshold for "tool I check daily" is much higher than
 
 ## 3. Product Vision
 
-A small native application that wraps the existing Spool data plane in three new surfaces:
+A small native application that wraps the existing Meterbility data plane in three new surfaces:
 
 ### 3.1 Menu bar / status item
 
-A tiny icon in the system menu bar (macOS) or system tray (Windows/Linux). Represents the current state of Spool's capture watcher:
+A tiny icon in the system menu bar (macOS) or system tray (Windows/Linux). Represents the current state of Meterbility's capture watcher:
 
 ```
 ●  watching · 3 active agents       (mint dot)
@@ -50,7 +50,7 @@ Click → quick menu: "Open Fleet," "Open last run," "Pause watching," "Settings
 
 ### 3.2 Main window
 
-Same content as `spool web` — Fleet / Runs / Tests / Run detail / Diff / Context / Tests. The Cerulean styling ports directly. The host happens to be a native window with native chrome, but the body is the existing HTML.
+Same content as `meter web` — Fleet / Runs / Tests / Run detail / Diff / Context / Tests. The Cerulean styling ports directly. The host happens to be a native window with native chrome, but the body is the existing HTML.
 
 What's *different* from the web in this window:
 - Native scrollbars (or styled-to-match-system, not the muted-grey web ones)
@@ -76,7 +76,7 @@ These are people who:
 - Use Linear, Notion, Slack as dock-pinned apps, not browser tabs
 - Already pay for Cursor / Raycast / Things — comfortable with $20/mo for a polished tool
 
-Secondary: agent platform teams (SPEC §5.2). Multiple operators on the same team want a "Spool button" in their menu bar that always reflects production agent health.
+Secondary: agent platform teams (SPEC §5.2). Multiple operators on the same team want a "Meterbility button" in their menu bar that always reflects production agent health.
 
 ---
 
@@ -90,19 +90,19 @@ Secondary: agent platform teams (SPEC §5.2). Multiple operators on the same tea
 | **Inspector (floating)** | One run pinned above other apps | 420×700, always-on-top toggle |
 | **Settings** | Preferences pane | 720×500, modal-style |
 | **Onboarding** | First-launch wizard | 600×400, one-shot |
-| **About** | Version, credits, "open SPOOL_HOME in Finder" | 360×280 |
+| **About** | Version, credits, "open METERBILITY_HOME in Finder" | 360×280 |
 
 ### 5.2 Native menus
 
 Standard macOS menu bar:
 
-- **Spool**: About · Preferences (⌘,) · Quit
-- **File**: New Window (⌘N) · Open Run… (⌘O) · Export Trace… (⌘E) · Open SPOOL_HOME in Finder
+- **Meterbility**: About · Preferences (⌘,) · Quit
+- **File**: New Window (⌘N) · Open Run… (⌘O) · Export Trace… (⌘E) · Open METERBILITY_HOME in Finder
 - **Edit**: Standard Cmd+X/C/V + Find (⌘F)
 - **Run**: Pause Watching · Resume · Ingest Now (⌘I) · Open in CLI (⌘T)
 - **View**: Show Fleet · Show Runs · Show Tests · Toggle Floating Inspector
 - **Window**: Standard Minimize/Close + tab navigation
-- **Help**: Spool Docs · Open Trace Format Spec · Report Issue
+- **Help**: Meterbility Docs · Open Trace Format Spec · Report Issue
 
 ### 5.3 Global keyboard shortcuts
 
@@ -146,10 +146,10 @@ The main app runs a watcher daemon that persists even when no window is visible.
 ### 6.1 What the daemon does
 
 - Watches `~/.claude/projects/` via `fs.watch` (FSEvents on macOS, `inotify` on Linux, `ReadDirectoryChangesW` on Windows) — replaces the current 1500ms polling
-- Runs `LiveInspector` from the existing `@spool-ai/server` package
+- Runs `LiveInspector` from the existing `@meterbility/server` package
 - Fires native OS notifications for alerts (loop / stall / context-threshold / tool-watched)
 - Routes notifications to Slack if configured
-- Tracks SPOOL_HOME health (disk space, file integrity)
+- Tracks METERBILITY_HOME health (disk space, file integrity)
 - Updates menu bar icon state in real-time
 
 ### 6.2 Lifecycle
@@ -211,7 +211,7 @@ All sensitive values move from environment variables → OS keychain.
 
 Settings UI shows a stub: `sk-ant-…████` with a "replace" button. Plaintext is never displayed; values can only be replaced, not read back. Anthropic SDK calls fetch the key at request-time, never log it.
 
-The existing redaction pass (SPOOL_REDACT-respecting regex) continues to scrub keys from captured blobs — secrets storage is independent of capture-time redaction.
+The existing redaction pass (METERBILITY_REDACT-respecting regex) continues to scrub keys from captured blobs — secrets storage is independent of capture-time redaction.
 
 ---
 
@@ -223,7 +223,7 @@ Native preferences window with 5 tabs:
 - Runtimes to watch (Claude Code · Codex CLI · Cursor — each toggleable)
 - Override paths (advanced)
 - Redaction: **On** (regex-only) · Off · Custom rules
-- SPOOL_HOME: shown read-only with "Open in Finder" button
+- METERBILITY_HOME: shown read-only with "Open in Finder" button
 - Retention: keep blobs for N days (default ∞)
 
 ### Notifications
@@ -246,7 +246,7 @@ Native preferences window with 5 tabs:
 
 ### Advanced
 - Polling fallback interval (when `fs.watch` unavailable)
-- Debug logging (writes to `~/.spool/desktop.log`)
+- Debug logging (writes to `~/.meterbility/desktop.log`)
 - "Reset to defaults" button
 
 ---
@@ -277,9 +277,9 @@ Two viable choices, each with tradeoffs:
 
 ### 11.1 Tauri (recommended)
 
-- **Pros**: 5–10MB bundle (vs Electron's 100MB+); Rust core matches Spool's infra-tool aesthetic; system webview means OS-native scrolling, fonts, accessibility; smaller attack surface
+- **Pros**: 5–10MB bundle (vs Electron's 100MB+); Rust core matches Meterbility's infra-tool aesthetic; system webview means OS-native scrolling, fonts, accessibility; smaller attack surface
 - **Cons**: System webview means Safari quirks on macOS (some CSS, some web APIs differ); smaller ecosystem; Rust learning curve for some integrations
-- **Bundle size matters here** — Spool's positioning is "lean infra," not "another Electron monstrosity"
+- **Bundle size matters here** — Meterbility's positioning is "lean infra," not "another Electron monstrosity"
 
 ### 11.2 Electron
 
@@ -295,8 +295,8 @@ Frontend stays as-is from the existing `packages/server/src/html.ts` — Tauri s
 
 ### 11.4 What stays the same
 
-- The SQLite store at `~/.spool/spool.db`
-- The blob store at `~/.spool/blobs/`
+- The SQLite store at `~/.meterbility/meterbility.db`
+- The blob store at `~/.meterbility/blobs/`
 - The trace format v0.2
 - The Claude Code / Codex / Cursor adapters
 - The CLI continues to work alongside Desktop (shared store)
@@ -379,7 +379,7 @@ macOS-only. Wraps the existing web UI in a Tauri shell. Adds the minimum amount 
 
 ### v0 success criteria
 
-- Founder dogfoods on macOS for 14 days without falling back to `spool web`
+- Founder dogfoods on macOS for 14 days without falling back to `meter web`
 - ≥3 of the v0.2 cohort named in SPEC §17.1 install it and don't uninstall within 7 days
 - One unprompted positive comment ("I just leave this open now")
 - Crash rate < 0.1% per launch (measured via Sentry)
@@ -403,10 +403,10 @@ macOS-only. Wraps the existing web UI in a Tauri shell. Adds the minimum amount 
 ## 15. v0.2 Desktop Scope (Weeks 11–16)
 
 - Linux builds (AppImage + .deb + .rpm)
-- Auto-detect new agent runtimes (no more `spool ingest` — just open Claude Code and the daemon picks it up)
+- Auto-detect new agent runtimes (no more `meter ingest` — just open Claude Code and the daemon picks it up)
 - "Open in CLI" — sends current run/step context to a terminal via deeplink
 - Team mode: connect to the optional Postgres backend (SPEC §15.3), real-time fleet view across multiple operators
-- iCloud Drive / Dropbox sync of SPOOL_HOME (opt-in, end-to-end encrypted)
+- iCloud Drive / Dropbox sync of METERBILITY_HOME (opt-in, end-to-end encrypted)
 
 ---
 
@@ -414,19 +414,19 @@ macOS-only. Wraps the existing web UI in a Tauri shell. Adds the minimum amount 
 
 The desktop app inherits everything from a CLI/web install:
 
-- Reads `~/.spool/spool.db` directly — no schema migration
+- Reads `~/.meterbility/meterbility.db` directly — no schema migration
 - Continues writing to the same blob store
-- `spool` CLI keeps working alongside Desktop (they share the store via SQLite WAL)
-- If a user runs `spool web` and Desktop is also running, both serve the same data — but they share a port lock, so the second one fails fast with a clear "Desktop is already running" message
+- `meter` CLI keeps working alongside Desktop (they share the store via SQLite WAL)
+- If a user runs `meter web` and Desktop is also running, both serve the same data — but they share a port lock, so the second one fails fast with a clear "Desktop is already running" message
 
-Uninstalling Desktop leaves the data untouched — the web UI still works against the same `~/.spool/`.
+Uninstalling Desktop leaves the data untouched — the web UI still works against the same `~/.meterbility/`.
 
 ---
 
 ## 17. Failure Modes
 
 ### 17.1 The bundle bloats to Electron-size
-**Mitigation**: hard size budget. Block the release if `du -sh Spool.app` exceeds 25MB. Tauri makes this achievable; Electron would not.
+**Mitigation**: hard size budget. Block the release if `du -sh Meterbility.app` exceeds 25MB. Tauri makes this achievable; Electron would not.
 
 ### 17.2 Notification fatigue
 **Mitigation**: defaults are conservative — only loop and stall alerts on by default. Onboarding makes the configurability clear. A "Quiet for 1 hour" menu item handles the obvious "I'm in flow" case.
@@ -435,13 +435,13 @@ Uninstalling Desktop leaves the data untouched — the web UI still works agains
 **Mitigation**: graceful degrade — if Keychain unlock fails (machine just woken from sleep), show a "Re-authenticate" prompt instead of crashing. Don't cache decrypted values in process memory longer than needed.
 
 ### 17.4 Auto-updater bricks installs
-**Mitigation**: every update is signed and verified. Beta channel exists so a bad update only affects opt-ins. Rollback mechanism: keep the previous `.app` in `~/Library/Application Support/Spool/previous/` for one version, restore-via-menu-item if the user reports a broken update.
+**Mitigation**: every update is signed and verified. Beta channel exists so a bad update only affects opt-ins. Rollback mechanism: keep the previous `.app` in `~/Library/Application Support/Meterbility/previous/` for one version, restore-via-menu-item if the user reports a broken update.
 
 ### 17.5 Background daemon eats battery
 **Mitigation**: pause active watching when on battery + low power mode. Show "Battery saver active" in the menu bar status. Bench target: < 1% CPU averaged over 5 minutes when idle.
 
 ### 17.6 macOS sandbox / TCC denies access to `~/.claude/`
-**Mitigation**: detect on first launch (`fs.access` test). If denied, surface a clear modal: "Spool needs access to your Claude Code logs. Click here to grant it in System Settings → Privacy & Security → Full Disk Access." Don't crash; degrade to read-only of `~/.spool/`.
+**Mitigation**: detect on first launch (`fs.access` test). If denied, surface a clear modal: "Meterbility needs access to your Claude Code logs. Click here to grant it in System Settings → Privacy & Security → Full Disk Access." Don't crash; degrade to read-only of `~/.meterbility/`.
 
 ---
 
@@ -453,7 +453,7 @@ Same tiers as SPEC §15, with Desktop included in:
 - **Team ($50/seat/mo)**: Desktop with team-mode (connect to hosted Postgres backend).
 - **Enterprise (custom)**: On-prem deployment + Desktop with VPN-style hosted backend.
 
-The Desktop app itself is **free to download**, gated behind a license key at launch (or 14-day trial). Anonymous usage (no team-mode, no hosted features) is permanently free — the local-only Spool experience never costs anything.
+The Desktop app itself is **free to download**, gated behind a license key at launch (or 14-day trial). Anonymous usage (no team-mode, no hosted features) is permanently free — the local-only Meterbility experience never costs anything.
 
 ---
 
@@ -469,10 +469,10 @@ The Desktop app itself is **free to download**, gated behind a license key at la
 
 ## 20. Strategic Position Summary
 
-- **vs. just running `spool web`**: removes the localhost-server tax. Earns dock-icon status.
-- **vs. Cursor's Agents window**: cross-runtime (not Cursor-only), and Spool's primitive (fork-and-replay) is structurally different from Cursor's "open this past chat" feature.
-- **vs. Claude Code itself**: Spool is the post-hoc inspector that Claude Code lacks. Anthropic could build this; they haven't, and the cross-vendor positioning means it's not a single-rug-pull risk.
-- **vs. native Datadog / Honeycomb desktop apps**: those don't exist. The competitor is "the terminal where you ran `spool web`" — which Spool Desktop replaces.
+- **vs. just running `meter web`**: removes the localhost-server tax. Earns dock-icon status.
+- **vs. Cursor's Agents window**: cross-runtime (not Cursor-only), and Meterbility's primitive (fork-and-replay) is structurally different from Cursor's "open this past chat" feature.
+- **vs. Claude Code itself**: Meterbility is the post-hoc inspector that Claude Code lacks. Anthropic could build this; they haven't, and the cross-vendor positioning means it's not a single-rug-pull risk.
+- **vs. native Datadog / Honeycomb desktop apps**: those don't exist. The competitor is "the terminal where you ran `meter web`" — which Meterbility Desktop replaces.
 
 ---
 
@@ -484,7 +484,7 @@ Before Week 1 of Desktop builds, the founder commits to:
 
 **Path B**: Don't build Desktop yet. Spend the same 6 weeks on the cold outreach from SPEC §17.1 + adapter polish (LangChain, Vercel AI SDK, Mastra). The web UI is already enough for the dogfood phase.
 
-**Recommendation**: Path B until at least 3 of the §17.1 outreach replies and is willing to install + use Spool for 14 days. **Desktop is for users who already love the web UI** — building it before there's a base of those users is a polish move on top of an unvalidated product. The web UI in its current Cerulean form is already the right amount of polish for the validation phase.
+**Recommendation**: Path B until at least 3 of the §17.1 outreach replies and is willing to install + use Meterbility for 14 days. **Desktop is for users who already love the web UI** — building it before there's a base of those users is a polish move on top of an unvalidated product. The web UI in its current Cerulean form is already the right amount of polish for the validation phase.
 
 The Desktop build is Path A only if validation has cleared. Otherwise it's premature optimization.
 
@@ -498,7 +498,7 @@ npm install --save-dev @tauri-apps/cli
 npx tauri init
 
 # Project structure
-spool-desktop/
+meter-desktop/
 ├── src-tauri/                  # Rust core
 │   ├── src/
 │   │   ├── main.rs             # tauri app entry

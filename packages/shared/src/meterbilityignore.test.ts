@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_SPOOLIGNORE, IgnoreMatcher } from "./spoolignore.ts";
+import { DEFAULT_METERBILITYIGNORE, IgnoreMatcher } from "./meterbilityignore.ts";
 
 /**
- * Tests for the v0.3 `.spoolignore` matcher (SPEC §10.2).
+ * Tests for the v0.3 `.meterbilityignore` matcher (SPEC §10.2).
  *
  * Focus on the patterns the defaults actually rely on, plus the
  * gitignore-syntax subset documented in the module docstring. The
@@ -96,18 +96,18 @@ test("comments and blanks are ignored at compile time", () => {
   assert.equal(m.matches("real.txt", false), true);
 });
 
-test("fromDefaultsPlus stacks user .spoolignore on top of defaults", () => {
+test("fromDefaultsPlus stacks user .meterbilityignore on top of defaults", () => {
   const m = IgnoreMatcher.fromDefaultsPlus(["custom-rules/"]);
   assert.equal(m.matches("node_modules", true), true); // defaults still apply
   assert.equal(m.matches("custom-rules", true), true); // user rule active
   assert.equal(m.matches("src/auth.ts", false), false); // unrelated path safe
 });
 
-test("DEFAULT_SPOOLIGNORE is the spec's documented set (regression guard)", () => {
+test("DEFAULT_METERBILITYIGNORE is the spec's documented set (regression guard)", () => {
   // If the defaults change, this test fails loudly — that's intentional.
   // The list is documented in SPEC §10.2; drift here is a spec drift.
-  assert.ok(DEFAULT_SPOOLIGNORE.includes("node_modules/"));
-  assert.ok(DEFAULT_SPOOLIGNORE.includes(".env"));
-  assert.ok(DEFAULT_SPOOLIGNORE.includes("credentials.json"));
-  assert.ok(DEFAULT_SPOOLIGNORE.includes(".git/objects/"));
+  assert.ok(DEFAULT_METERBILITYIGNORE.includes("node_modules/"));
+  assert.ok(DEFAULT_METERBILITYIGNORE.includes(".env"));
+  assert.ok(DEFAULT_METERBILITYIGNORE.includes("credentials.json"));
+  assert.ok(DEFAULT_METERBILITYIGNORE.includes(".git/objects/"));
 });

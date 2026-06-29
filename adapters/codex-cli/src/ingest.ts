@@ -8,8 +8,8 @@ import type {
   Outcome,
   Run,
   Step,
-} from "@spool-ai/shared";
-import { hashJson } from "@spool-ai/shared";
+} from "@meterbility/shared";
+import { hashJson } from "@meterbility/shared";
 import {
   getIngestOffset,
   getRunBySessionId,
@@ -21,8 +21,8 @@ import {
   updateRunTotals,
   upsertAgent,
   upsertProjectByCwd,
-} from "@spool-ai/collector";
-import type { Store } from "@spool-ai/collector";
+} from "@meterbility/collector";
+import type { Store } from "@meterbility/collector";
 import {
   endOffset,
   readCodexSession,
@@ -51,7 +51,7 @@ export interface CodexIngestResult {
 
 /**
  * Ingest a Codex Desktop / Codex CLI rollout file. Maps each assistant
- * `response_item.message` (or `function_call`) to one Spool Step. The
+ * `response_item.message` (or `function_call`) to one Meterbility Step. The
  * preceding user message becomes the conversation history. If a
  * subsequent function_call_output matches a function_call's call_id, we
  * attach it as the Outcome.

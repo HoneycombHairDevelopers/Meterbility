@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fc from "fast-check";
 import { applyFileChange } from "./replay.ts";
-import type { WorkingTree } from "@spool-ai/shared";
+import type { WorkingTree } from "@meterbility/shared";
 
 /**
  * Combinatorial + property-based coverage of `applyFileChange` —

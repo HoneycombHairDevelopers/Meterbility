@@ -1,8 +1,8 @@
-# Spool
+# Meterbility
 
 > **The debugger for AI agents.** Capture every run, inspect every decision, pause and inject live, fork from any step, diff the trajectories.
 
-Spool turns AI agent runs into a queryable, replayable, forkable corpus and surfaces them through a terminal inspector, a local web UI, and a Live Probe operator surface. It works against Claude Code, Codex CLI, Cursor, the Anthropic and OpenAI proxies, and any custom agent that uses the TypeScript or Python SDK.
+Meterbility turns AI agent runs into a queryable, replayable, forkable corpus and surfaces them through a terminal inspector, a local web UI, and a Live Probe operator surface. It works against Claude Code, Codex CLI, Cursor, the Anthropic and OpenAI proxies, and any custom agent that uses the TypeScript or Python SDK.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![License: ELv2](https://img.shields.io/badge/EE_License-ELv2-orange.svg)](ee/LICENSE) [![Node](https://img.shields.io/badge/Node-20.6%2B-339933.svg)](.nvmrc) [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](packages/agent-py/pyproject.toml)
 
@@ -10,12 +10,12 @@ Spool turns AI agent runs into a queryable, replayable, forkable corpus and surf
 
 ## Status
 
-**v0.3 — file capture + Live Probe.** Working end-to-end. On npm as [`@spool-ai/cli`](https://www.npmjs.com/package/@spool-ai/cli).
+**v0.3 — file capture + Live Probe.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
 Latest milestones (Tracks A–C of v0.3):
 
 - **Track A** — file-change capture from Claude Code's `file-history-snapshot` JSONL. Every Write / Edit / MultiEdit shows up with full diffs in the Files tab. Pure-`rm` Bash deletes detected.
-- **Track B** — Live Probe (this milestone). Pause a running agent, inject a message, resume. TypeScript + Python SDKs, `spool probe` CLI, web panel — all driving one shared file-based protocol so any combination of clients can drive the same run.
+- **Track B** — Live Probe (this milestone). Pause a running agent, inject a message, resume. TypeScript + Python SDKs, `meter probe` CLI, web panel — all driving one shared file-based protocol so any combination of clients can drive the same run.
 - **Track C** — OSS launch deliverables (license files, dependency audit, this README, [CONTRIBUTING](CONTRIBUTING.md), [SECURITY](SECURITY.md), fresh-laptop test).
 
 [60-second tour →](docs/getting-started.md)
@@ -27,29 +27,29 @@ Latest milestones (Tracks A–C of v0.3):
 Requires **Node 20.6+** (rebuilds `better-sqlite3` natively). Python SDK additionally requires **Python 3.9+** (stdlib only — no install-time deps).
 
 ```bash
-npm install -g @spool-ai/cli
+npm install -g @meterbility/cli
 
-spool doctor                 # verify the Claude Code surface
-spool ingest claude-code --limit 5
-spool list
-spool web                    # open the inspector at http://127.0.0.1:4317
+meter doctor                 # verify the Claude Code surface
+meter ingest claude-code --limit 5
+meter list
+meter web                    # open the inspector at http://127.0.0.1:4317
 ```
 
-Instrumenting your own agent? Add the SDK to your project instead: `npm install @spool-ai/agent` (TypeScript) or `pip install spool-agent` (Python).
+Instrumenting your own agent? Add the SDK to your project instead: `npm install @meterbility/agent` (TypeScript) or `pip install meterbility-agent` (Python).
 
 ### From a clone
 
 For development, or to run ahead of the latest release:
 
 ```bash
-git clone https://github.com/HoneycombHairDevelopers/spool
-cd spool
+git clone https://github.com/HoneycombHairDevelopers/Meterbility
+cd Meterbility
 nvm use                      # picks up .nvmrc → Node 20
 npm install
-./bin/spool doctor           # same CLI, run from source
+./bin/meter doctor           # same CLI, run from source
 ```
 
-`./bin/spool` is the launcher. To put it on `$PATH`, symlink it into `~/.local/bin/` or wherever you keep scripts.
+`./bin/meter` is the launcher. To put it on `$PATH`, symlink it into `~/.local/bin/` or wherever you keep scripts.
 
 For the cleanest possible install verification, run:
 
@@ -69,19 +69,19 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Claude Code session capture (JSONL hook) | ✅ v0 |
 | Codex CLI / Codex Desktop capture | ✅ v0.1 |
 | Cursor composer + Agents-window capture | ✅ v0.1 |
-| Anthropic + OpenAI proxy capture (`spool proxy`) | ✅ v0.2 |
+| Anthropic + OpenAI proxy capture (`meter proxy`) | ✅ v0.2 |
 | Claude Code file-change capture (Write/Edit/MultiEdit/Bash-rm) | ✅ v0.3 |
 | **SDK** | |
-| TypeScript SDK (`@spool-ai/agent`) | ✅ v0.1 |
-| Python SDK (`spool-agent`) | ✅ v0.3 |
+| TypeScript SDK (`@meterbility/agent`) | ✅ v0.1 |
+| Python SDK (`meterbility-agent`) | ✅ v0.3 |
 | `traceAnthropic` / `trace_anthropic` helpers | ✅ v0.1 / v0.3 |
 | Live Probe in SDK (pause / inject / resume) | ✅ v0.3 |
 | **Inspector** | |
-| `spool list` / `inspect` / `fork` / `diff` / `annotate` / `export` / `web` / `doctor` | ✅ v0 |
-| Live fleet view (`spool web --live`, `spool watch`) | ✅ v0.1 |
+| `meter list` / `inspect` / `fork` / `diff` / `annotate` / `export` / `web` / `doctor` | ✅ v0 |
+| Live fleet view (`meter web --live`, `meter watch`) | ✅ v0.1 |
 | Notifications (loop / threshold / stall / tool-watch) | ✅ v0.1 |
 | Files tab (per-step + per-run summary) | ✅ v0.3 |
-| Live Probe operator surface (`spool probe`, web panel) | ✅ v0.3 |
+| Live Probe operator surface (`meter probe`, web panel) | ✅ v0.3 |
 | **Storage** | |
 | Local SQLite + content-addressed filesystem blobs | ✅ v0 |
 | Postgres backend (single-operator multi-machine sync) | ✅ v0.1 |
@@ -89,9 +89,9 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | **Workflows** | |
 | Fork + replay (deterministic prefix, Anthropic live suffix) | ✅ v0 |
 | Multi-step fork continuation (`--continue simulate\|live`) | ✅ v0.2 |
-| Regression suite (`spool test ...`) | ✅ v0.1 |
+| Regression suite (`meter test ...`) | ✅ v0.1 |
 | **Deferred to v0.4+** | |
-| `spool watch --files` file-system daemon (per-run change recovery) | ⏳ v0.4 |
+| `meter watch --files` file-system daemon (per-run change recovery) | ⏳ v0.4 |
 | Sandbox templates | ⏳ v0.4 |
 | LangChain / Vercel AI SDK first-class adapters | ⏳ v0.4 |
 | Team tier (multi-tenant, SSO, RBAC, audit) | ⏳ ee/ |
@@ -102,15 +102,15 @@ Full milestone history: [SPEC-V0.2.md §16](SPEC-V0.2.md), [docs/v0-3-followups.
 
 ## The five DevTools panels
 
-Spool maps the browser DevTools mental model onto agents. See [SPEC §4](SPEC.md) for the full mapping; v0.3 delivers four of five:
+Meterbility maps the browser DevTools mental model onto agents. See [SPEC §4](SPEC.md) for the full mapping; v0.3 delivers four of five:
 
-| DevTools | Spool | v0.3 |
+| DevTools | Meterbility | v0.3 |
 |---|---|---|
 | Elements | Resolved context viewer (`/contexts/:id`) | ✅ |
-| Sources | Step inspector + fork-from-here (`spool inspect`, `spool fork`); add `--pretty-print` for schema-aware tab rendering | ✅ |
+| Sources | Step inspector + fork-from-here (`meter inspect`, `meter fork`); add `--pretty-print` for schema-aware tab rendering | ✅ |
 | Network | I/O Inspector (decision blob, tool results, files changed) | ✅ |
 | Performance | Cost + token + latency timeline (per step + per run) | ✅ |
-| Console | **Live Probe** — pause, inject, resume (`spool probe`, web panel) | ✅ |
+| Console | **Live Probe** — pause, inject, resume (`meter probe`, web panel) | ✅ |
 
 ---
 
@@ -118,12 +118,12 @@ Spool maps the browser DevTools mental model onto agents. See [SPEC §4](SPEC.md
 
 ```
 packages/
-  cli/                # `spool` command (commander)
+  cli/                # `meter` command (commander)
   shared/             # types, hashing, redaction, paths, probe protocol
   spec/               # trace-format schema + pricing tables
   collector/          # SQLite + content-addressed blob store
   server/             # replay, fork, diff, web (Hono), live inspector, probe panel
-  agent/              # TypeScript SDK (SpoolTracer + traceAnthropic + probe hook)
+  agent/              # TypeScript SDK (MeterbilityTracer + traceAnthropic + probe hook)
   agent-py/           # Python SDK — stdlib only, same shape as TS
   proxy/              # Anthropic + OpenAI HTTP proxies with capture
   store-postgres/     # optional Postgres backend
@@ -140,7 +140,7 @@ docs/
   getting-started.md  # 60-second tour
   architecture.md     # how capture, storage, replay, diff fit together
   sdk.md              # instrument a custom TS agent
-  live-inspector.md   # spool web --live + notifications
+  live-inspector.md   # meter web --live + notifications
   regression.md       # promote canonicals + assertions
   postgres.md         # optional Postgres backend
   trace-format.md     # v0.2 wire format spec
@@ -169,7 +169,7 @@ docs/
 
 ## License
 
-Spool ships under an **open-core** model:
+Meterbility ships under an **open-core** model:
 
 - **MIT** ([`LICENSE`](LICENSE)) — everything outside the `/ee` directory. The capture surfaces, trace format, replay engine, Inspector + Debugger UI, Live Probe, and CLI. The full single-operator product.
 - **Elastic License 2.0** ([`ee/LICENSE`](ee/LICENSE)) — anything inside `/ee` (empty today; reserved for multi-tenant fleet orchestration, SSO, RBAC, audit logs, long-retention modules).
@@ -184,8 +184,8 @@ Every dependency in the tree is permissive (MIT / ISC / Apache-2.0 / BSD). Zero 
 Read [CONTRIBUTING.md](CONTRIBUTING.md). The short version:
 
 ```bash
-git clone https://github.com/HoneycombHairDevelopers/spool
-cd spool && nvm use && npm install
+git clone https://github.com/HoneycombHairDevelopers/Meterbility
+cd Meterbility && nvm use && npm install
 npm test                                   # TypeScript suite
 cd packages/agent-py && python3 -m unittest discover tests
 ```

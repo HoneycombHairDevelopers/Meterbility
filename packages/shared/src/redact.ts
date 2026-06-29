@@ -3,8 +3,8 @@
  *
  * v0 is regex-only — explicit, auditable, predictable. Each rule replaces
  * matches in-place with a tagged placeholder so the redaction is visible
- * in the stored bytes. Disable globally via SPOOL_REDACT=off, or extend
- * via $SPOOL_HOME/redact.json (future).
+ * in the stored bytes. Disable globally via METERBILITY_REDACT=off, or extend
+ * via $METERBILITY_HOME/redact.json (future).
  */
 
 export interface RedactionRule {
@@ -13,7 +13,7 @@ export interface RedactionRule {
   replacement: (match: string) => string;
 }
 
-const PLACEHOLDER = (name: string) => `«spool:redacted:${name}»`;
+const PLACEHOLDER = (name: string) => `«meter:redacted:${name}»`;
 
 export const DEFAULT_RULES: RedactionRule[] = [
   {
@@ -106,7 +106,7 @@ export function redactString(
   input: string,
   rules: RedactionRule[] = DEFAULT_RULES,
 ): RedactionResult {
-  if (process.env.SPOOL_REDACT === "off") {
+  if (process.env.METERBILITY_REDACT === "off") {
     return { text: input, redactions: [] };
   }
   let out = input;
