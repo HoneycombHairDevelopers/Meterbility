@@ -14,7 +14,7 @@ issue or PR.
 ```bash
 git clone https://github.com/HoneycombHairDevelopers/Meterbility
 cd Meterbility
-nvm use && npm install            # Node 20.6+ via .nvmrc
+nvm use && npm install            # Node 24+ via .nvmrc
 npm test                          # TypeScript suite (~250 tests)
 cd packages/agent-py && python3 -m unittest discover tests   # Python suite (~50 tests)
 ```
@@ -28,8 +28,8 @@ needing a native rebuild on first install — give it 60 seconds.
 
 ### Required
 
-- **Node 20.6+** — pinned in `.nvmrc`. The repo uses `node --import tsx/esm`,
-  which needs the `--import` flag added in 20.6.
+- **Node 24+** — pinned in `.nvmrc`. The repo uses `node --import tsx/esm`,
+  which needs the `--import` flag (added in Node 20.6).
 - **Python 3.9+** — for the `meterbility-agent` SDK. Stdlib only at runtime.
 - **A C toolchain** — `better-sqlite3` builds a native module on
   install. macOS ships one; on Linux you'll need `build-essential`.

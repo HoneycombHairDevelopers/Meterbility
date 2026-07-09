@@ -181,7 +181,7 @@ What "v0.3 shipped" means, all three features:
 
 - Public GitHub repo with MIT license. Issues enabled. Contributing.md.
 - `npm install -g @meterbility/cli && meter web` works on a fresh
-  Node 20+ machine with no Meterbility-internal knowledge.
+  Node 24+ machine with no Meterbility-internal knowledge.
 - README has a < 5-minute "first run captured" path that doesn't require
   reading more than the README.
 - A "fresh laptop install" test runs in CI on macOS and Linux against
@@ -672,7 +672,7 @@ slips, it slips with the rest of v0.3, not independently.
 | Item | Scope |
 |---|---|
 | **Public repo** | `github.com/<org>/meter`. MIT license. Issues + Discussions enabled. PR template, issue templates (bug / feature / security). |
-| **Install story** | `npm install -g @meterbility/cli` works on a fresh Node 20+ install. `pip install meterbility-agent` works in a clean venv. Documented in README; tested in CI on macOS 14+ and Ubuntu 22+. |
+| **Install story** | `npm install -g @meterbility/cli` works on a fresh Node 24+ install. `pip install meterbility-agent` works in a clean venv. Documented in README; tested in CI on macOS 14+ and Ubuntu 22+. |
 | **README** | < 5-minute "first run captured" path. No prior Meterbility knowledge. Demo gif. Architecture diagram (the v0.2 §13 package map, lightly edited). |
 | **CONTRIBUTING.md** | Local dev setup, test commands, coding conventions (TypeScript style, Python style, the additive-only schema rule, the redaction-required-on-blob-write rule, the "one accent color" rule). |
 | **SECURITY.md** | Responsible disclosure email, the redaction posture (v0.2 §5.3 + this spec §10.1), the network-bind warning (§10.5). |
