@@ -27,7 +27,7 @@ const program = new Command();
 program
   .name("meter")
   .description(pc.bold("Meterbility ") + pc.dim("— the debugger for AI agents"))
-  .version("0.3.1");
+  .version("0.4.0");
 
 registerDoctorCommand(program);
 registerIngestCommand(program);
