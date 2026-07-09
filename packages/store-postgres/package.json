@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/store-postgres",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -11,10 +11,10 @@
     }
   },
   "dependencies": {
-    "@meterbility/shared": "^0.3.0",
-    "@meterbility/spec": "^0.3.0",
+    "@meterbility/shared": "^0.4.0",
+    "@meterbility/spec": "^0.4.0",
     "pg": "^8.13.0",
-    "@meterbility/collector": "^0.3.0"
+    "@meterbility/collector": "^0.4.0"
   },
   "devDependencies": {
     "@types/pg": "^8.11.0"
