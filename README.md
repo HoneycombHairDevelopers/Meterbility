@@ -4,7 +4,7 @@
 
 Meterbility turns AI agent runs into a queryable, replayable, forkable corpus and surfaces them through a terminal inspector, a local web UI, and a Live Probe operator surface. It works against Claude Code, Codex CLI, Cursor, the Anthropic and OpenAI proxies, and any custom agent that uses the TypeScript or Python SDK.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![License: ELv2](https://img.shields.io/badge/EE_License-ELv2-orange.svg)](ee/LICENSE) [![Node](https://img.shields.io/badge/Node-20.6%2B-339933.svg)](.nvmrc) [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](packages/agent-py/pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![License: ELv2](https://img.shields.io/badge/EE_License-ELv2-orange.svg)](ee/LICENSE) [![Node](https://img.shields.io/badge/Node-24%2B-339933.svg)](.nvmrc) [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](packages/agent-py/pyproject.toml)
 
 ---
 
@@ -24,7 +24,7 @@ Latest milestones (Tracks A–C of v0.3):
 
 ## Install
 
-Requires **Node 20.6+** (rebuilds `better-sqlite3` natively). Python SDK additionally requires **Python 3.9+** (stdlib only — no install-time deps).
+Requires **Node 24+** (rebuilds `better-sqlite3` natively). Python SDK additionally requires **Python 3.9+** (stdlib only — no install-time deps).
 
 ```bash
 npm install -g @meterbility/cli
@@ -44,7 +44,7 @@ For development, or to run ahead of the latest release:
 ```bash
 git clone https://github.com/HoneycombHairDevelopers/Meterbility
 cd Meterbility
-nvm use                      # picks up .nvmrc → Node 20
+nvm use                      # picks up .nvmrc → Node 24
 npm install
 ./bin/meter doctor           # same CLI, run from source
 ```

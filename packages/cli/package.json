@@ -22,7 +22,7 @@
     "picocolors": "^1.0.0",
     "@anthropic-ai/sdk": "^0.30.0"
   },
-  "description": "Meterbility: the debugger for AI agents — capture, inspect, fork, replay, live-probe",
+  "description": "Meterbility: the debugger for AI agents \u2014 capture, inspect, fork, replay, live-probe",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/HoneycombHairDevelopers/Meterbility.git",
@@ -33,7 +33,7 @@
     "url": "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
   },
   "engines": {
-    "node": ">=20.6"
+    "node": ">=24"
   },
   "publishConfig": {
     "access": "public"

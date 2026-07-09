@@ -4,7 +4,7 @@ Meterbility is the debugger for AI agents. v0 captures Claude Code sessions and 
 
 ## Prereqs
 
-- Node 20.6+ (the repo's `.nvmrc` pins to Node 20)
+- Node 24+ (the repo's `.nvmrc` pins to Node 24)
 - A `~/.claude/` directory with at least one Claude Code session under `~/.claude/projects/`
 
 ## 60-second tour
