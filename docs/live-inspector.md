@@ -66,6 +66,44 @@ live.on("data", (e) => {
 await live.start();
 ```
 
+## Filesystem side-effect capture (v0.4)
+
+Tool-call inspection captures what the agent *thinks* it changed; it can't see what a `Bash` step actually did to disk (`sed`, `mv`, `npm install`, build scripts). v0.4 closes that gap with two capture paths that share one engine:
+
+| | Hook capture (`meter capture`) | FileSentinel (`meter watch --files`) |
+|---|---|---|
+| Works for | Claude Code | any runtime (Codex, Cursor, proxy, …) |
+| Attribution | exact (the step whose Bash call it was) | heuristic (temporal proximity) |
+| Process model | ephemeral, fired per tool call | resident watcher |
+| Opt-in via | `meter init --hooks` | the `--files` flag |
+
+Both paths emit `FileChange` rows with `derived_from = 'filesystem_watch'`, filter through `.meterbilityignore` + `.gitignore` + the shipped defaults, and defer to tool-call capture: when a step already has a full-fidelity `tool_call` row for a path, the filesystem observation is dropped (SPEC §3.1.3 — the partial Bash stubs are exactly what these supplement).
+
+**Sensitive paths never carry contents — on any path.** The ignore stack keeps `.env`, keys, and credentials out of filesystem observation entirely, and tool-call capture (which sees explicit agent edits regardless of ignores) stores such rows as redacted stubs: path + op + sizes, `redacted: true`, no blobs, no patch, no tool_input echo. The set is `SENSITIVE_METERBILITYIGNORE` in `@meterbility/shared` — deliberately narrower than the full defaults, so an agent explicitly patching `node_modules/` is still captured in full while its `.env` never is.
+
+### Hook capture — exact, for Claude Code
+
+```bash
+meter init --hooks     # installs PreToolUse/PostToolUse(Bash) → meter capture pre|post
+```
+
+Every Bash call is bracketed: `pre` refreshes a persistent per-repo manifest (folding in ambient edits so they're never blamed on the agent), `post` diffs the tree against it. Because Claude Code's hook payload carries no `tool_use_id` and the transcript can lag the hook, observations are **stashed durably** and *drained* into rows once ingest can see the matching Bash step (matched by session + tool input, ties broken by timestamp). A record that can't be attributed within 15 minutes is dropped rather than guessed — run `meter capture drain` to retry a lagging session by hand. Capture never blocks the agent: the hook always exits 0.
+
+### FileSentinel — the cross-vendor fallback
+
+```bash
+meter watch --files                # watch every file under the current directory
+meter watch --files --files-dir ~/code/my-app --attribution-window 300
+```
+
+`--files` takes no file argument — it watches the **entire directory tree recursively** (the current directory, or `--files-dir`). Every file is covered by default; the only things excluded are `.meterbilityignore` / `.gitignore` patterns, the shipped defaults (`node_modules/`, build artifacts, `.env`, keys, …), and `.git/` internals. To narrow what's captured, add patterns to `.meterbilityignore` — there is no per-file allowlist.
+
+An OS-level watcher for runs Meterbility can only observe from the outside. On start it snapshots the watched directory so the *before* side of the first touch of any file is real bytes. Each event attaches to the most recent step of the freshest in-progress run whose cwd overlaps the watched directory, and only when that step is younger than the attribution window (default 120s); the attribution inputs are recorded on the row's `normalizer_notes`. Changes with no attributable run print as `file:unattributed` and are **not** recorded — ambient edits don't pollute the corpus.
+
+Honest limits (both paths): renames surface as delete + create; files over 5 MB degrade to `partial_diff` stubs. Sentinel-specific: attribution is heuristic, and `fs.watch` platform quirks (coalesced events) can miss a row but never invent a wrong one. Hook-specific: parallel Bash calls can interleave a pre/post pair, in which case both steps' deltas land on the closest-matching step.
+
+Release verification for both paths lives in the [manual test checklist](test-plan-v0_4-capture.md).
+
 ## Caveats
 
 - Polling cadence is 1.5s by default. Faster intervals are possible (`scanIntervalMs`) but the bottleneck is `ingestSession`, which re-reads the file body to thread the parent-uuid chain.
