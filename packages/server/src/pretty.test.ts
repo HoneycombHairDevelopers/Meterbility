@@ -4,6 +4,7 @@ import {
   prettyTab,
   prettyValue,
   prettyMultilineString,
+  looksLikeMarkdown,
   reformatJsonString,
   type PrettyOptions,
 } from "./pretty.ts";
@@ -355,4 +356,107 @@ test("reformatJsonString: empty string returned verbatim (not parseable)", () =>
   // JSON.parse("") throws — match the existing prettyJson behavior of
   // returning the input unchanged on parse failure.
   assert.equal(reformatJsonString(""), "");
+});
+
+// ─── markdown detection + styling ────────────────────────────────────
+
+test("looksLikeMarkdown: code fence alone is a strong signal", () => {
+  assert.equal(looksLikeMarkdown("intro\n```ts\nconst x = 1;\n```"), true);
+});
+
+test("looksLikeMarkdown: ATX heading alone is a strong signal", () => {
+  assert.equal(looksLikeMarkdown("# Title\nbody text"), true);
+});
+
+test("looksLikeMarkdown: two weak signals required", () => {
+  // bold only — not enough
+  assert.equal(looksLikeMarkdown("this is **bold** text\nsecond line"), false);
+  // bold + inline code — enough
+  assert.equal(
+    looksLikeMarkdown("this is **bold** and `code`\nsecond line"),
+    true,
+  );
+  // list (2+ items) + link — enough
+  assert.equal(
+    looksLikeMarkdown("- one [a](https://x)\n- two"),
+    true,
+  );
+});
+
+test("looksLikeMarkdown: plain prose and diffs are not markdown", () => {
+  assert.equal(looksLikeMarkdown("hello world\nsecond line"), false);
+  // unified diff: "-" lines are not list items (no space after -) and
+  // a lone "*" glob shouldn't trip bold.
+  assert.equal(looksLikeMarkdown("--- a/x.ts\n+++ b/x.ts\n-old\n+new"), false);
+});
+
+test("markdown: plain mode output is unchanged", () => {
+  const md = "# Title\n- item one\n- item two";
+  const out = prettyMultilineString(md, PLAIN);
+  assert.equal(out, "┃ # Title\n┃ - item one\n┃ - item two");
+});
+
+test("markdown: ansi heading is bolded, text preserved", () => {
+  const out = prettyMultilineString("# Title\nbody", ANSI);
+  assert.match(out, /\x1b\[1m# Title\x1b\[22m/);
+  // body line untouched apart from the (painted) bar prefix
+  assert.match(out, /\x1b\[22m body$/);
+});
+
+test("markdown: list bullets and inline code get painted in ansi", () => {
+  const out = prettyMultilineString("- run `meter list`\n- done **now**", ANSI);
+  // bullet painted cyan (num)
+  assert.match(out, /\x1b\[36m-\x1b\[39m run /);
+  // inline code painted cyan, backticks preserved
+  assert.match(out, /\x1b\[36m`meter list`\x1b\[39m/);
+  // bold painted bold, asterisks preserved
+  assert.match(out, /\x1b\[1m\*\*now\*\*\x1b\[22m/);
+});
+
+test("markdown: fenced code suppresses inline styling", () => {
+  const out = prettyMultilineString(
+    "```\nconst x = \"**not bold**\";\n```\ntext",
+    ANSI,
+  );
+  // fence content painted as one num span; no nested bold escape inside
+  assert.match(out, /\x1b\[36mconst x = "\*\*not bold\*\*";\x1b\[39m/);
+});
+
+test("markdown: html mode uses p- classes and escapes content", () => {
+  const out = prettyMultilineString(
+    "# Ti<tle>\n- item `a & b`",
+    HTML,
+  );
+  assert.match(out, /<span class="p-section"># Ti&lt;tle&gt;<\/span>/);
+  assert.match(out, /<span class="p-num">`a &amp; b`<\/span>/);
+  assert.doesNotMatch(out, /<tle>/);
+});
+
+test("markdown: link text and url painted separately", () => {
+  const out = prettyMultilineString(
+    "# Docs\nsee [the spec](https://example.com/spec) for details",
+    ANSI,
+  );
+  assert.match(out, /\x1b\[35m\[the spec\]\x1b\[39m/); // str = magenta
+  assert.match(out, /\x1b\[2m\(https:\/\/example\.com\/spec\)\x1b\[22m/); // meta = dim
+});
+
+test("markdown: opt-out via markdown:false renders flat block", () => {
+  const out = prettyMultilineString("# Title\nbody", {
+    mode: "ansi",
+    markdown: false,
+  });
+  assert.equal(out.includes("\x1b[1m# Title"), false);
+});
+
+test("html mode: non-markdown multiline content is escaped", () => {
+  const out = prettyMultilineString("hello <script>\nworld & co", HTML);
+  assert.match(out, /hello &lt;script&gt;/);
+  assert.match(out, /world &amp; co/);
+});
+
+test("markdown: truncation hint still appended after styled block", () => {
+  const md = "# Title\n" + "a".repeat(200);
+  const out = prettyMultilineString(md, { mode: "ansi", maxStringLen: 100 });
+  assert.match(out, /… \(\d+ more chars\)/);
 });
