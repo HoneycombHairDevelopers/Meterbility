@@ -75,7 +75,7 @@ Errors thrown by the SDK are caught and recorded as an error-status step before 
 
 ## Where data lands
 
-By default, `~/.meterbility/meterbility.db` and `~/.meterbility/blobs/` (override with `METERBILITY_HOME`). The same store the CLI reads — `meter list` will show your SDK runs immediately.
+By default, `~/.meter/meterbility.db` and `~/.meter/blobs/` (override with `METERBILITY_HOME`). The same store the CLI reads — `meter list` will show your SDK runs immediately.
 
 ## Multi-step agents
 

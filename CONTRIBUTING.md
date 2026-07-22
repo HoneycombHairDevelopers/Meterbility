@@ -120,7 +120,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 Each test isolates `$METERBILITY_HOME` to a tempdir, so the suite never
-touches the real `~/.meterbility`. The TS and Python probe tests share a
+touches the real `~/.meter`. The TS and Python probe tests share a
 file format — if you change either, run both suites.
 
 ### Cross-language smoke

@@ -99,11 +99,11 @@ Writes the run as a single JSON file in the [Meterbility Trace Format](trace-for
 
 ## Where data lives
 
-Default `$METERBILITY_HOME` is `~/.meterbility`:
+Default `$METERBILITY_HOME` is `~/.meter`:
 
-- `~/.meterbility/meterbility.db` — SQLite metadata (runs, steps, forks, annotations).
-- `~/.meterbility/blobs/<aa>/<bb>/<sha256>` — content-addressed blob store.
-- `~/.meterbility/capture/` — hook-capture state (v0.4): per-repo `manifest-<hash>.json` baselines plus the `pending/<id>.json` stash of Bash side effects awaiting attribution (see [live inspector docs](live-inspector.md#filesystem-side-effect-capture-v04)).
+- `~/.meter/meterbility.db` — SQLite metadata (runs, steps, forks, annotations).
+- `~/.meter/blobs/<aa>/<bb>/<sha256>` — content-addressed blob store.
+- `~/.meter/capture/` — hook-capture state (v0.4): per-repo `manifest-<hash>.json` baselines plus the `pending/<id>.json` stash of Bash side effects awaiting attribution (see [live inspector docs](live-inspector.md#filesystem-side-effect-capture-v04)).
 
 Disable redaction with `METERBILITY_REDACT=off` (default rules redact known secret patterns — see `packages/shared/src/redact.ts`).
 
