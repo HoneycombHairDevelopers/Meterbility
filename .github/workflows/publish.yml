@@ -26,12 +26,6 @@ jobs:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
 
-      # OIDC trusted publishing needs npm >= 11.5.1; the npm bundled with
-      # Node 24 can be older and silently falls back to token auth (which
-      # 404s once NPM_TOKEN is gone). Upgrade before publishing.
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
-
       - name: Install
         run: npm ci
 
@@ -40,6 +34,16 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # OIDC trusted publishing needs npm >= 11.5.1; the npm bundled with
+      # Node 24 can be older and silently falls back to token auth (which
+      # 404s once NPM_TOKEN is gone). Upgrade HERE, not before `npm ci` —
+      # upgrading the CLI ahead of install changes the native-module
+      # rebuild and leaves better-sqlite3 unloadable, failing the test
+      # suite. install/build/test only need the stock npm; the OIDC
+      # exchange is the only thing that needs the newer one.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
 
       # Auth is npm OIDC trusted publishing (id-token: write above) — no
       # NPM_TOKEN secret. Each @meterbility/* package has this repo +
