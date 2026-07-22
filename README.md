@@ -10,18 +10,17 @@ Meterbility turns AI agent runs into a queryable, replayable, forkable corpus an
 
 ## Status
 
-**v0.3 — file capture + Live Probe.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
+**v0.5 — full-fidelity Bash capture.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
-Latest milestones (Tracks A–C of v0.3):
+Latest milestones (v0.5):
 
-- **Track A** — file-change capture from Claude Code's `file-history-snapshot` JSONL. Every Write / Edit / MultiEdit shows up with full diffs in the Files tab. Pure-`rm` Bash deletes detected.
-- **Track B** — Live Probe (this milestone). Pause a running agent, inject a message, resume. TypeScript + Python SDKs, `meter probe` CLI, web panel — all driving one shared file-based protocol so any combination of clients can drive the same run.
-- **Track C** — OSS launch deliverables (license files, dependency audit, this README, [CONTRIBUTING](CONTRIBUTING.md), [SECURITY](SECURITY.md), fresh-laptop test).
-
-First v0.4 deliverables have landed on `main`:
-
-- **Bash side-effect capture** (SPEC §3.1.3's v0.4 gap): what tool-call inspection can't see (`sed`, `mv`, `npm install`, build scripts) now lands as `filesystem_watch` FileChange rows, two ways — **hook capture** for Claude Code (`meter init --hooks` → `meter capture`, exact per-step attribution) and the **FileSentinel** (`meter watch --files`, cross-vendor fallback with temporal-proximity attribution). Both watch the **whole project tree by default** — every file under the current directory (or `--files-dir`), recursively, filtered only by `.meterbilityignore`/`.gitignore`; there's nothing per-file to configure. See [Live inspector docs](docs/live-inspector.md#filesystem-side-effect-capture-v04).
+- **Bash side-effect capture** (closes SPEC §3.1.3): what tool-call inspection can't see (`sed`, `mv`, `npm install`, build scripts) now lands as `filesystem_watch` FileChange rows, two ways — **hook capture** for Claude Code (`meter init --hooks` → `meter capture`, exact per-step attribution) and the **FileSentinel** (`meter watch --files`, cross-vendor fallback with temporal-proximity attribution). Both watch the **whole project tree by default** — every file under the current directory (or `--files-dir`), recursively, filtered only by `.meterbilityignore`/`.gitignore`; there's nothing per-file to configure. See [Live inspector docs](docs/live-inspector.md#filesystem-side-effect-capture-v05).
 - **Markdown-aware pretty printing** — `meter inspect --pretty-print` and the web step cards detect markdown in messages, thinking, tool results, and decisions, and style headings/bold/code/lists/links in place.
+- **Sensitive-path content policy** — explicit agent edits to `.env`, keys, and credential stores record the *fact* of the change (path, op, size) but never the contents.
+
+Earlier milestones:
+
+- **v0.3 — file capture + Live Probe.** Claude Code `file-history-snapshot` diffs in the Files tab; Live Probe pause/inject/resume across TypeScript + Python SDKs, `meter probe` CLI, and web panel; OSS launch deliverables (licenses, dependency audit, [CONTRIBUTING](CONTRIBUTING.md), [SECURITY](SECURITY.md), fresh-laptop test).
 
 [60-second tour →](docs/getting-started.md)
 
@@ -76,6 +75,8 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Cursor composer + Agents-window capture | ✅ v0.1 |
 | Anthropic + OpenAI proxy capture (`meter proxy`) | ✅ v0.2 |
 | Claude Code file-change capture (Write/Edit/MultiEdit/Bash-rm) | ✅ v0.3 |
+| Bash side-effect capture — `meter capture` hooks (exact) + `meter watch --files` FileSentinel (fallback) | ✅ v0.5 |
+| Sensitive-path content redaction (`.env` / keys record fact, not contents) | ✅ v0.5 |
 | **SDK** | |
 | TypeScript SDK (`@meterbility/agent`) | ✅ v0.1 |
 | Python SDK (`meterbility-agent`) | ✅ v0.3 |
@@ -95,10 +96,12 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Fork + replay (deterministic prefix, Anthropic live suffix) | ✅ v0 |
 | Multi-step fork continuation (`--continue simulate\|live`) | ✅ v0.2 |
 | Regression suite (`meter test ...`) | ✅ v0.1 |
-| **Deferred to v0.4+** | |
-| `meter watch --files` FileSentinel + `meter capture` hooks (whole-tree side-effect capture) | ✅ v0.4 |
-| Sandbox templates | ⏳ v0.4 |
-| LangChain / Vercel AI SDK first-class adapters | ⏳ v0.4 |
+| **Pretty-print** | |
+| Markdown-aware pretty printing (`--pretty-print`, web step cards) | ✅ v0.5 |
+| **On the roadmap** | |
+| Markdown pretty-print for inline code / tables in the terminal | ⏳ next |
+| Sandbox templates | ⏳ next |
+| LangChain / Vercel AI SDK first-class adapters | ⏳ next |
 | Team tier (multi-tenant, SSO, RBAC, audit) | ⏳ ee/ |
 
 Full milestone history: [SPEC-V0.2.md §16](SPEC-V0.2.md), [docs/v0-3-followups.md](docs/v0-3-followups.md).
@@ -107,9 +110,9 @@ Full milestone history: [SPEC-V0.2.md §16](SPEC-V0.2.md), [docs/v0-3-followups.
 
 ## The five DevTools panels
 
-Meterbility maps the browser DevTools mental model onto agents. See [SPEC §4](SPEC.md) for the full mapping; v0.3 delivers four of five:
+Meterbility maps the browser DevTools mental model onto agents. See [SPEC §4](SPEC.md) for the full mapping; all five are delivered:
 
-| DevTools | Meterbility | v0.3 |
+| DevTools | Meterbility | Status |
 |---|---|---|
 | Elements | Resolved context viewer (`/contexts/:id`) | ✅ |
 | Sources | Step inspector + fork-from-here (`meter inspect`, `meter fork`); add `--pretty-print` for schema-aware tab rendering | ✅ |
@@ -149,8 +152,8 @@ docs/
   regression.md       # promote canonicals + assertions
   postgres.md         # optional Postgres backend
   trace-format.md     # v0.2 wire format spec
-  v0-3-followups.md   # known limitations + their v0.4 resolution paths
-  test-plan-v0_4-capture.md  # manual release checklist for the v0.4 capture paths
+  v0-3-followups.md   # known limitations + their resolution paths
+  test-plan-v0_4-capture.md  # manual release checklist for the Bash capture paths
 ```
 
 ---
@@ -166,8 +169,8 @@ docs/
 | [Regression suite](docs/regression.md) | Promote canonicals, write assertions |
 | [Postgres backend](docs/postgres.md) | Multi-machine sync, hosted backend |
 | [Trace format](docs/trace-format.md) | Wire-format spec (export/import) |
-| [v0.3 follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
-| [v0.4 capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
+| [Roadmap follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
+| [Capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, PR conventions |
 | [SECURITY](SECURITY.md) | Vulnerability disclosure |
 | [Third-party licenses](LICENSES-third-party.md) | Dependency audit |

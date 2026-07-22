@@ -302,7 +302,7 @@ async function runDiffMode(
     if (fc.partial_diff) {
       console.log(
         pc.yellow(
-          "  partial: this change ran outside captured tools (e.g. Bash). Enable `meter watch --files` in v0.4 for full fidelity.",
+          "  partial: this change ran outside captured tools (e.g. Bash). Run `meter init --hooks` for exact capture, or `meter watch --files` as a cross-vendor fallback.",
         ),
       );
       continue;

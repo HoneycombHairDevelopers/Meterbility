@@ -103,7 +103,7 @@ Default `$METERBILITY_HOME` is `~/.meter`:
 
 - `~/.meter/meterbility.db` — SQLite metadata (runs, steps, forks, annotations).
 - `~/.meter/blobs/<aa>/<bb>/<sha256>` — content-addressed blob store.
-- `~/.meter/capture/` — hook-capture state (v0.4): per-repo `manifest-<hash>.json` baselines plus the `pending/<id>.json` stash of Bash side effects awaiting attribution (see [live inspector docs](live-inspector.md#filesystem-side-effect-capture-v04)).
+- `~/.meter/capture/` — hook-capture state (v0.5): per-repo `manifest-<hash>.json` baselines plus the `pending/<id>.json` stash of Bash side effects awaiting attribution (see [live inspector docs](live-inspector.md#filesystem-side-effect-capture-v05)).
 
 Disable redaction with `METERBILITY_REDACT=off` (default rules redact known secret patterns — see `packages/shared/src/redact.ts`).
 
