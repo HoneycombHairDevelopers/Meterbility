@@ -91,4 +91,4 @@ __all__ = [
     "apply_probe_to_request",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

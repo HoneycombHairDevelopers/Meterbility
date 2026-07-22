@@ -16,6 +16,7 @@ import {
 } from "@meterbility/claude-code-adapter";
 import {
   getRun,
+  getStep,
   listFileChanges,
   listRuns,
   listSteps,
@@ -61,6 +62,9 @@ export type LiveEvent =
       type: "files:changed";
       run_id: string;
       step_id: string;
+      /** Step sequence — lets the web client refetch the right
+       *  step-card fragment without an extra lookup. */
+      sequence: number;
       paths: string[];
       partial: boolean;
     }
@@ -118,6 +122,12 @@ export interface LiveOptions {
   /** Loop detection — N repeated identical tool calls. */
   loopWindow?: number;
 }
+
+/** How long after a run seals the arrival detector keeps watching it —
+ *  late hook drains attributing to a just-ended session are the norm. */
+const RECENT_TERMINAL_WINDOW_MS = 3_600_000;
+/** Most-recent-runs cap for the per-tick arrival scan. */
+const ARRIVAL_SCAN_RUN_LIMIT = 50;
 
 const DEFAULT_OPTS: Required<LiveOptions> = {
   projectsRoot: claudeProjectsRoot(),
@@ -214,6 +224,9 @@ export class LiveInspector extends EventEmitter {
   private firedAlerts = new Map<string, Map<string, FiredAlert>>();
   private lastSizes = new Map<string, number>(); // path → size at last poll
   private lastStepCounts = new Map<string, number>(); // run_id → step count
+  // step_id → file_change row count last announced via files:changed.
+  // Drives the out-of-band arrival detector (hook drain / sentinel).
+  private fcCounts = new Map<string, number>();
   private lastStatus = new Map<string, Run["status"]>(); // run_id → last seen status
   private probeTracks = new Map<string, ProbeTrack>(); // run_id → probe poll state
   private timer?: NodeJS.Timeout;
@@ -254,6 +267,10 @@ export class LiveInspector extends EventEmitter {
       // eslint-disable-next-line no-console
       console.warn("[meter/shape-probe] probe failed (non-fatal):", err);
     });
+    // A stop() can land while the backfill above is awaiting (the
+    // controller no longer blocks its caller on start) — don't arm the
+    // poll timer for an inspector that's already been shut down.
+    if (this.stopped) return;
     this.timer = setInterval(() => {
       void this.tick().catch((err) => {
         // eslint-disable-next-line no-console
@@ -380,6 +397,10 @@ export class LiveInspector extends EventEmitter {
       }
     }
 
+    // v0.4 — out-of-band file_change arrivals (hook drain / sentinel
+    // insert from other processes). Silent boot seeds the counts.
+    this.detectFileChangeArrivals(silent);
+
     // v0.3 §4.9 — probe state transitions. Polled once per tick across
     // every in_progress run we know about; cheap (single JSON file read
     // per run, ENOENT is the steady state). Catches both web- and
@@ -399,11 +420,14 @@ export class LiveInspector extends EventEmitter {
   /**
    * Emit `files:changed` if the given step has any file_change rows.
    * Pulled into its own method so tests can exercise the dedup-paths
-   * shape without going through a full tick.
+   * shape without going through a full tick. Also records the row
+   * count so the out-of-band detector below doesn't re-fire for rows
+   * this emission already covered.
    */
   private emitFilesChangedIfAny(run: Run, step: Step): void {
     const fcs = listFileChanges(this.store, { stepId: step.step_id });
     if (fcs.length === 0) return;
+    this.fcCounts.set(step.step_id, fcs.length);
     const paths = new Set<string>();
     let partial = false;
     for (const fc of fcs) {
@@ -415,9 +439,60 @@ export class LiveInspector extends EventEmitter {
       type: "files:changed",
       run_id: run.run_id,
       step_id: step.step_id,
+      sequence: step.sequence,
       paths: Array.from(paths),
       partial,
     } satisfies LiveEvent);
+  }
+
+  /**
+   * v0.4 — detect file_change rows that arrived OUT OF BAND, i.e. not
+   * through this inspector's own ingest: the hook-capture drain
+   * (`meter capture`, a separate short-lived process) and the
+   * FileSentinel both insert rows directly into the store. Without
+   * this pass those rows only became visible on a page reload — the
+   * step card had already rendered (often while the step was still
+   * in progress) and no event ever told the UI to refresh it.
+   *
+   * Mechanics: per tick, for every recent run that's in progress or
+   * ended within the last hour (late drains are the norm — a stash
+   * record can attribute after the session seals), compare each
+   * step's file_change row count against the last count we emitted
+   * for. Growth → re-emit `files:changed` for that step. The silent
+   * boot pass seeds counts without emitting so startup doesn't flood
+   * subscribers with history.
+   */
+  private detectFileChangeArrivals(silent: boolean): void {
+    const now = Date.now();
+    for (const run of listRuns(this.store, { limit: ARRIVAL_SCAN_RUN_LIMIT })) {
+      const recentTerminal =
+        run.ended_at !== undefined &&
+        now - new Date(run.ended_at).getTime() < RECENT_TERMINAL_WINDOW_MS;
+      if (run.status !== "in_progress" && !recentTerminal) continue;
+      // Aggregate COUNT, not row materialization — this runs every
+      // tick, and fetching full rows (patch_text included) for every
+      // recent run would re-read megabytes 40×/minute on runs with
+      // heavy capture. idx_fc_run_step covers this query.
+      const byStep = new Map<string, number>();
+      for (const row of this.store.db
+        .prepare(
+          "SELECT step_id, COUNT(*) AS n FROM file_change WHERE run_id = ? GROUP BY step_id",
+        )
+        .all(run.run_id) as Array<{ step_id: string; n: number }>) {
+        byStep.set(row.step_id, row.n);
+      }
+      for (const [stepId, count] of byStep) {
+        const prev = this.fcCounts.get(stepId) ?? 0;
+        if (count <= prev) continue;
+        if (silent) {
+          this.fcCounts.set(stepId, count);
+          continue;
+        }
+        const step = getStep(this.store, stepId);
+        if (!step) continue;
+        this.emitFilesChangedIfAny(run, step); // emits + records count
+      }
+    }
   }
 
   /**
@@ -701,7 +776,16 @@ export class LiveController {
     this.store = store;
   }
 
-  /** Spin up an inspector if one isn't already running. Idempotent. */
+  /** Spin up an inspector if one isn't already running. Idempotent.
+   *
+   * Returns as soon as the inspector is registered — the inspector's
+   * first tick is a silent backfill that incrementally ingests every
+   * session on disk, which can take minutes on a cold DB. Holding the
+   * caller (i.e. `POST /api/live/start`) hostage to that left the Live
+   * button disabled with a progress cursor until the backfill finished.
+   * `isLive()` flips immediately; SSE subscribers get their first
+   * fleet:snapshot when the backfill tick completes. A failed start
+   * tears the inspector back down so `isLive()` doesn't lie forever. */
   async start(opts?: LiveOptions): Promise<void> {
     if (this.inspector) return;
     if (opts) this.storeOpts = opts;
@@ -710,7 +794,11 @@ export class LiveController {
     // opened pre-start receive events seamlessly post-start.
     for (const fn of this.subscribers) inspector.on("data", fn);
     this.inspector = inspector;
-    await inspector.start();
+    void inspector.start().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("[meter/live] live start failed:", err);
+      if (this.inspector === inspector) this.stop();
+    });
   }
 
   /** Stop the running inspector if any. Idempotent. */

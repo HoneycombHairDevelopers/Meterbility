@@ -1,8 +1,12 @@
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
 import {
   LiveInspector,
+  FileSentinel,
   type LiveEvent,
+  type FileSentinelEvent,
   type FleetEntry,
 } from "@meterbility/server";
 import { getSetting } from "@meterbility/collector";
@@ -19,6 +23,17 @@ import { openStore } from "../util.ts";
  * Filters mirror the same flags `meter web --live` accepts (--watch-tool,
  * --stall-seconds), and like web, missing flags fall back to the
  * `live.watch_tools` / `live.stall_seconds` settings table values.
+ *
+ * v0.4 — `--files` additionally starts the FileSentinel (SPEC §3.1.3
+ * fallback capture): OS-level filesystem events from the watched
+ * directory become `derived_from='filesystem_watch'` FileChange rows,
+ * attributed by temporal proximity to the freshest in-progress run.
+ * This is what captures Bash side effects (`sed`, `mv`, `npm install`)
+ * that tool-call inspection can't see for runs Meterbility only observes
+ * from the outside (Codex, Cursor, proxy). Claude Code runs get exact
+ * hook-based capture instead (`meter capture`, installed by
+ * `meter init --hooks`); the sentinel is the cross-vendor fallback.
+ * Opt-in by design.
  */
 export function registerWatchCommand(program: Command): void {
   program
@@ -48,6 +63,20 @@ export function registerWatchCommand(program: Command): void {
       "Suppress the periodic fleet:snapshot events (they're noisy)",
     )
     .option("--json", "Emit each event as one JSON line (newline-delimited)")
+    .option(
+      "--files",
+      "Also capture agent file side effects: recursively watches EVERY file under the current directory (minus .meterbilityignore/.gitignore) — no per-file selection needed",
+    )
+    .option(
+      "--files-dir <path>",
+      "Watch this directory tree instead of the current directory (--files)",
+    )
+    .option(
+      "--attribution-window <n>",
+      "Max seconds between a step and a file event for attribution (--files)",
+      (v) => parseInt(v, 10),
+      120,
+    )
     .action(
       async (opts: {
         watchTool: string[];
@@ -56,6 +85,9 @@ export function registerWatchCommand(program: Command): void {
         run?: string;
         snapshot: boolean;
         json?: boolean;
+        files?: boolean;
+        filesDir?: string;
+        attributionWindow: number;
       }) => {
         const store = openStore();
         // Settings fallback (parity with `meter web`).
@@ -134,9 +166,53 @@ export function registerWatchCommand(program: Command): void {
 
         await live.start();
 
+        // v0.4 — opt-in filesystem side-effect capture. Runs alongside
+        // the live inspector in the same process: the inspector keeps
+        // runs/steps fresh via incremental ingest, the sentinel attributes
+        // filesystem events against them.
+        let sentinel: FileSentinel | undefined;
+        if (opts.files) {
+          // Validate up front and guard start(): fs.watch throws
+          // synchronously on a bad root, which would otherwise kill
+          // the whole watch session (live stream included) with an
+          // unhandled rejection mid-stream.
+          const filesRoot = resolve(opts.filesDir ?? process.cwd());
+          if (!existsSync(filesRoot) || !statSync(filesRoot).isDirectory()) {
+            console.error(
+              pc.red(
+                `meter watch: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
+              ),
+            );
+          } else {
+            sentinel = new FileSentinel(store, {
+              root: filesRoot,
+              attributionWindowMs: opts.attributionWindow * 1000,
+            });
+            sentinel.on("data", (e: FileSentinelEvent) => {
+              if (opts.json) {
+                process.stdout.write(JSON.stringify(e) + "\n");
+                return;
+              }
+              printFileEvent(e);
+            });
+            try {
+              await sentinel.start();
+            } catch (err) {
+              console.error(
+                pc.red(
+                  `meter watch: file capture failed to start (${String(err)}) — continuing without it`,
+                ),
+              );
+              sentinel.stop();
+              sentinel = undefined;
+            }
+          }
+        }
+
         // Keep alive — LiveInspector polls in the background.
         const stop = (): void => {
           live.stop();
+          sentinel?.stop();
           store.close();
           process.exit(0);
         };
@@ -144,6 +220,52 @@ export function registerWatchCommand(program: Command): void {
         process.on("SIGTERM", stop);
       },
     );
+}
+
+function printFileEvent(e: FileSentinelEvent): void {
+  const ts = new Date().toISOString().slice(11, 19);
+  const head = pc.dim(ts) + "  ";
+  switch (e.type) {
+    case "sentinel:ready":
+      console.log(
+        head +
+          pc.dim(
+            `watching files under ${e.root} (${e.primed_files} files primed)`,
+          ),
+      );
+      return;
+    case "file:captured": {
+      const c = e.change;
+      const opBadge =
+        c.op === "create" ? "A" : c.op === "delete" ? "D" : "M";
+      const stat = c.partial_diff
+        ? pc.dim("(partial)")
+        : pc.dim(`+${c.lines_added} −${c.lines_removed}`);
+      console.log(
+        head +
+          pc.green("file:captured") +
+          "  " +
+          pc.cyan(e.run_id.slice(0, 12)) +
+          `  ${opBadge} ${c.path}  ` +
+          stat,
+      );
+      return;
+    }
+    case "file:unattributed":
+      console.log(
+        head + pc.dim(`file:unattributed  ${e.op} ${e.path} (${e.reason})`),
+      );
+      return;
+    case "file:skipped":
+      if (e.reason === "unchanged") return; // pure noise
+      console.log(
+        head + pc.dim(`file:skipped  ${e.path} (${e.reason})`),
+      );
+      return;
+    case "sentinel:error":
+      console.log(head + pc.red("sentinel:error") + "  " + e.message);
+      return;
+  }
 }
 
 function printPretty(e: LiveEvent): void {

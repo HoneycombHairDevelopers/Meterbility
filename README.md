@@ -18,6 +18,11 @@ Latest milestones (Tracks A–C of v0.3):
 - **Track B** — Live Probe (this milestone). Pause a running agent, inject a message, resume. TypeScript + Python SDKs, `meter probe` CLI, web panel — all driving one shared file-based protocol so any combination of clients can drive the same run.
 - **Track C** — OSS launch deliverables (license files, dependency audit, this README, [CONTRIBUTING](CONTRIBUTING.md), [SECURITY](SECURITY.md), fresh-laptop test).
 
+First v0.4 deliverables have landed on `main`:
+
+- **Bash side-effect capture** (SPEC §3.1.3's v0.4 gap): what tool-call inspection can't see (`sed`, `mv`, `npm install`, build scripts) now lands as `filesystem_watch` FileChange rows, two ways — **hook capture** for Claude Code (`meter init --hooks` → `meter capture`, exact per-step attribution) and the **FileSentinel** (`meter watch --files`, cross-vendor fallback with temporal-proximity attribution). Both watch the **whole project tree by default** — every file under the current directory (or `--files-dir`), recursively, filtered only by `.meterbilityignore`/`.gitignore`; there's nothing per-file to configure. See [Live inspector docs](docs/live-inspector.md#filesystem-side-effect-capture-v04).
+- **Markdown-aware pretty printing** — `meter inspect --pretty-print` and the web step cards detect markdown in messages, thinking, tool results, and decisions, and style headings/bold/code/lists/links in place.
+
 [60-second tour →](docs/getting-started.md)
 
 ---
@@ -91,7 +96,7 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Multi-step fork continuation (`--continue simulate\|live`) | ✅ v0.2 |
 | Regression suite (`meter test ...`) | ✅ v0.1 |
 | **Deferred to v0.4+** | |
-| `meter watch --files` file-system daemon (per-run change recovery) | ⏳ v0.4 |
+| `meter watch --files` FileSentinel + `meter capture` hooks (whole-tree side-effect capture) | ✅ v0.4 |
 | Sandbox templates | ⏳ v0.4 |
 | LangChain / Vercel AI SDK first-class adapters | ⏳ v0.4 |
 | Team tier (multi-tenant, SSO, RBAC, audit) | ⏳ ee/ |
@@ -145,6 +150,7 @@ docs/
   postgres.md         # optional Postgres backend
   trace-format.md     # v0.2 wire format spec
   v0-3-followups.md   # known limitations + their v0.4 resolution paths
+  test-plan-v0_4-capture.md  # manual release checklist for the v0.4 capture paths
 ```
 
 ---
@@ -161,6 +167,7 @@ docs/
 | [Postgres backend](docs/postgres.md) | Multi-machine sync, hosted backend |
 | [Trace format](docs/trace-format.md) | Wire-format spec (export/import) |
 | [v0.3 follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
+| [v0.4 capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, PR conventions |
 | [SECURITY](SECURITY.md) | Vulnerability disclosure |
 | [Third-party licenses](LICENSES-third-party.md) | Dependency audit |
@@ -190,7 +197,7 @@ npm test                                   # TypeScript suite
 cd packages/agent-py && python3 -m unittest discover tests
 ```
 
-285+ tests across both runtimes. Add tests with every change. Keep
+1,290+ tests across both runtimes. Add tests with every change. Keep
 the suite green before you ask for review.
 
 ## Security

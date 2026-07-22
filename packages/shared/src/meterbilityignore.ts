@@ -27,6 +27,49 @@
  */
 
 /**
+ * The sensitive subset of the defaults, exported separately for
+ * capture paths that must record the FACT of a change but never its
+ * CONTENTS. The full ignore stack governs filesystem observation (the
+ * FileSentinel and hook-capture scans skip these paths outright), but
+ * tool-call inspection sees explicit agent edits regardless — an agent
+ * that Writes `.env` was previously captured verbatim into the blob
+ * store. Rows for paths matching this list are stored as redacted
+ * stubs instead: path + op + sizes, no blobs, no patch, no tool_input
+ * echo. Deliberately narrower than DEFAULT_METERBILITYIGNORE: an agent
+ * explicitly patching something in `node_modules/` is signal worth
+ * full capture; its `.env` never is.
+ */
+export const SENSITIVE_METERBILITYIGNORE: readonly string[] = [
+  ".env",
+  ".env.*",
+  "*.pem",
+  "*.key",
+  "id_rsa*",
+  "id_ed25519*",
+  "credentials.json",
+  // Directory-scoped entries need BOTH forms. The trailing-slash form
+  // is dir-only — walkers use it to prune the directory itself, but it
+  // can never match a FILE candidate, so a suppression check like
+  // matches(".aws/credentials", false) would sail straight past it
+  // (found by the ship security review). The `**/` forms match the
+  // files inside, at any depth AND for absolute paths (an agent editing
+  // ~/.aws/credentials outside the repo cwd reaches the matcher as an
+  // absolute path).
+  ".aws/",
+  "**/.aws/**",
+  ".kube/config",
+  "**/.kube/config",
+  ".ssh/",
+  "**/.ssh/**",
+  ".netrc",
+  ".npmrc",
+  "*.p12",
+  "*.pfx",
+  "**/.docker/config.json",
+  "application_default_credentials.json",
+];
+
+/**
  * Per SPEC §10.2: the defaults Meterbility ships when no `.meterbilityignore` is
  * present at the repo root. Covers build artifacts, language caches,
  * VCS internals, editor/OS noise, coverage, and a "sensitive by
@@ -58,15 +101,7 @@ export const DEFAULT_METERBILITYIGNORE: readonly string[] = [
   "coverage/",
   ".nyc_output/",
   // Sensitive by default — paired with the redaction rules in §10.1
-  ".env",
-  ".env.*",
-  "*.pem",
-  "*.key",
-  "id_rsa*",
-  "id_ed25519*",
-  "credentials.json",
-  ".aws/",
-  ".kube/config",
+  ...SENSITIVE_METERBILITYIGNORE,
 ];
 
 interface CompiledPattern {

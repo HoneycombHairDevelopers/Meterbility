@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileChange, FileOp } from "@meterbility/shared";
-import { claudeFileHistoryDir } from "@meterbility/shared";
+import {
+  claudeFileHistoryDir,
+  IgnoreMatcher,
+  SENSITIVE_METERBILITYIGNORE,
+} from "@meterbility/shared";
 import type { ParsedRecord } from "./parser.ts";
 import {
   isAssistant,
@@ -577,8 +581,45 @@ interface MaterializeArgs {
   tool: string;
 }
 
+/** Compiled once — the sensitive-path set is a shipped constant. */
+const SENSITIVE_MATCHER = IgnoreMatcher.fromLines([
+  ...SENSITIVE_METERBILITYIGNORE,
+]);
+
 async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
   const { args, path, op, tool } = m;
+  // Sensitive-path suppression: tool-call inspection sees explicit
+  // agent edits to `.env` / keys / credentials that every other
+  // capture path already refuses to observe. Record the FACT of the
+  // change (path, op, sizes) but never the contents — no blobs, no
+  // patch, and no tool_input echo (a Write's input carries the full
+  // file body; an Edit's carries old/new strings).
+  if (SENSITIVE_MATCHER.matches(path, false)) {
+    return {
+      run_id: m.args.runId,
+      step_id: m.args.stepId,
+      sequence: m.args.startingSequence,
+      tool_call_id: m.args.toolUse.id,
+      derived_from: "tool_call",
+      path,
+      op,
+      before_blob_ref: undefined,
+      after_blob_ref: undefined,
+      partial_diff: true,
+      gitignored: false,
+      patch_text: undefined,
+      patch_format: undefined,
+      bom: false,
+      size_before: m.beforeBuf?.length,
+      size_after: m.afterBuf?.length,
+      lines_added: 0,
+      lines_removed: 0,
+      source_tool_name: tool,
+      source_tool_input: undefined,
+      redacted: true,
+      normalizer_notes: { redacted_reason: "sensitive-path" },
+    };
+  }
   // v0.3 §11.1 — apply size policy BEFORE blob writes. Drops the
   // larger blob on partial-capture; drops both on skip. Original
   // sizes are preserved in size_before/size_after below regardless.
@@ -712,6 +753,10 @@ interface StubArgs {
 }
 
 function makeStub(s: StubArgs): FileChangeInsert {
+  // Sensitive paths get the same content suppression here as in
+  // materialize — a stub's tool_input echo can carry secrets too (an
+  // Edit's old/new strings, a Write's body).
+  const sensitive = SENSITIVE_MATCHER.matches(s.path, false);
   return {
     run_id: s.runId,
     step_id: s.stepId,
@@ -730,8 +775,11 @@ function makeStub(s: StubArgs): FileChangeInsert {
     lines_added: 0,
     lines_removed: 0,
     source_tool_name: s.sourceToolName,
-    source_tool_input: s.sourceToolInput,
-    redacted: false,
+    source_tool_input: sensitive ? undefined : s.sourceToolInput,
+    redacted: sensitive,
+    normalizer_notes: sensitive
+      ? { redacted_reason: "sensitive-path" }
+      : undefined,
   };
 }
 

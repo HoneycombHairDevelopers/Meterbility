@@ -3,6 +3,8 @@ export * from "./fork.ts";
 export * from "./diff.ts";
 export * from "./web.ts";
 export * from "./live.ts";
+export * from "./file_sentinel.ts";
+export * from "./hook_capture.ts";
 export * from "./live-heuristics.ts";
 export * from "./regression.ts";
 export * from "./continuation.ts";

@@ -15,8 +15,8 @@ issue or PR.
 git clone https://github.com/HoneycombHairDevelopers/Meterbility
 cd Meterbility
 nvm use && npm install            # Node 24+ via .nvmrc
-npm test                          # TypeScript suite (~250 tests)
-cd packages/agent-py && python3 -m unittest discover tests   # Python suite (~50 tests)
+npm test                          # TypeScript suite (~1,000 tests)
+cd packages/agent-py && python3 -m unittest discover tests   # Python suite (~270 tests)
 ```
 
 If both suites pass, you're set up. The hardest part is `better-sqlite3`
@@ -120,7 +120,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 Each test isolates `$METERBILITY_HOME` to a tempdir, so the suite never
-touches the real `~/.meterbility`. The TS and Python probe tests share a
+touches the real `~/.meter`. The TS and Python probe tests share a
 file format — if you change either, run both suites.
 
 ### Cross-language smoke

@@ -27,6 +27,14 @@ export interface PrettyOptions {
   truncated?: boolean;
   /** Web-only: link to the raw blob endpoint (e.g. "/api/blob/abc..."). */
   rawBlobHref?: string;
+  /**
+   * Markdown-aware rendering of multi-line strings. When a string that
+   * lands in a ┃ block looks like markdown (per `looksLikeMarkdown`),
+   * headings/bold/code/lists/links get styled instead of rendering as
+   * flat text. Defaults to true; pass false to force flat blocks.
+   * Plain mode is unaffected either way (no styling exists to apply).
+   */
+  markdown?: boolean;
 }
 
 export type TabKind = "action" | "outcome" | "decision" | "cost";
@@ -137,8 +145,22 @@ function truncateString(s: string, max: number, mode: PrettyMode): { text: strin
 // ─── multi-line block ────────────────────────────────────────────────
 
 /**
+ * Escape a raw (unpainted) text segment for the current mode. HTML
+ * pretty bodies are inserted into the page verbatim (see html.ts step
+ * card render), so anything that bypasses `paint` must escape here.
+ */
+function escText(s: string, mode: PrettyMode): string {
+  return mode === "html" ? escHtml(s) : s;
+}
+
+/**
  * Render a multi-line string as `┃ ` prefixed lines. Handles both \n
  * and \r\n. Truncates the rendered string at maxStringLen.
+ *
+ * When the content looks like markdown (and `opts.markdown` isn't
+ * false), each line is additionally styled by the lightweight markdown
+ * renderer below — the text itself is untouched (markers stay), only
+ * color/weight is applied.
  */
 export function prettyMultilineString(s: string, opts: PrettyOptions): string {
   const mode = resolveMode(opts.mode);
@@ -153,8 +175,101 @@ export function prettyMultilineString(s: string, opts: PrettyOptions): string {
   const normalized = body.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
   const bar = paint(BLOCK, "block", mode);
-  const rendered = lines.map((l) => `${bar} ${l}`).join("\n");
+  const useMarkdown =
+    opts.markdown !== false && mode !== "plain" && looksLikeMarkdown(normalized);
+  const styled = useMarkdown
+    ? renderMarkdownLines(lines, mode)
+    : lines.map((l) => escText(l, mode));
+  const rendered = styled.map((l) => `${bar} ${l}`).join("\n");
   return suffix ? rendered + suffix : rendered;
+}
+
+// ─── markdown detection + line styling ───────────────────────────────
+
+/**
+ * Heuristic: does this multi-line string read as markdown? Strong
+ * signals (a fenced code block, an ATX heading) decide alone; weak
+ * signals (bold, inline code, links, a list, a blockquote) need two
+ * distinct kinds before we style. Conservative on purpose — a false
+ * negative renders the flat block we always rendered; a false positive
+ * would colorize prose that just happens to contain an asterisk.
+ */
+export function looksLikeMarkdown(s: string): boolean {
+  if (/^\s*(```|~~~)/m.test(s)) return true;
+  if (/^#{1,6} \S/m.test(s)) return true;
+  let signals = 0;
+  if (/\*\*[^*\n]+\*\*/.test(s)) signals += 1;
+  if (/(^|[^`])`[^`\n]+`([^`]|$)/.test(s)) signals += 1;
+  if (/\[[^\]\n]+\]\([^)\n]+\)/.test(s)) signals += 1;
+  if ((s.match(/^[ \t]*(?:[-*+]|\d{1,3}\.)[ \t]+\S/gm) ?? []).length >= 2) {
+    signals += 1;
+  }
+  if (/^>\s+\S/m.test(s)) signals += 1;
+  return signals >= 2;
+}
+
+/**
+ * Style markdown lines for ansi/html mode. Text content is preserved
+ * verbatim (markers included) — this is syntax highlighting, not a
+ * rewrite, so char counts and copy/paste behavior stay honest. Fenced
+ * code blocks suppress inline styling until the closing fence.
+ */
+function renderMarkdownLines(lines: string[], mode: PrettyMode): string[] {
+  let inFence = false;
+  return lines.map((line) => {
+    const fence = /^\s*(```|~~~)/.test(line);
+    if (fence) {
+      inFence = !inFence;
+      return paint(line, "meta", mode);
+    }
+    if (inFence) return paint(line, "num", mode);
+    if (/^#{1,6} /.test(line)) return paint(line, "section", mode);
+    const quote = line.match(/^(\s*>\s?)(.*)$/);
+    if (quote) {
+      return paint(quote[1]!, "meta", mode) + styleInline(quote[2]!, mode);
+    }
+    const list = line.match(/^(\s*)([-*+]|\d{1,3}\.)([ \t]+)(.*)$/);
+    if (list) {
+      return (
+        escText(list[1]!, mode) +
+        paint(list[2]!, "num", mode) +
+        escText(list[3]!, mode) +
+        styleInline(list[4]!, mode)
+      );
+    }
+    if (/^\s*([-*_])\s*(\1\s*){2,}$/.test(line)) {
+      return paint(line, "meta", mode);
+    }
+    return styleInline(line, mode);
+  });
+}
+
+/**
+ * Inline spans: `code`, **bold**, [text](url). One combined regex,
+ * left-to-right, no nesting — code spans win over bold/link inside
+ * them by virtue of being matched first at their position.
+ */
+const INLINE_MD =
+  /(`[^`\n]+`)|(\*\*[^*\n]+?\*\*)|(\[[^\]\n]+\]\([^)\n]+\))/g;
+
+function styleInline(text: string, mode: PrettyMode): string {
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(INLINE_MD)) {
+    out += escText(text.slice(last, m.index), mode);
+    if (m[1] !== undefined) {
+      out += paint(m[1], "num", mode);
+    } else if (m[2] !== undefined) {
+      out += paint(m[2], "section", mode);
+    } else {
+      // Link: [text](url) — text in the string color, url dimmed.
+      const link = m[3]!.match(/^(\[[^\]\n]+\])(\([^)\n]+\))$/)!;
+      out += paint(link[1]!, "str", mode) + paint(link[2]!, "meta", mode);
+    }
+    last = m.index + m[0].length;
+  }
+  out += escText(text.slice(last), mode);
+  return out;
 }
 
 // ─── core recursive value renderer ───────────────────────────────────

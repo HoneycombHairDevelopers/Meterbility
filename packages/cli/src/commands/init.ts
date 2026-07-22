@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -39,9 +39,13 @@ export function registerInitCommand(program: Command): void {
       "--quiet",
       "Suppress per-file output (still prints the final summary)",
     )
+    .option(
+      "--hooks",
+      "Also install Claude Code PreToolUse/PostToolUse hooks for exact Bash file capture (meter capture)",
+    )
     .action(async (
       pathArg: string | undefined,
-      opts: { force?: boolean; quiet?: boolean },
+      opts: { force?: boolean; quiet?: boolean; hooks?: boolean },
     ) => {
       const root = resolve(pathArg ?? process.cwd());
       if (!existsSync(root)) {
@@ -69,9 +73,25 @@ export function registerInitCommand(program: Command): void {
         opts.force === true,
       );
 
+      let hooksResult: HooksInstallResult | undefined;
+      if (opts.hooks) {
+        hooksResult = await installClaudeHooks(root);
+      }
+
       if (!opts.quiet) {
         printFileResult(".meterbilityignore", ignorePath, ignoreResult);
         printFileResult(".meterbility/config.toml", configPath, configResult);
+        if (hooksResult) {
+          const tag =
+            hooksResult === "installed"
+              ? pc.green("installed")
+              : pc.dim("already present");
+          console.log(
+            `  ${tag}  ${pc.cyan("meter capture hooks")} ${pc.dim(
+              `(${join(root, ".claude", "settings.json")})`,
+            )}`,
+          );
+        }
       }
 
       // Summary footer. Tells the user what to do next; the call-to-
@@ -100,6 +120,110 @@ export function registerInitCommand(program: Command): void {
 }
 
 type WriteResult = "created" | "skipped" | "overwritten";
+
+type HooksInstallResult = "installed" | "already-present";
+
+/**
+ * Merge the `meter capture` hook pair into the project's
+ * `.claude/settings.json` (v0.4 exact Bash capture):
+ *
+ *   PreToolUse(Bash)  → meter capture pre
+ *   PostToolUse(Bash) → meter capture post
+ *
+ * Non-destructive: existing settings and hook entries are preserved;
+ * we only append our matcher groups if no hook command containing
+ * "meter capture" is already registered for that event. Idempotent by
+ * the same check.
+ */
+export async function installClaudeHooks(root: string): Promise<HooksInstallResult> {
+  const dir = join(root, ".claude");
+  const path = join(dir, "settings.json");
+  mkdirSync(dir, { recursive: true });
+
+  let settings: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
+      // A top-level array/scalar would serialize back WITHOUT any
+      // properties we assign — silently emptying the file. Refuse.
+      if (!isPlainObject(parsed)) throw new Error("not an object");
+      settings = parsed;
+    } catch {
+      // Malformed settings.json — refuse to clobber the user's file.
+      console.error(
+        pc.yellow(
+          `meter init: ${path} is not a valid JSON object — skipped hook install. Fix the file and re-run with --hooks.`,
+        ),
+      );
+      return "already-present";
+    }
+  }
+
+  // Shape guards: valid JSON with an unexpected shape (hooks as an
+  // array, an event as an object) gets the same refuse-and-warn
+  // treatment as malformed JSON — never crash, never silently rewrite
+  // a structure we don't understand.
+  if (settings.hooks !== undefined && !isPlainObject(settings.hooks)) {
+    console.error(
+      pc.yellow(
+        `meter init: ${path} has an unexpected "hooks" shape (expected object) — skipped hook install.`,
+      ),
+    );
+    return "already-present";
+  }
+  const hooks = (settings.hooks ??= {}) as Record<string, unknown>;
+  for (const event of ["PreToolUse", "PostToolUse"]) {
+    if (hooks[event] !== undefined && !Array.isArray(hooks[event])) {
+      console.error(
+        pc.yellow(
+          `meter init: ${path} has an unexpected "hooks.${event}" shape (expected array) — skipped hook install.`,
+        ),
+      );
+      return "already-present";
+    }
+  }
+  let changed = false;
+  for (const [event, phase] of [
+    ["PreToolUse", "pre"],
+    ["PostToolUse", "post"],
+  ] as const) {
+    const groups = (hooks[event] ??= []) as Array<{
+      matcher?: string;
+      hooks?: Array<{ type?: string; command?: string }>;
+    }>;
+    // Present if ANY variant of the capture hook is registered —
+    // `meter capture pre`, `meter-dev capture pre`, or an absolute
+    // path to either. Keying on the subcommand keeps re-runs of
+    // `meter init --hooks` idempotent after a user points the command
+    // at a dev build.
+    // Requires a meter-ish binary before the subcommand so an
+    // unrelated hook like `./scripts/capture pre-flight.sh` can't
+    // masquerade as ours and silently skip the install.
+    const present = groups.some((g) =>
+      (g.hooks ?? []).some(
+        (h) =>
+          typeof h.command === "string" &&
+          /(?:^|[\s/])meter\S*\s+capture\s+(pre|post)(?:\s|$)/.test(h.command),
+      ),
+    );
+    if (present) continue;
+    groups.push({
+      matcher: "Bash",
+      hooks: [{ type: "command", command: `meter capture ${phase}` }],
+    });
+    changed = true;
+  }
+
+  if (!changed) return "already-present";
+  // Atomic write (tmp + rename): this is the USER'S Claude Code
+  // config — a crash mid-write must never leave it truncated. Every
+  // capture-state file already writes this way; the file with the
+  // highest blast radius shouldn't be the one exception.
+  const tmp = `${path}.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  await rename(tmp, path);
+  return "installed";
+}
 
 async function writeIfNeeded(
   path: string,
@@ -209,3 +333,8 @@ binary_detection = "null-byte-heuristic"
 
 // Re-export for the index registration.
 export { DEFAULT_METERBILITYIGNORE };
+
+/** Local plain-object check (arrays are objects too — exclude them). */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}

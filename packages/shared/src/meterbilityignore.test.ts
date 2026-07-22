@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_METERBILITYIGNORE, IgnoreMatcher } from "./meterbilityignore.ts";
+import { DEFAULT_METERBILITYIGNORE, SENSITIVE_METERBILITYIGNORE, IgnoreMatcher } from "./meterbilityignore.ts";
 
 /**
  * Tests for the v0.3 `.meterbilityignore` matcher (SPEC §10.2).
@@ -110,4 +110,30 @@ test("DEFAULT_METERBILITYIGNORE is the spec's documented set (regression guard)"
   assert.ok(DEFAULT_METERBILITYIGNORE.includes(".env"));
   assert.ok(DEFAULT_METERBILITYIGNORE.includes("credentials.json"));
   assert.ok(DEFAULT_METERBILITYIGNORE.includes(".git/objects/"));
+});
+
+// ─── sensitive-set file-candidate coverage (ship security review) ────
+
+test("SENSITIVE set matches files under dir-scoped entries and absolute paths", () => {
+  // Regression: `.aws/` is dir-only — it can never match a FILE
+  // candidate, so suppression checks (which always pass isDir=false)
+  // sailed straight past it, and anchored patterns missed absolute
+  // paths (agent editing ~/.aws/credentials outside the repo cwd).
+  const m = IgnoreMatcher.fromLines([...SENSITIVE_METERBILITYIGNORE]);
+  for (const p of [
+    ".aws/credentials",
+    "/Users/x/.aws/credentials",
+    "sub/.aws/config",
+    ".kube/config",
+    "/home/u/.kube/config",
+    ".env",
+    "/abs/proj/.env",
+    "deploy.key",
+    "certs/server.pem",
+  ]) {
+    assert.equal(m.matches(p, false), true, `${p} must be sensitive`);
+  }
+  for (const p of ["normal.ts", "src/awsome.ts", "kube/config.ts", "envelope.txt"]) {
+    assert.equal(m.matches(p, false), false, `${p} must NOT be sensitive`);
+  }
 });

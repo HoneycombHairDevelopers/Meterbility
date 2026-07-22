@@ -530,3 +530,110 @@ test("loadBaselineTree returns empty when manifest blob is missing", async () =>
   assert.equal(tree.size, 0);
   store.close();
 });
+
+// ─── step re-insert must not cascade-delete file_change rows ─────────
+
+test("re-inserting a step preserves its file_change rows (REPLACE cascade regression)", async () => {
+  // Live re-ingest re-inserts existing steps on every tick. The old
+  // `INSERT OR REPLACE` resolved the conflict by deleting the row —
+  // which fired file_change's ON DELETE CASCADE and silently wiped
+  // hook-capture / sentinel rows that have no re-derivation path.
+  const store = fresh();
+  const { runId, stepIds } = scaffold(store, 1);
+  const ref = await store.blobs.putString("after\n");
+  insertFileChange(store, {
+    run_id: runId,
+    step_id: stepIds[0]!,
+    sequence: 0,
+    derived_from: "filesystem_watch",
+    path: "side-effect.txt",
+    op: "create",
+    after_blob_ref: ref,
+    partial_diff: false,
+    gitignored: false,
+    bom: false,
+    lines_added: 1,
+    lines_removed: 0,
+    redacted: false,
+  });
+
+  // Same step_id, updated outcome — exactly what a re-ingest tick does.
+  const updated: Step = {
+    step_id: stepIds[0]!,
+    run_id: runId,
+    sequence: 0,
+    timestamp: new Date().toISOString(),
+    model: "claude-opus-4-7",
+    context_snapshot_id: "snap_x",
+    decision_ref: "blob_x",
+    action: { kind: "tool_call", tool_name: "Bash" },
+    outcome: { status: "ok", summary: "re-ingested" },
+    tokens: { input: 10, output: 5, cached_read: 0, cache_creation: 0 },
+    latency_ms: 42,
+    cost_cents: 0.1,
+    tags: [],
+    status: "ok",
+  };
+  insertStep(store, updated);
+
+  const rows = listFileChanges(store, { stepId: stepIds[0]! });
+  assert.equal(rows.length, 1, "file_change row must survive step re-insert");
+  assert.equal(rows[0]!.path, "side-effect.txt");
+  // And the step itself really was updated in place.
+  const db = store.db
+    .prepare("SELECT action_json, latency_ms FROM steps WHERE step_id = ?")
+    .get(stepIds[0]!) as { action_json: string; latency_ms: number };
+  assert.equal(JSON.parse(db.action_json).tool_name, "Bash");
+  assert.equal(db.latency_ms, 42);
+  store.close();
+});
+
+test("step upsert on (run_id, sequence) conflict keeps the original step_id and children", async () => {
+  // Legacy rows can predate deterministic step ids: a re-ingest may
+  // present the same (run_id, sequence) under a fresh step_id. The
+  // upsert's second conflict clause updates that row in place; the
+  // existing step_id — and everything attached to it — survives.
+  const store = fresh();
+  const { runId, stepIds } = scaffold(store, 1);
+  const ref = await store.blobs.putString("x\n");
+  insertFileChange(store, {
+    run_id: runId,
+    step_id: stepIds[0]!,
+    sequence: 0,
+    derived_from: "filesystem_watch",
+    path: "kept.txt",
+    op: "create",
+    after_blob_ref: ref,
+    partial_diff: false,
+    gitignored: false,
+    bom: false,
+    lines_added: 1,
+    lines_removed: 0,
+    redacted: false,
+  });
+
+  insertStep(store, {
+    step_id: `stp_${randomUUID()}`, // different id, same (run_id, sequence)
+    run_id: runId,
+    sequence: 0,
+    timestamp: new Date().toISOString(),
+    model: "claude-opus-4-7",
+    context_snapshot_id: "snap_x",
+    decision_ref: "blob_x",
+    action: { kind: "message", text: "rewritten" },
+    outcome: { status: "ok" },
+    tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+    latency_ms: 0,
+    cost_cents: 0,
+    tags: [],
+    status: "ok",
+  });
+
+  const steps = store.db
+    .prepare("SELECT step_id FROM steps WHERE run_id = ?")
+    .all(runId) as Array<{ step_id: string }>;
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0]!.step_id, stepIds[0]!, "original step_id kept");
+  assert.equal(listFileChanges(store, { stepId: stepIds[0]! }).length, 1);
+  store.close();
+});

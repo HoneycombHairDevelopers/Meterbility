@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerIngestCommand } from "./commands/ingest.ts";
@@ -22,12 +23,26 @@ import { registerRunsCommand } from "./commands/runs.ts";
 import { registerInitCommand } from "./commands/init.ts";
 import { registerFilesCommand } from "./commands/files.ts";
 import { registerProbeCommand } from "./commands/probe.ts";
+import { registerCaptureCommand } from "./commands/capture.ts";
+
+// Single source of truth for the version: the package manifest. Both
+// the dev entry (src/index.ts via tsx) and the built one (dist/index.js)
+// sit one level below the package root, so ../package.json resolves in
+// either form.
+const VERSION: string = (
+  JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+  ) as { version: string }
+).version;
 
 const program = new Command();
 program
   .name("meter")
-  .description(pc.bold("Meterbility ") + pc.dim("— the debugger for AI agents"))
-  .version("0.4.0");
+  .description(
+    pc.bold("Meterbility ") +
+      pc.dim(`v${VERSION} — the debugger for AI agents`),
+  )
+  .version(VERSION);
 
 registerDoctorCommand(program);
 registerIngestCommand(program);
@@ -43,6 +58,7 @@ registerDbCommand(program);
 registerSlackCommand(program);
 registerConfigCommand(program);
 registerWatchCommand(program);
+registerCaptureCommand(program);
 registerOpenCommand(program);
 registerProxyCommand(program);
 registerRunCommand(program);
