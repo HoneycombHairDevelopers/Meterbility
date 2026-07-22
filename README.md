@@ -150,6 +150,7 @@ docs/
   postgres.md         # optional Postgres backend
   trace-format.md     # v0.2 wire format spec
   v0-3-followups.md   # known limitations + their v0.4 resolution paths
+  test-plan-v0_4-capture.md  # manual release checklist for the v0.4 capture paths
 ```
 
 ---
@@ -166,6 +167,7 @@ docs/
 | [Postgres backend](docs/postgres.md) | Multi-machine sync, hosted backend |
 | [Trace format](docs/trace-format.md) | Wire-format spec (export/import) |
 | [v0.3 follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
+| [v0.4 capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, PR conventions |
 | [SECURITY](SECURITY.md) | Vulnerability disclosure |
 | [Third-party licenses](LICENSES-third-party.md) | Dependency audit |
@@ -195,7 +197,7 @@ npm test                                   # TypeScript suite
 cd packages/agent-py && python3 -m unittest discover tests
 ```
 
-285+ tests across both runtimes. Add tests with every change. Keep
+1,290+ tests across both runtimes. Add tests with every change. Keep
 the suite green before you ask for review.
 
 ## Security
