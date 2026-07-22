@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { watch, type FSWatcher } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { FileChange, FileOp, Run, Step } from "@meterbility/shared";
 import { IgnoreMatcher } from "@meterbility/shared";
@@ -106,6 +106,45 @@ interface SnapshotEntry {
 const DEFAULT_ATTRIBUTION_WINDOW_MS = 120_000;
 const DEFAULT_DEBOUNCE_MS = 2_000;
 
+/**
+ * Sequence-space partition for filesystem_watch rows (sentinel AND
+ * hook capture). Adapter-derived tool_call rows number from 0; if a
+ * watch row landed at sequence 0 BEFORE the adapter derived the
+ * step's tool_call rows (mid-ingest race, late file-history-snapshot),
+ * the adapter's insert would hit UNIQUE(step_id, sequence) and be
+ * silently skipped as "idempotent re-ingest" — the FULL-FIDELITY row
+ * lost to the fallback, inverting the spec's primary/fallback rule
+ * (found by the ship red-team review). Watch rows therefore start
+ * high; no realistic step has 1000 tool_call file changes.
+ */
+export const WATCH_SEQUENCE_BASE = 1000;
+
+/**
+ * Insert a watch-derived FileChange with ONE retry on a sequence
+ * collision. Concurrent watch writers (a sentinel and a hook drain,
+ * or two drains) can both read the same max sequence and race to the
+ * same slot; the loser recomputes from fresh rows and retries once
+ * instead of dropping an observed change on the floor.
+ */
+export function insertWatchRow(
+  store: Store,
+  fc: Parameters<typeof insertFileChange>[1],
+): FileChange {
+  try {
+    return insertFileChange(store, fc);
+  } catch (err) {
+    if (!String((err as Error).message).includes("UNIQUE constraint failed")) {
+      throw err;
+    }
+    const fresh = listFileChanges(store, { stepId: fc.step_id });
+    const seq = fresh.reduce(
+      (m, r) => Math.max(m, r.sequence + 1),
+      WATCH_SEQUENCE_BASE,
+    );
+    return insertFileChange(store, { ...fc, sequence: seq });
+  }
+}
+
 export class FileSentinel extends EventEmitter {
   private store: Store;
   private root: string;
@@ -120,8 +159,6 @@ export class FileSentinel extends EventEmitter {
   private flushTimer?: NodeJS.Timeout;
   private watcher?: FSWatcher;
   private stopped = false;
-  /** step_id → next free FileChange sequence, seeded from the DB. */
-  private seqCounters = new Map<string, number>();
 
   constructor(store: Store, opts: FileSentinelOptions = {}) {
     super();
@@ -288,9 +325,24 @@ export class FileSentinel extends EventEmitter {
     const abs = join(this.root, rel);
     let st;
     try {
-      st = await stat(abs);
+      // lstat, NOT stat: stat follows symlinks, and a symlink inside
+      // the watched tree pointing at ~/.ssh/id_rsa would get its
+      // TARGET's bytes read into the blob store while every matcher
+      // only sees the innocent relative path (adversarial-review
+      // finding). lstat also keeps FIFOs/sockets out of readFile —
+      // reading a writerless FIFO blocks forever and would wedge the
+      // whole flush loop.
+      st = await lstat(abs);
     } catch {
       st = undefined; // gone → delete candidate
+    }
+
+    if (st && !st.isFile() && !st.isDirectory()) {
+      // Symlink, FIFO, socket, device — never read. If we tracked a
+      // regular file at this path before, it was replaced by a
+      // non-regular one: record the honest delete of what we knew.
+      if (this.snapshot.has(rel)) await this.handleDelete(rel);
+      return;
     }
 
     if (st?.isDirectory()) {
@@ -453,11 +505,16 @@ export class FileSentinel extends EventEmitter {
       }
     }
 
-    let seq = this.seqCounters.get(step.step_id);
-    if (seq === undefined) {
-      seq = existing.reduce((m, fc) => Math.max(m, fc.sequence + 1), 0);
-    }
-    this.seqCounters.set(step.step_id, seq + 1);
+    // Fresh max from the rows just queried for dedup — no cache. A
+    // cached counter goes stale the moment another writer (live
+    // ingest in this same process, a hook drain in another) inserts
+    // for the step, turning the next insert into a UNIQUE violation
+    // and a lost row. Seeded at WATCH_SEQUENCE_BASE so late-derived
+    // tool_call rows (numbered from 0) can never collide with us.
+    const seq = existing.reduce(
+      (m, fc) => Math.max(m, fc.sequence + 1),
+      WATCH_SEQUENCE_BASE,
+    );
 
     const notes = {
       attributed_by: "temporal_proximity",
@@ -468,7 +525,7 @@ export class FileSentinel extends EventEmitter {
 
     let change: FileChange;
     if (content.partialStub) {
-      change = insertFileChange(this.store, {
+      change = insertWatchRow(this.store, {
         run_id: run.run_id,
         step_id: step.step_id,
         sequence: seq,
@@ -487,7 +544,7 @@ export class FileSentinel extends EventEmitter {
       });
     } else {
       const { beforeBuf, afterBuf } = content;
-      change = insertFileChange(this.store, {
+      change = insertWatchRow(this.store, {
         run_id: run.run_id,
         step_id: step.step_id,
         sequence: seq,

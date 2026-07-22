@@ -278,7 +278,9 @@ test("watch --files: watch row sequences continue after existing rows", async ()
     const rows = listFileChanges(ctx.store, { stepId: ctx.stepId });
     assert.equal(rows.length, 2);
     const watchRow = rows.find((r) => r.derived_from === "filesystem_watch")!;
-    assert.equal(watchRow.sequence, 1);
+    // Watch rows live in their own sequence space (WATCH_SEQUENCE_BASE)
+    // so late-derived tool_call rows numbered from 0 can never collide.
+    assert.equal(watchRow.sequence, 1000);
   } finally {
     ctx.cleanup();
   }

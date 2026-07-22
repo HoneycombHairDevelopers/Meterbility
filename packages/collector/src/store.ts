@@ -25,6 +25,15 @@ export class Store {
     mkdirSync(meterHome(), { recursive: true });
     mkdirSync(dirname(path), { recursive: true });
     const db = new Database(path);
+    // v0.4 makes short-lived concurrent writers the NORM: `meter
+    // capture pre/post` runs on every Bash tool call alongside the
+    // web server's live ingest and any `meter watch` process. The
+    // default rollback journal makes writers exclude readers; WAL
+    // lets them coexist, and the explicit busy_timeout turns residual
+    // contention into a short wait instead of SQLITE_BUSY (which a
+    // hook would swallow, silently dropping the capture).
+    db.pragma("journal_mode = WAL");
+    db.pragma("busy_timeout = 5000");
     ensureSchema(db);
     return new Store(db);
   }

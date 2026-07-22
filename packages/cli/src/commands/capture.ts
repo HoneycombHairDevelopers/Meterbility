@@ -33,10 +33,15 @@ export function registerCaptureCommand(program: Command): void {
     .option("--json", "Print a JSON summary of what was captured")
     .action(async (phase: string, opts: { json?: boolean }) => {
       if (phase !== "pre" && phase !== "post" && phase !== "drain") {
+        // Exit 0, NOT 2: from a PreToolUse hook, exit code 2 means
+        // "block the tool call" — a typo'd hook command would freeze
+        // every Bash call, the exact harm this command must never
+        // cause. Misconfiguration reports to stderr and stands aside.
         console.error(
           pc.red(`meter capture: unknown phase "${phase}" (want pre|post|drain)`),
         );
-        process.exit(2);
+        process.exitCode = 0;
+        return;
       }
       try {
         const payload: HookPayload =
@@ -68,20 +73,34 @@ export function registerCaptureCommand(program: Command): void {
         // Never block the agent: report and exit clean.
         console.error(`meter capture ${phase}: ${String(err)}`);
       }
-      process.exit(0);
+      // Natural exit with exitCode, not process.exit(0): exit() does
+      // not wait for a piped stdout to drain, which could truncate the
+      // --json summary mid-line for machine consumers.
+      process.exitCode = 0;
     });
 }
 
 /** Read the hook payload Claude Code pipes to stdin. An empty or
  *  non-JSON stdin (e.g. manual invocation) yields an empty payload —
- *  capture then falls back to process.cwd() with no attribution. */
+ *  capture then falls back to process.cwd() with no attribution.
+ *  Bounded by a 5s timeout so a never-closing pipe (scripted misuse)
+ *  can't hang the hook. */
 async function readStdinJson(): Promise<HookPayload> {
   if (process.stdin.isTTY) return {};
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.from(chunk));
-  }
-  const text = Buffer.concat(chunks).toString("utf-8").trim();
+  const read = (async () => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks).toString("utf-8").trim();
+  })();
+  const text = await Promise.race([
+    read,
+    new Promise<string>((resolve) => {
+      const t = setTimeout(() => resolve(""), 5_000);
+      t.unref?.();
+    }),
+  ]);
   if (text === "") return {};
   try {
     return JSON.parse(text) as HookPayload;

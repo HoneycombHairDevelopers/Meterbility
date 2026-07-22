@@ -1,3 +1,5 @@
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
 import {
@@ -170,18 +172,41 @@ export function registerWatchCommand(program: Command): void {
         // filesystem events against them.
         let sentinel: FileSentinel | undefined;
         if (opts.files) {
-          sentinel = new FileSentinel(store, {
-            root: opts.filesDir,
-            attributionWindowMs: opts.attributionWindow * 1000,
-          });
-          sentinel.on("data", (e: FileSentinelEvent) => {
-            if (opts.json) {
-              process.stdout.write(JSON.stringify(e) + "\n");
-              return;
+          // Validate up front and guard start(): fs.watch throws
+          // synchronously on a bad root, which would otherwise kill
+          // the whole watch session (live stream included) with an
+          // unhandled rejection mid-stream.
+          const filesRoot = resolve(opts.filesDir ?? process.cwd());
+          if (!existsSync(filesRoot) || !statSync(filesRoot).isDirectory()) {
+            console.error(
+              pc.red(
+                `meter watch: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
+              ),
+            );
+          } else {
+            sentinel = new FileSentinel(store, {
+              root: filesRoot,
+              attributionWindowMs: opts.attributionWindow * 1000,
+            });
+            sentinel.on("data", (e: FileSentinelEvent) => {
+              if (opts.json) {
+                process.stdout.write(JSON.stringify(e) + "\n");
+                return;
+              }
+              printFileEvent(e);
+            });
+            try {
+              await sentinel.start();
+            } catch (err) {
+              console.error(
+                pc.red(
+                  `meter watch: file capture failed to start (${String(err)}) — continuing without it`,
+                ),
+              );
+              sentinel.stop();
+              sentinel = undefined;
             }
-            printFileEvent(e);
-          });
-          await sentinel.start();
+          }
         }
 
         // Keep alive — LiveInspector polls in the background.

@@ -128,9 +128,12 @@ perl -pi -e 's/\bmeter capture/meter-dev capture/g' .claude/settings.json
       sibling's observation can't input-match any step. **Expect:**
       both deltas land on that collapsed step; the first with
       `normalizer_notes.match = "exact"` (or `"command"`), the sibling
-      via the temporal tier with `match = "temporal"`. None vanish,
-      none duplicate, nothing left pending after
-      `meter-dev capture drain --json`.
+      via the temporal tier with `match = "temporal"`. The temporal
+      tier is age-gated (~60s) so a merely-lagging exact match always
+      gets first claim — the sibling's record stays pending briefly;
+      run `meter-dev capture drain --json` a minute later (or let the
+      next hook fire) and expect it attributed. None vanish, none
+      duplicate.
 - [ ] **1.8 Rows survive re-ingest.** After §1.1 passes, keep the
       session going for several more turns (any commands), and/or
       toggle GO LIVE in `meter-dev web` so the backfill re-ingests the

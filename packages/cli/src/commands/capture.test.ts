@@ -79,11 +79,14 @@ test("capture CLI: exits 0 even when the store is unusable (do-no-harm)", () => 
   }
 });
 
-test("capture CLI: unknown phase exits 2 (config error, not hook noise)", () => {
+test("capture CLI: unknown phase exits 0 (a typo'd hook must never block the tool)", () => {
+  // From a PreToolUse hook, exit code 2 means BLOCK THE TOOL CALL —
+  // a misconfigured hook command must report to stderr and stand
+  // aside, not freeze every Bash call in the session.
   const home = mkdtempSync(join(tmpdir(), "meter-capcli-phase-"));
   try {
     const res = runCapture(["sideways"], { home, stdin: "{}" });
-    assert.equal(res.status, 2);
+    assert.equal(res.status, 0);
     assert.match(res.stderr, /unknown phase/);
   } finally {
     rmSync(home, { recursive: true, force: true });

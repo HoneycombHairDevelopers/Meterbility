@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -196,11 +196,14 @@ export async function installClaudeHooks(root: string): Promise<HooksInstallResu
     // path to either. Keying on the subcommand keeps re-runs of
     // `meter init --hooks` idempotent after a user points the command
     // at a dev build.
+    // Requires a meter-ish binary before the subcommand so an
+    // unrelated hook like `./scripts/capture pre-flight.sh` can't
+    // masquerade as ours and silently skip the install.
     const present = groups.some((g) =>
       (g.hooks ?? []).some(
         (h) =>
           typeof h.command === "string" &&
-          /\bcapture (pre|post)\b/.test(h.command),
+          /(?:^|[\s/])meter\S*\s+capture\s+(pre|post)(?:\s|$)/.test(h.command),
       ),
     );
     if (present) continue;
@@ -212,7 +215,13 @@ export async function installClaudeHooks(root: string): Promise<HooksInstallResu
   }
 
   if (!changed) return "already-present";
-  await writeFile(path, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  // Atomic write (tmp + rename): this is the USER'S Claude Code
+  // config — a crash mid-write must never leave it truncated. Every
+  // capture-state file already writes this way; the file with the
+  // highest blast radius shouldn't be the one exception.
+  const tmp = `${path}.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  await rename(tmp, path);
   return "installed";
 }
 

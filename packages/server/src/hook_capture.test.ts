@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync, realpathSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -517,8 +517,10 @@ test("drain: real ingestSession bridges the transcript (no injected ingest)", as
     assert.equal(stub.partial_diff, true);
     const exact = stepRows.find((r) => r.derived_from === "filesystem_watch")!;
     assert.equal(exact.file_change_id, fc.file_change_id);
-    // And the sequence chain is intact (stub at 0, capture row after).
-    assert.equal(exact.sequence, stub.sequence + 1);
+    // Partitioned sequence spaces: adapter stub at 0, watch row at the
+    // WATCH_SEQUENCE_BASE so neither can ever squat the other's slot.
+    assert.equal(stub.sequence, 0);
+    assert.equal(exact.sequence, 1000);
   } finally {
     try {
       store.close();
@@ -554,8 +556,40 @@ test("capture: parallel sibling call attributes via temporal tier (collapsed ste
       ctx.opts,
     );
     assert.equal(post.observed, 1);
-    assert.equal(post.drained.inserted.length, 1, "temporal tier attributed");
-    const fc = post.drained.inserted[0]!;
+    // The temporal tier is age-gated: a young record must stay pending
+    // (its REAL step might just be lagging ingest — attributing it to
+    // the previous same-tool step immediately would be permanent
+    // misattribution).
+    assert.equal(post.drained.inserted.length, 0, "young record waits");
+    assert.equal(post.drained.pending, 1);
+
+    // Age the stashed record past the temporal-tier minimum (and the
+    // step with it — in reality both age together; the future-slack
+    // guard rightly rejects a step stamped after the observation),
+    // then drain: now the collapsed step is the honest destination.
+    const pendingDir = join(ctx.opts.stateDir!, "pending");
+    for (const f of readdirSync(pendingDir)) {
+      const p = join(pendingDir, f);
+      const rec = JSON.parse(readFileSync(p, "utf-8"));
+      rec.observed_at = new Date(Date.now() - 61_000).toISOString();
+      writeFileSync(p, JSON.stringify(rec));
+    }
+    insertStep(
+      ctx.store,
+      makeStep(ctx.runId, {
+        step_id: ctx.stepId,
+        timestamp: new Date(Date.now() - 61_000).toISOString(),
+        action: {
+          kind: "tool_call",
+          tool_name: "Bash",
+          tool_use_id: ctx.toolUseId,
+          tool_input: { command: "echo first > parallel-a.txt" },
+        },
+      }),
+    );
+    const drained = await drainStash(ctx.store, ctx.opts);
+    assert.equal(drained.inserted.length, 1, "temporal tier attributed");
+    const fc = drained.inserted[0]!;
     assert.equal(fc.step_id, ctx.stepId);
     assert.equal(fc.path, "parallel-b.txt");
     const notes = fc.normalizer_notes as Record<string, unknown>;

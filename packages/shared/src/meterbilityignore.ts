@@ -59,6 +59,14 @@ export const SENSITIVE_METERBILITYIGNORE: readonly string[] = [
   "**/.aws/**",
   ".kube/config",
   "**/.kube/config",
+  ".ssh/",
+  "**/.ssh/**",
+  ".netrc",
+  ".npmrc",
+  "*.p12",
+  "*.pfx",
+  "**/.docker/config.json",
+  "application_default_credentials.json",
 ];
 
 /**

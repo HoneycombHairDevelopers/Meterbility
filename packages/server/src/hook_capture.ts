@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { FileChange, FileOp, Run, Step } from "@meterbility/shared";
 import { meterHome, IgnoreMatcher } from "@meterbility/shared";
@@ -13,7 +13,12 @@ import {
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import { ingestSession } from "@meterbility/claude-code-adapter";
-import { contentRowFields, loadRootMatcher } from "./file_sentinel.ts";
+import {
+  contentRowFields,
+  insertWatchRow,
+  loadRootMatcher,
+  WATCH_SEQUENCE_BASE,
+} from "./file_sentinel.ts";
 
 /**
  * v0.4 — hook-based file capture for Claude Code (`meter capture`,
@@ -50,14 +55,17 @@ import { contentRowFields, loadRootMatcher } from "./file_sentinel.ts";
  *     writes that already have exact tool_call capture) so those are
  *     never blamed on the upcoming Bash step. `post` diffs against it
  *     and advances it.
- *   - `pending.json` — the stash of not-yet-attributed capture
- *     records.
+ *   - `pending/<id>.json` — the stash of not-yet-attributed capture
+ *     records, ONE FILE PER RECORD so concurrent writers (parallel
+ *     Bash hooks, multiple sessions) can never lose each other's
+ *     appends to a shared rewrite.
  *
  * Concurrency: parallel Bash calls can interleave pre/post pairs.
- * Writes are atomic (tmp + rename) and last-writer-wins; an
- * interleaved pair degrades to both steps' deltas landing in one
- * record — attribution then picks the closest-matching step. Good
- * enough for v0.4; noted in docs.
+ * Writes are atomic (tmp + rename). An interleaved pair can degrade
+ * to both steps' deltas landing in one record — attribution then
+ * picks the closest-matching step. A pre that runs while a sibling
+ * command is mid-flight can fold that sibling's writes into the
+ * baseline (documented limit; see docs/test-plan §1.7).
  */
 
 export interface HookPayload {
@@ -167,7 +175,9 @@ export async function capturePre(
   const existing = await loadManifest(dir, root);
 
   if (!existing) {
-    const manifest = await buildManifest(store, root, matcher, maxBytes);
+    const manifest = await buildManifest(store, root, matcher, maxBytes, (m) =>
+      saveManifest(dir, root, m),
+    );
     await saveManifest(dir, root, manifest);
     const drained = await drainStash(store, opts);
     return { root, primed: true, refreshed: 0, drained };
@@ -184,6 +194,12 @@ export async function capturePre(
     if (prev && prev.size === st.size && prev.mtime_ms === st.mtime_ms) continue;
     existing.files[rel] = await readEntry(store, root, rel, st, maxBytes);
     refreshed += 1;
+    // Same checkpointing as the prime: a killed refresh pass (hook
+    // timeout while absorbing many files, e.g. resuming a partial
+    // prime) must not lose its progress.
+    if (refreshed % PRIME_CHECKPOINT_EVERY === 0) {
+      await saveManifest(dir, root, existing);
+    }
   }
   for (const rel of Object.keys(existing.files)) {
     if (!scanned.has(rel)) {
@@ -214,7 +230,9 @@ export async function capturePost(
     // No baseline (post-only install, or first run): prime now. The
     // changes this step made are indistinguishable from the priors, so
     // nothing is observed — honest empty over guessed rows.
-    manifest = await buildManifest(store, root, matcher, maxBytes);
+    manifest = await buildManifest(store, root, matcher, maxBytes, (m) =>
+      saveManifest(dir, root, m),
+    );
     await saveManifest(dir, root, manifest);
     const drained = await drainStash(store, opts);
     return { root, observed: 0, drained };
@@ -234,6 +252,16 @@ export async function capturePost(
     manifest.files[rel] = entry;
     touched += 1;
     if (prev && prev.ref !== undefined && prev.ref === entry.ref) continue; // touch, same bytes
+    // Oversize files carry no refs to compare — an mtime-only touch
+    // with identical size is a touch, not a change; emitting a partial
+    // "modify" row every build re-link would be fabricated churn.
+    if (
+      prev &&
+      prev.ref === undefined &&
+      entry.ref === undefined &&
+      prev.size === entry.size
+    )
+      continue;
     const bothCaptured =
       entry.ref !== undefined && (prev === undefined || prev.ref !== undefined);
     deltas.push({
@@ -265,8 +293,12 @@ export async function capturePost(
   if (touched > 0) await saveManifest(dir, root, manifest);
 
   if (deltas.length > 0 && payload.session_id && payload.tool_name) {
-    const stash = await loadStash(dir);
-    stash.push({
+    // One FILE per record — never a whole-stash read-modify-write.
+    // Parallel Bash calls (and concurrent sessions) run hooks
+    // concurrently; a shared pending.json rewritten by each writer
+    // silently dropped whichever record lost the race (red-team
+    // finding). Per-record files make appends collision-free.
+    await writeStashRecord(dir, {
       id: `cap_${createHash("sha256").update(`${payload.session_id}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 16)}`,
       session_id: payload.session_id,
       transcript_path: payload.transcript_path,
@@ -277,7 +309,6 @@ export async function capturePost(
       attempts: 0,
       deltas,
     });
-    await saveStash(dir, stash);
   }
 
   const drained = await drainStash(store, opts);
@@ -296,14 +327,14 @@ export async function drainStash(
   const dir = stateDir(opts);
   const ttl = opts.stashTtlMs ?? DEFAULT_STASH_TTL_MS;
   const ingest = opts.ingest ?? defaultIngest;
-  const stash = await loadStash(dir);
-  if (stash.length === 0) return { inserted: [], pending: 0, expired: 0 };
+  const records = await loadStashRecords(dir);
+  if (records.length === 0) return { inserted: [], pending: 0, expired: 0 };
 
   const inserted: FileChange[] = [];
-  const remaining: StashRecord[] = [];
+  let pending = 0;
   let expired = 0;
 
-  for (const record of stash) {
+  for (const { record, path } of records) {
     if (record.transcript_path) {
       try {
         await ingest(store, record.transcript_path);
@@ -317,17 +348,22 @@ export async function drainStash(
       const age = Date.now() - new Date(record.observed_at).getTime();
       if (age > ttl) {
         expired += 1; // blobs stay in the store; only attribution is lost
+        await unlink(path).catch(() => undefined);
       } else {
         record.attempts += 1;
-        remaining.push(record);
+        pending += 1;
+        await writeAtomic(path, JSON.stringify(record));
       }
       continue;
     }
+    // Two concurrent drains can race on the same record file; the
+    // identical-refs dedup inside insertDeltas makes a double-process
+    // insert nothing the second time.
     inserted.push(...(await insertDeltas(store, record, match)));
+    await unlink(path).catch(() => undefined);
   }
 
-  await saveStash(dir, remaining);
-  return { inserted, pending: remaining.length, expired };
+  return { inserted, pending, expired };
 }
 
 // ─── attribution ─────────────────────────────────────────────────────
@@ -340,6 +376,15 @@ export type StepMatchQuality = "exact" | "command" | "temporal";
  *  still claim an otherwise unmatchable observation. Mirrors the stash
  *  TTL — anything older would have expired anyway. */
 const TEMPORAL_MATCH_WINDOW_MS = DEFAULT_STASH_TTL_MS;
+
+/** Temporal-tier minimum record age. Without this gate, a record whose
+ *  REAL step simply hasn't been ingested yet (the documented
+ *  transcript-lag case) would be permanently misattributed to the
+ *  PREVIOUS same-tool step on the very first drain — the stash's
+ *  retry loop would never get a chance. One minute is comfortably
+ *  longer than any observed transcript lag while still rescuing
+ *  parallel-sibling records well inside the 15-minute TTL. */
+const TEMPORAL_TIER_MIN_AGE_MS = 60_000;
 
 /**
  * Find the step this record's tool call produced. Three tiers:
@@ -355,6 +400,8 @@ const TEMPORAL_MATCH_WINDOW_MS = DEFAULT_STASH_TTL_MS;
  *                 would otherwise expire unattributed. The collapsed
  *                 step IS that sibling's turn, so nearest-in-time is
  *                 the honest destination (quality recorded on the row).
+ *                 Gated on record age (TEMPORAL_TIER_MIN_AGE_MS) so a
+ *                 merely-lagging exact match always gets first claim.
  *
  * Ties break by timestamp closest to the observation; a step stamped
  * after the observation is tolerated up to a small slack.
@@ -366,6 +413,8 @@ function findStep(
   const run = getRunBySessionId(store, record.session_id);
   if (!run) return undefined;
   const observedMs = new Date(record.observed_at).getTime();
+  const temporalAllowed =
+    Date.now() - observedMs >= TEMPORAL_TIER_MIN_AGE_MS;
   const wantCanonical = canonicalJson(record.tool_input);
   const wantCommand = commandOf(record.tool_input);
 
@@ -392,7 +441,7 @@ function findStep(
       commandOf(step.action.tool_input) === wantCommand
     ) {
       match = "command";
-    } else if (gap <= TEMPORAL_MATCH_WINDOW_MS) {
+    } else if (temporalAllowed && gap <= TEMPORAL_MATCH_WINDOW_MS) {
       match = "temporal";
     } else {
       continue;
@@ -442,7 +491,12 @@ async function insertDeltas(
 ): Promise<FileChange[]> {
   const { run, step } = match;
   const existing = listFileChanges(store, { stepId: step.step_id });
-  let seq = existing.reduce((m, fc) => Math.max(m, fc.sequence + 1), 0);
+  // Seeded at WATCH_SEQUENCE_BASE — see file_sentinel.ts: late-derived
+  // tool_call rows number from 0 and must never collide with ours.
+  let seq = existing.reduce(
+    (m, fc) => Math.max(m, fc.sequence + 1),
+    WATCH_SEQUENCE_BASE,
+  );
   const out: FileChange[] = [];
 
   for (const d of record.deltas) {
@@ -466,7 +520,7 @@ async function insertDeltas(
 
     if (d.partial) {
       out.push(
-        insertFileChange(store, {
+        insertWatchRow(store, {
           run_id: run.run_id,
           step_id: step.step_id,
           sequence: seq++,
@@ -495,7 +549,7 @@ async function insertDeltas(
       ? await store.blobs.getBuffer(d.after_ref).catch(() => undefined)
       : undefined;
     out.push(
-      insertFileChange(store, {
+      insertWatchRow(store, {
         run_id: run.run_id,
         step_id: step.step_id,
         sequence: seq++,
@@ -572,18 +626,39 @@ async function readEntry(
   }
 }
 
+/** How often (in files) the priming walk persists partial progress. */
+const PRIME_CHECKPOINT_EVERY = 250;
+
 async function buildManifest(
   store: Store,
   root: string,
   matcher: IgnoreMatcher,
   maxBytes: number,
+  persist?: (m: Manifest) => Promise<void>,
 ): Promise<Manifest> {
   const scanned = await scanStats(root, matcher);
   const files: Record<string, ManifestEntry> = {};
+  const manifest: Manifest = {
+    root,
+    updated_at: new Date().toISOString(),
+    files,
+  };
+  let processed = 0;
   for (const [rel, st] of scanned) {
     files[rel] = await readEntry(store, root, rel, st, maxBytes);
+    // Checkpoint partial progress: Claude Code kills hooks at their
+    // timeout, and on a large repo a first-run prime that only saved
+    // at the END would die, persist nothing, and re-run the same
+    // doomed full read on every subsequent Bash call — permanently
+    // broken capture plus a timeout of latency per call (red-team
+    // finding). With checkpoints, a killed prime RESUMES: the next
+    // invocation loads the partial manifest and its refresh loop only
+    // reads the files still missing.
+    if (persist && ++processed % PRIME_CHECKPOINT_EVERY === 0) {
+      await persist(manifest);
+    }
   }
-  return { root, updated_at: new Date().toISOString(), files };
+  return manifest;
 }
 
 function stateDir(opts: CaptureOptions): string {
@@ -622,21 +697,59 @@ async function saveManifest(
   await writeAtomic(manifestPath(dir, root), JSON.stringify(manifest));
 }
 
-function stashPath(dir: string): string {
-  return join(dir, "pending.json");
+/** Per-record stash directory. Records are individual files so
+ *  concurrent writers (parallel Bash hooks, multiple sessions) can
+ *  never lose each other's appends to a shared rewrite. */
+function stashDirPath(dir: string): string {
+  const p = join(dir, "pending");
+  mkdirSync(p, { recursive: true });
+  return p;
 }
 
-async function loadStash(dir: string): Promise<StashRecord[]> {
+async function writeStashRecord(dir: string, record: StashRecord): Promise<void> {
+  await writeAtomic(
+    join(stashDirPath(dir), `${record.id}.json`),
+    JSON.stringify(record),
+  );
+}
+
+async function loadStashRecords(
+  dir: string,
+): Promise<Array<{ record: StashRecord; path: string }>> {
+  // Legacy migration: pre-refactor stashes were one pending.json
+  // array. Split it into per-record files once, then remove it.
+  const legacy = join(dir, "pending.json");
   try {
-    const parsed = JSON.parse(await readFile(stashPath(dir), "utf-8"));
-    return Array.isArray(parsed) ? (parsed as StashRecord[]) : [];
+    const parsed = JSON.parse(await readFile(legacy, "utf-8"));
+    if (Array.isArray(parsed)) {
+      for (const r of parsed as StashRecord[]) {
+        if (r && typeof r.id === "string") await writeStashRecord(dir, r);
+      }
+    }
+    await unlink(legacy);
   } catch {
-    return [];
+    // absent or unreadable — nothing to migrate
   }
-}
 
-async function saveStash(dir: string, stash: StashRecord[]): Promise<void> {
-  await writeAtomic(stashPath(dir), JSON.stringify(stash));
+  const out: Array<{ record: StashRecord; path: string }> = [];
+  let names: string[] = [];
+  try {
+    names = await readdir(stashDirPath(dir));
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const path = join(stashDirPath(dir), name);
+    try {
+      const record = JSON.parse(await readFile(path, "utf-8")) as StashRecord;
+      if (record && typeof record.id === "string") out.push({ record, path });
+    } catch {
+      // One corrupt record must not discard the rest (the old
+      // whole-file parse did exactly that).
+    }
+  }
+  return out;
 }
 
 async function writeAtomic(path: string, contents: string): Promise<void> {
