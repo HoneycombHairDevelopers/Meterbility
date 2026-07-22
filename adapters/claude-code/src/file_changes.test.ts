@@ -1031,3 +1031,167 @@ test("multiple modifying steps in one run produce correctly attributed and order
   assert.equal(fcs[1]!.sequence, 0);
   store.close();
 });
+
+// ─── Sensitive-path suppression ──────────────────────────────────────
+
+test("Write to .env records the fact but never the contents (sensitive-path)", async () => {
+  const store = freshStore();
+  const secret = "DB_PASSWORD=hunter2\nSTRIPE_KEY=sk_live_abc123\n";
+  const session: object[] = [
+    {
+      type: "user",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: "sess-env",
+      timestamp: "2026-05-15T00:00:00Z",
+      cwd: "/tmp/proj",
+      message: { role: "user", content: "set up the env file" },
+    },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parentUuid: "u1",
+      sessionId: "sess-env",
+      timestamp: "2026-05-15T00:00:01Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_env_1",
+            name: "Write",
+            input: { file_path: "/tmp/proj/.env", content: secret },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    },
+  ];
+  await ingestSession(store, writeSession(session), {
+    readBackup: memoryBackupReader({}),
+  });
+
+  const rows = listFileChanges(store, {});
+  const env = rows.find((r) => r.path === ".env");
+  assert.ok(env, ".env row exists — the FACT of the edit is recorded");
+  assert.equal(env!.redacted, true);
+  assert.equal(env!.partial_diff, true);
+  assert.equal(env!.before_blob_ref, undefined);
+  assert.equal(env!.after_blob_ref, undefined);
+  assert.equal(env!.patch_text, undefined);
+  assert.equal(env!.size_after, Buffer.byteLength(secret));
+  assert.equal(
+    env!.source_tool_input,
+    undefined,
+    "tool_input echo (which carries the full file body) is suppressed",
+  );
+  const notes = env!.normalizer_notes as Record<string, unknown>;
+  assert.equal(notes.redacted_reason, "sensitive-path");
+  // Belt and braces: the secret string must not exist anywhere in the
+  // file_change table's serialized columns.
+  const raw = store.db
+    .prepare("SELECT * FROM file_change WHERE path = '.env'")
+    .get() as Record<string, unknown>;
+  assert.ok(
+    !JSON.stringify(raw).includes("hunter2"),
+    "no serialized column carries the secret",
+  );
+  store.close();
+});
+
+test("Edit to a key file without backup → sensitive stub, no old/new echo", async () => {
+  const store = freshStore();
+  const session: object[] = [
+    {
+      type: "user",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: "sess-key",
+      timestamp: "2026-05-15T00:00:00Z",
+      cwd: "/tmp/proj",
+      message: { role: "user", content: "rotate the key" },
+    },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parentUuid: "u1",
+      sessionId: "sess-key",
+      timestamp: "2026-05-15T00:00:01Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_key_1",
+            name: "Edit",
+            input: {
+              file_path: "/tmp/proj/deploy.key",
+              old_string: "OLD-PRIVATE-KEY-MATERIAL",
+              new_string: "NEW-PRIVATE-KEY-MATERIAL",
+            },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    },
+  ];
+  await ingestSession(store, writeSession(session), {
+    readBackup: memoryBackupReader({}), // no backup → stub path
+  });
+
+  const key = listFileChanges(store, {}).find((r) => r.path === "deploy.key");
+  assert.ok(key);
+  assert.equal(key!.redacted, true);
+  assert.equal(key!.source_tool_input, undefined);
+  const raw = store.db
+    .prepare("SELECT * FROM file_change WHERE path = 'deploy.key'")
+    .get() as Record<string, unknown>;
+  assert.ok(!JSON.stringify(raw).includes("KEY-MATERIAL"));
+  store.close();
+});
+
+test("non-sensitive Write still captures full fidelity (suppression is scoped)", async () => {
+  const store = freshStore();
+  const session: object[] = [
+    {
+      type: "user",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: "sess-norm",
+      timestamp: "2026-05-15T00:00:00Z",
+      cwd: "/tmp/proj",
+      message: { role: "user", content: "write config" },
+    },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parentUuid: "u1",
+      sessionId: "sess-norm",
+      timestamp: "2026-05-15T00:00:01Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_norm_1",
+            name: "Write",
+            input: { file_path: "/tmp/proj/config.json", content: "{\"a\":1}\n" },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    },
+  ];
+  await ingestSession(store, writeSession(session), {
+    readBackup: memoryBackupReader({}),
+  });
+
+  const cfg = listFileChanges(store, {}).find((r) => r.path === "config.json");
+  assert.ok(cfg);
+  assert.equal(cfg!.redacted, false);
+  assert.ok(cfg!.after_blob_ref, "normal files keep full capture");
+  store.close();
+});
