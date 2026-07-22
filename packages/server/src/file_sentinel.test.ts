@@ -450,3 +450,36 @@ test("watch --files: real fs.watch events flow end-to-end", async () => {
 });
 
 type FileWatcherEventLog = Array<FileSentinelEvent["type"]>;
+
+test("watch --files: oversize file degrades to a partial stub (create + modify)", async () => {
+  const ctx = await setup();
+  const small = new FileSentinel(ctx.store, { root: ctx.root, maxFileBytes: 8 });
+  try {
+    await small.prime();
+    writeFileSync(join(ctx.root, "big.dat"), "0123456789ABCDEF"); // 16 > 8
+    small.enqueue("big.dat");
+    await small.flushNow();
+
+    let rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.op, "create");
+    assert.equal(rows[0]!.partial_diff, true);
+    assert.equal(rows[0]!.before_blob_ref, undefined);
+    assert.equal(rows[0]!.after_blob_ref, undefined);
+    assert.equal(rows[0]!.size_after, 16);
+
+    // Oversize modify: existence tracked, still stub, sizes honest.
+    writeFileSync(join(ctx.root, "big.dat"), "0123456789ABCDEF!!"); // 18
+    small.enqueue("big.dat");
+    await small.flushNow();
+    rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 2);
+    const mod = rows.find((r) => r.op === "modify")!;
+    assert.equal(mod.partial_diff, true);
+    assert.equal(mod.size_before, 16);
+    assert.equal(mod.size_after, 18);
+  } finally {
+    small.stop();
+    ctx.cleanup();
+  }
+});

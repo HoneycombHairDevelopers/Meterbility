@@ -11,7 +11,7 @@ import {
   requestResume,
   setInject,
 } from "@meterbility/shared";
-import { LiveInspector, type LiveEvent } from "./live.ts";
+import { LiveController, LiveInspector, type LiveEvent } from "./live.ts";
 
 /**
  * v0.3 §4.9 + §8.5 — new SSE event types on /api/live:
@@ -529,5 +529,46 @@ test("files:changed re-fires when rows arrive out-of-band on an already-ingested
   );
 
   live.stop();
+  store.close();
+});
+
+test("LiveController: failed background start tears down (isLive never lies)", async () => {
+  // start() no longer awaits the backfill; a failing inspector start
+  // must reset the controller so isLive() doesn't report a live
+  // inspector that never came up.
+  const { meter } = freshHomes();
+  // Control: a healthy store stays live after start.
+  const good = Store.open();
+  const healthy = new LiveController(good);
+  await healthy.start({ scanIntervalMs: 999_999 });
+  assert.equal(healthy.isLive(), true, "healthy start stays live");
+  healthy.stop();
+  good.close();
+
+  // Failure: a closed store makes the background start reject — the
+  // catch must tear the inspector down so isLive() doesn't lie. (The
+  // teardown can land as early as the awaited start() itself, since a
+  // synchronous throw rejects on the first microtask.)
+  const bad = Store.open();
+  bad.close();
+  const controller = new LiveController(bad);
+  await controller.start({ scanIntervalMs: 999_999 });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(controller.isLive(), false, "torn down after failure");
+  void meter;
+});
+
+test("LiveInspector: stop() during the backfill does not arm the poll timer", async () => {
+  freshHomes();
+  const store = Store.open();
+  const insp = new LiveInspector(store, { scanIntervalMs: 999_999 });
+  const startP = insp.start();
+  insp.stop(); // lands while the silent backfill is awaiting
+  await startP;
+  assert.equal(
+    (insp as unknown as { timer?: unknown }).timer,
+    undefined,
+    "no interval leaked on a stopped inspector",
+  );
   store.close();
 });

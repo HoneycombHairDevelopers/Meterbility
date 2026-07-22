@@ -580,3 +580,42 @@ test("capture: exact match still wins over temporal when both exist", async () =
     ctx.cleanup();
   }
 });
+
+test("capture: post with no manifest primes and honestly observes nothing", async () => {
+  // Post-only hook install (or first-ever run): there's no baseline to
+  // diff against, so the changes this step made are indistinguishable
+  // from priors — prime, capture nothing, never guess.
+  const ctx = await setup({ files: { "a.txt": "x\n" } });
+  try {
+    const post = await capturePost(ctx.store, ctx.payload, ctx.opts);
+    assert.equal(post.observed, 0);
+    assert.equal(listFileChanges(ctx.store, { runId: ctx.runId }).length, 0);
+    // The prime is real: the NEXT post sees deltas.
+    writeFileSync(join(ctx.root, "a.txt"), "y\n");
+    const post2 = await capturePost(ctx.store, ctx.payload, ctx.opts);
+    assert.equal(post2.observed, 1);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("capture: payload without session_id observes but never stashes", async () => {
+  // A manual/misconfigured invocation with no session identity can't
+  // ever be attributed — the manifest still advances (so later capture
+  // stays correct) but no stash record is created.
+  const ctx = await setup({ files: { "a.txt": "x\n" } });
+  try {
+    await capturePre(ctx.store, ctx.payload, ctx.opts);
+    writeFileSync(join(ctx.root, "a.txt"), "y\n");
+    const post = await capturePost(
+      ctx.store,
+      { ...ctx.payload, session_id: undefined },
+      ctx.opts,
+    );
+    assert.equal(post.observed, 1, "delta observed");
+    assert.equal(post.drained.pending, 0, "but nothing stashed");
+    assert.equal(listFileChanges(ctx.store, { runId: ctx.runId }).length, 0);
+  } finally {
+    ctx.cleanup();
+  }
+});

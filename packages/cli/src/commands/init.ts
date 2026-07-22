@@ -135,7 +135,7 @@ type HooksInstallResult = "installed" | "already-present";
  * "meter capture" is already registered for that event. Idempotent by
  * the same check.
  */
-async function installClaudeHooks(root: string): Promise<HooksInstallResult> {
+export async function installClaudeHooks(root: string): Promise<HooksInstallResult> {
   const dir = join(root, ".claude");
   const path = join(dir, "settings.json");
   mkdirSync(dir, { recursive: true });
