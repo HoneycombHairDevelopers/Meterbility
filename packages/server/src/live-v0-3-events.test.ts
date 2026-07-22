@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store } from "@meterbility/collector";
+import { Store, insertFileChange } from "@meterbility/collector";
 import {
   clearProbe,
   confirmPaused,
@@ -421,6 +421,113 @@ test("run:resumed reports the count of distinct injects observed during the paus
   assert.ok(ev.resumed_at, "resumed_at is populated");
 
   clearProbe(runId);
+  live.stop();
+  store.close();
+});
+
+test("files:changed re-fires when rows arrive out-of-band on an already-ingested step", async () => {
+  // v0.4 — the hook-capture drain and the FileSentinel insert
+  // file_change rows from OTHER processes, typically after the
+  // inspector already ingested (and announced) the step. The tick's
+  // arrival detector must notice the count growth and re-emit so the
+  // web UI can refresh the step card without a reload.
+  const { claude } = freshHomes();
+  const repoCwd = writeRepo({ "out.txt": "x\n" });
+
+  const store = Store.open();
+  const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+  await live.start();
+
+  const events: LiveEvent[] = [];
+  live.on("data", (e: LiveEvent) => events.push(e));
+
+  // A Bash step — ingest emits files:changed once for its (shell) stub.
+  writeFakeSession(claude, "oob-proj", "sess-oob-1", [
+    {
+      type: "user",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: "sess-oob-1",
+      timestamp: "2026-05-15T00:00:00.000Z",
+      cwd: repoCwd,
+      message: { role: "user", content: "touch a file" },
+    },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parentUuid: "u1",
+      sessionId: "sess-oob-1",
+      timestamp: "2026-05-15T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_b",
+            name: "Bash",
+            input: { command: "echo y >> out.txt" },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    },
+  ]);
+  await live.tick();
+
+  const first = events.filter((e) => e.type === "files:changed");
+  assert.equal(first.length, 1, "ingest announces the stub once");
+  const stepId = (first[0] as Extract<LiveEvent, { type: "files:changed" }>)
+    .step_id;
+  const runId = (first[0] as Extract<LiveEvent, { type: "files:changed" }>)
+    .run_id;
+
+  // Quiet tick: nothing new → no re-fire.
+  events.length = 0;
+  await live.tick();
+  assert.equal(
+    events.filter((e) => e.type === "files:changed").length,
+    0,
+    "no growth, no event",
+  );
+
+  // Out-of-band insert — what `meter capture` does from its own
+  // process after draining the stash.
+  const ref = await store.blobs.putString("x\ny\n");
+  insertFileChange(store, {
+    run_id: runId,
+    step_id: stepId,
+    sequence: 1,
+    derived_from: "filesystem_watch",
+    path: "out.txt",
+    op: "create",
+    after_blob_ref: ref,
+    partial_diff: false,
+    gitignored: false,
+    bom: false,
+    lines_added: 2,
+    lines_removed: 0,
+    redacted: false,
+  });
+  events.length = 0;
+  await live.tick();
+
+  const refired = events.filter((e) => e.type === "files:changed");
+  assert.equal(refired.length, 1, "arrival detector re-fires exactly once");
+  const ev = refired[0] as Extract<LiveEvent, { type: "files:changed" }>;
+  assert.equal(ev.step_id, stepId);
+  assert.equal(typeof ev.sequence, "number", "sequence travels on the event");
+  assert.ok(ev.paths.includes("out.txt"), "new path is announced");
+
+  // And it doesn't echo forever.
+  events.length = 0;
+  await live.tick();
+  assert.equal(
+    events.filter((e) => e.type === "files:changed").length,
+    0,
+    "count recorded — no repeat emission",
+  );
+
   live.stop();
   store.close();
 });

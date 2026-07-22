@@ -1686,9 +1686,57 @@ function initLiveRunUpdates() {
         }
       } catch { /* ignore */ }
     });
+    // v0.4 — file capture rows can land AFTER a card rendered: the
+    // hook drain and the FileSentinel insert from other processes,
+    // and even ingest-time rows often trail the live-appended card
+    // (the card renders while the step is still in progress). The
+    // server re-emits files:changed when rows arrive; swap the card
+    // for a fresh fragment so the Files tab reflects them.
+    es.addEventListener('files:changed', (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (!data || data.run_id !== runId) return;
+        if (typeof data.sequence !== 'number') return;
+        refreshStepCard(data.sequence, data.step_id);
+      } catch { /* ignore */ }
+    });
     es.onerror = () => {
       // Browser will auto-reconnect; nothing to do.
     };
+  }
+  /* Replace an already-rendered step card with a fresh server-side
+   * fragment (same endpoint the live-append path uses). Preserves the
+   * user's active tab and pretty toggle across the swap. No-op when
+   * the card isn't in the DOM yet — the run:updated append path will
+   * fetch it complete. */
+  async function refreshStepCard(seq, stepId) {
+    const existing = document.querySelector(
+      '.step-card[data-step="' + (window.CSS && CSS.escape ? CSS.escape(stepId) : stepId) + '"]',
+    );
+    if (!existing) return;
+    try {
+      const res = await fetch(
+        '/api/runs/' + encodeURIComponent(runId) + '/step-card/' + seq,
+      );
+      if (!res.ok) return;
+      const html = await res.text();
+      const wrap = document.createElement('div');
+      wrap.innerHTML = html;
+      const fresh = wrap.querySelector('[data-step-fragment] .step-card');
+      if (!fresh) return;
+      // Remember which tab the user had open before the swap.
+      let activeTab = null;
+      const shown = existing.querySelector('.tab:not([style*="display:none"]):not([style*="display: none"])');
+      if (shown) {
+        const m = (shown.className || '').match(/tab-([a-z]+)/);
+        if (m) activeTab = m[1];
+      }
+      existing.replaceWith(fresh);
+      restorePrettyForCard(fresh);
+      if (activeTab && typeof showTab === 'function') {
+        try { showTab(stepId, activeTab); } catch { /* default tab is fine */ }
+      }
+    } catch { /* transient — next files:changed retries */ }
   }
   async function appendStepsUpTo(target) {
     while (knownStepCount < target) {

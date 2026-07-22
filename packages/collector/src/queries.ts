@@ -242,15 +242,52 @@ export function setRunStatus(
 }
 
 export function insertStep(store: Store, step: Step): void {
+  // Upsert, NOT `INSERT OR REPLACE`. REPLACE resolves a conflict by
+  // DELETING the existing row and inserting a fresh one — and that
+  // delete fires `file_change.step_id ON DELETE CASCADE`, silently
+  // wiping every FileChange attached to the step. Live re-ingest
+  // re-inserts existing steps on every tick (the adapter's ids are
+  // deterministic precisely so this is a "no-op"), so under REPLACE
+  // any filesystem_watch rows from hook capture / the FileSentinel —
+  // which have no re-derivation path — were permanently lost on the
+  // next tick. DO UPDATE mutates the row in place; children survive.
+  //
+  // Both uniqueness constraints get a clause (PK step_id, and
+  // UNIQUE(run_id, sequence) for legacy rows with non-deterministic
+  // ids); the second keeps the existing step_id so children stay
+  // attached. Chained ON CONFLICT needs SQLite ≥ 3.35 (bundled: 3.49).
+  const updates = `
+        parent_step_id=excluded.parent_step_id,
+        fork_origin_id=excluded.fork_origin_id,
+        timestamp=excluded.timestamp,
+        model=excluded.model,
+        context_snapshot_id=excluded.context_snapshot_id,
+        decision_ref=excluded.decision_ref,
+        action_json=excluded.action_json,
+        outcome_json=excluded.outcome_json,
+        tokens_input=excluded.tokens_input,
+        tokens_output=excluded.tokens_output,
+        tokens_cached_read=excluded.tokens_cached_read,
+        tokens_cache_creation=excluded.tokens_cache_creation,
+        tokens_cache_creation_1h=excluded.tokens_cache_creation_1h,
+        tokens_reasoning=excluded.tokens_reasoning,
+        latency_ms=excluded.latency_ms,
+        cost_cents=excluded.cost_cents,
+        status=excluded.status,
+        tags=excluded.tags`;
   store.db
     .prepare(
-      `INSERT OR REPLACE INTO steps(
+      `INSERT INTO steps(
         step_id, run_id, parent_step_id, fork_origin_id, sequence, timestamp,
         model, context_snapshot_id, decision_ref, action_json, outcome_json,
         tokens_input, tokens_output, tokens_cached_read, tokens_cache_creation,
         tokens_cache_creation_1h, tokens_reasoning, latency_ms, cost_cents,
         status, tags
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(step_id) DO UPDATE SET
+        run_id=excluded.run_id,
+        sequence=excluded.sequence,${updates}
+       ON CONFLICT(run_id, sequence) DO UPDATE SET${updates}`,
     )
     .run(
       step.step_id,

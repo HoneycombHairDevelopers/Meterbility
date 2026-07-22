@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   insertBaselineTree,
   insertFileChange,
@@ -9,6 +12,7 @@ import {
 import { serializeManifest } from "@meterbility/collector";
 import { buildApp } from "./web.ts";
 import { freshCtx, scaffoldRun, jsonReq } from "./web-test-utils.ts";
+import { probeFilePath } from "@meterbility/shared";
 
 /**
  * Exhaustive coverage of `web.ts` — all 49 HTTP routes × happy +
@@ -1324,6 +1328,100 @@ test("auth: /api/live (SSE) is also gated when token is set", async () => {
     const app = buildApp(c.store);
     const res = await app.fetch(new Request("http://x/api/live"));
     assert.equal(res.status, 401);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("live: POST /api/live/start responds without waiting for the backfill", async () => {
+  // Regression: the route used to await the inspector's first silent
+  // backfill tick (a full scan-and-ingest of the projects root), which
+  // left the Live button disabled with a progress cursor for as long
+  // as the ingest took. The route must flip live=true immediately and
+  // let the backfill run behind the SSE stream.
+  const c = freshCtx();
+  process.env.METERBILITY_DISABLE_SHAPE_PROBE = "1";
+  const projectsRoot = mkdtempSync(join(tmpdir(), "meter-live-empty-"));
+  try {
+    const app = buildApp(c.store);
+    const t0 = Date.now();
+    const res = await app.fetch(
+      jsonReq("http://x/api/live/start", {
+        projectsRoot,
+        scanIntervalMs: 60_000,
+      }),
+    );
+    const elapsed = Date.now() - t0;
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { live: boolean };
+    assert.equal(body.live, true);
+    // Generous bound: an empty projects root backfills in ~ms anyway,
+    // but the contract under test is "no proportional wait" — with a
+    // blocking start this would scale with the real ingest workload.
+    assert.ok(elapsed < 2_000, `start took ${elapsed}ms`);
+
+    const status = await app.fetch(new Request("http://x/api/live/status"));
+    assert.equal(((await status.json()) as { live: boolean }).live, true);
+
+    // Immediate stop must land cleanly even if the backfill is still
+    // in flight (the inspector guards its poll timer against this).
+    const stop = await app.fetch(
+      new Request("http://x/api/live/stop", { method: "POST" }),
+    );
+    assert.equal(((await stop.json()) as { live: boolean }).live, false);
+  } finally {
+    delete process.env.METERBILITY_DISABLE_SHAPE_PROBE;
+    rmSync(projectsRoot, { recursive: true, force: true });
+    c.cleanup();
+  }
+});
+
+test("page: GET /runs/:id renders 200 even when the probe state is unreadable", async () => {
+  // Regression (found in checklist §1.6): with the data dir chmod'd
+  // unreadable, readProbeState's EACCES escaped the run-detail render
+  // and 500'd the whole page. The probe panel must degrade to absent;
+  // everything else renders from the open DB handle. We force the
+  // same non-ENOENT throw deterministically by planting a DIRECTORY
+  // at the probe file's path (EISDIR on read).
+  const c = freshCtx();
+  try {
+    const { runId } = scaffoldRun(c.store, { status: "in_progress" });
+    mkdirSync(probeFilePath(runId), { recursive: true });
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      new Request("http://x/runs/" + encodeURIComponent(runId)),
+    );
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /step/i); // page body rendered
+    assert.doesNotMatch(html, /Internal Server Error/i);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("api: GET /api/blob/:hash serves binary blobs byte-exact (no UTF-8 mangling)", async () => {
+  // Regression (checklist §4.5): the route decoded every blob as
+  // UTF-8 — non-UTF-8 bytes became U+FFFD and a captured PNG came
+  // back larger than it went in. Binary must round-trip byte-exact
+  // with an octet-stream content type; text keeps text/plain.
+  const c = freshCtx();
+  try {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xd1, 0x27, 0x8e]);
+    const binRef = await c.store.blobs.putBuffer(png);
+    const textRef = await c.store.blobs.putString("plain text blob\n");
+    const app = buildApp(c.store);
+
+    const bin = await app.fetch(new Request(`http://x/api/blob/${binRef}`));
+    assert.equal(bin.status, 200);
+    assert.match(bin.headers.get("content-type") ?? "", /octet-stream/);
+    const got = Buffer.from(await bin.arrayBuffer());
+    assert.ok(got.equals(png), "binary round-trips byte-exact");
+
+    const txt = await app.fetch(new Request(`http://x/api/blob/${textRef}`));
+    assert.equal(txt.status, 200);
+    assert.match(txt.headers.get("content-type") ?? "", /text\/plain/);
+    assert.equal(await txt.text(), "plain text blob\n");
   } finally {
     c.cleanup();
   }

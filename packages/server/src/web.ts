@@ -16,6 +16,7 @@ import {
   getRun,
   getStep,
   getStepBySequence,
+  isProbablyText,
   listAnnotations,
   listFileChanges,
   listForks,
@@ -297,10 +298,24 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     // Turn 8 chunk 5 — Live Probe panel. Render only for in_progress
     // runs (the only ones that can be paused) so sealed runs don't
     // get a meaningless panel + polling loop.
-    const probePanel =
-      run.status === "in_progress"
-        ? renderProbePanel(run.run_id, readProbeState(run.run_id))
-        : "";
+    //
+    // Guarded: readProbeState re-throws non-ENOENT filesystem errors
+    // (EACCES on an unreadable data dir, EIO, corrupt JSON). One
+    // unreadable probe file must degrade to "no panel", not 500 the
+    // entire run page — the rest of the page renders from the already-
+    // open DB handle and is perfectly serviceable.
+    let probePanel = "";
+    if (run.status === "in_progress") {
+      try {
+        probePanel = renderProbePanel(run.run_id, readProbeState(run.run_id));
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[meter/web] probe state unreadable for ${run.run_id}:`,
+          err,
+        );
+      }
+    }
     const shell = renderShell(
       run.title ?? run.run_id,
       renderRun(run, steps, annotations, forks, stepDecisions, fcByStep, probePanel),
@@ -619,10 +634,19 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     // snapshot id; raw blob hashes are passed through untouched.
     const raw = c.req.param("hash");
     const ref = resolveSnapshotBlobRef(store, raw);
-    const text = await store.blobs.tryGetString(ref);
-    if (!text) return c.notFound();
-    c.header("Content-Type", "text/plain; charset=utf-8");
-    return c.body(text);
+    // Binary-safe: decode-as-UTF-8 turns every non-UTF-8 byte into
+    // U+FFFD, silently corrupting binary blobs (a captured PNG came
+    // back 208 → 370 bytes of mojibake — checklist §4.5). Storage is
+    // byte-exact per PR 1; the raw endpoint must be too. Text blobs
+    // keep the historical text/plain response.
+    const buf = await store.blobs.tryGetBuffer(ref);
+    if (!buf) return c.notFound();
+    if (isProbablyText(buf)) {
+      c.header("Content-Type", "text/plain; charset=utf-8");
+      return c.body(buf.toString("utf-8"));
+    }
+    c.header("Content-Type", "application/octet-stream");
+    return c.body(new Uint8Array(buf));
   });
 
   /**
