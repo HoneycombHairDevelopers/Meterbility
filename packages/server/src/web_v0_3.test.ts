@@ -360,6 +360,62 @@ test("/runs/:id stamps data-run-id, exposes #steps-anchor, and renders the Live 
   }
 });
 
+test("partial FileChange rows: CTA only when no filesystem_watch row covers the path", async () => {
+  // A partial (shell) row should tell the user how to get full fidelity —
+  // `meter init --hooks` first, `meter watch --files` as the cross-vendor
+  // fallback — but only when the step doesn't already have a full-fidelity
+  // filesystem_watch row for the same path. When it does, the stub should
+  // point at that row instead of telling the user to enable capture that
+  // is plainly already on.
+  freshStore();
+  const store = Store.open();
+  try {
+    const { runId, stepIds } = scaffold(store, 2);
+    // Step 0: partial stub with no watch coverage → CTA.
+    insertFileChange(store, {
+      run_id: runId, step_id: stepIds[0]!, sequence: 0,
+      derived_from: "tool_call", path: "src/uncovered.ts", op: "modify",
+      partial_diff: true, gitignored: false, bom: false,
+      lines_added: 0, lines_removed: 0, redacted: false,
+      source_tool_name: "Bash",
+    });
+    // Step 1: partial stub + full filesystem_watch row for the same path
+    // → softened message, no CTA.
+    insertFileChange(store, {
+      run_id: runId, step_id: stepIds[1]!, sequence: 0,
+      derived_from: "tool_call", path: "src/covered.ts", op: "modify",
+      partial_diff: true, gitignored: false, bom: false,
+      lines_added: 0, lines_removed: 0, redacted: false,
+      source_tool_name: "Bash",
+    });
+    insertFileChange(store, {
+      run_id: runId, step_id: stepIds[1]!, sequence: 1,
+      derived_from: "filesystem_watch", path: "src/covered.ts", op: "modify",
+      before_blob_ref: "blob_cov_v0", after_blob_ref: "blob_cov_v1",
+      partial_diff: false, gitignored: false, bom: false,
+      lines_added: 2, lines_removed: 1, redacted: false,
+      patch_text: "@@ -1 +1,2 @@\n-old\n+new\n+more\n",
+      patch_format: "unified",
+    });
+    const app = buildApp(store);
+    const res = await app.fetch(new Request(`http://x/runs/${runId}`));
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    // Exactly one CTA (step 0's stub), naming both capture paths.
+    assert.equal(html.split("meter init --hooks").length - 1, 1);
+    assert.match(html, /meter watch --files/);
+    // The stale "in v0.4" framing is gone.
+    assert.equal(html.includes("in v0.4 for full fidelity"), false);
+    // Exactly one softened stub (step 1's), pointing at the watch row.
+    assert.equal(
+      html.split("see the filesystem-watch row").length - 1,
+      1,
+    );
+  } finally {
+    store.close();
+  }
+});
+
 test("/runs/:id renders without a Files tab when no FileChanges exist", async () => {
   // Read-only steps (Read/Glob/Grep) should not get a Files tab — keep
   // the tab bar quiet. This pins that contract. We match on the

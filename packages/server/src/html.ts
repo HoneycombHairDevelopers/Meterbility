@@ -3026,6 +3026,13 @@ function renderStepFilesPanel(fcs: FileChange[]): string {
     <span class="files-stat-rm">−${stats.removed}</span>
     <span class="files-stat-count">${fcs.length} file${fcs.length === 1 ? "" : "s"}</span>
   </div>`;
+  // Paths already covered by a full-fidelity filesystem_watch row in this
+  // step — their partial stubs shouldn't tell the user to enable capture.
+  const watchedPaths = new Set(
+    fcs
+      .filter((fc) => fc.derived_from === "filesystem_watch" && !fc.partial_diff)
+      .map((fc) => fc.path),
+  );
   const rows = fcs
     .map((fc, idx) => {
       const renderedPath =
@@ -3040,7 +3047,9 @@ function renderStepFilesPanel(fcs: FileChange[]): string {
       const body = expandable
         ? `<pre class="file-diff" style="display:none">${renderColorizedPatch(fc.patch_text!)}</pre>`
         : fc.partial_diff
-          ? `<div class="file-diff-empty">partial — this change ran outside captured tools (e.g. Bash). Enable <code>meter watch --files</code> in v0.4 for full fidelity.</div>`
+          ? watchedPaths.has(fc.path)
+            ? `<div class="file-diff-empty">partial — tool output alone couldn't reconstruct this change; see the filesystem-watch row for this file for the full diff.</div>`
+            : `<div class="file-diff-empty">partial — this change ran outside captured tools (e.g. Bash). Run <code>meter init --hooks</code> for exact capture in Claude Code, or <code>meter watch --files</code> as a cross-vendor fallback.</div>`
           : fc.patch_format === "binary"
             ? `<div class="file-diff-empty">binary file — ${esc(fc.path)} (${fc.size_before ?? "?"} → ${fc.size_after ?? "?"} bytes). <a href="/api/blob/${esc(fc.after_blob_ref ?? "")}" target="_blank">raw bytes</a></div>`
             : "";
