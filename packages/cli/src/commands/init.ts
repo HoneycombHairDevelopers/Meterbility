@@ -143,22 +143,45 @@ export async function installClaudeHooks(root: string): Promise<HooksInstallResu
   let settings: Record<string, unknown> = {};
   if (existsSync(path)) {
     try {
-      settings = JSON.parse(await readFile(path, "utf-8")) as Record<
-        string,
-        unknown
-      >;
+      const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
+      // A top-level array/scalar would serialize back WITHOUT any
+      // properties we assign — silently emptying the file. Refuse.
+      if (!isPlainObject(parsed)) throw new Error("not an object");
+      settings = parsed;
     } catch {
       // Malformed settings.json — refuse to clobber the user's file.
       console.error(
         pc.yellow(
-          `meter init: ${path} is not valid JSON — skipped hook install. Fix the file and re-run with --hooks.`,
+          `meter init: ${path} is not a valid JSON object — skipped hook install. Fix the file and re-run with --hooks.`,
         ),
       );
       return "already-present";
     }
   }
 
+  // Shape guards: valid JSON with an unexpected shape (hooks as an
+  // array, an event as an object) gets the same refuse-and-warn
+  // treatment as malformed JSON — never crash, never silently rewrite
+  // a structure we don't understand.
+  if (settings.hooks !== undefined && !isPlainObject(settings.hooks)) {
+    console.error(
+      pc.yellow(
+        `meter init: ${path} has an unexpected "hooks" shape (expected object) — skipped hook install.`,
+      ),
+    );
+    return "already-present";
+  }
   const hooks = (settings.hooks ??= {}) as Record<string, unknown>;
+  for (const event of ["PreToolUse", "PostToolUse"]) {
+    if (hooks[event] !== undefined && !Array.isArray(hooks[event])) {
+      console.error(
+        pc.yellow(
+          `meter init: ${path} has an unexpected "hooks.${event}" shape (expected array) — skipped hook install.`,
+        ),
+      );
+      return "already-present";
+    }
+  }
   let changed = false;
   for (const [event, phase] of [
     ["PreToolUse", "pre"],
@@ -301,3 +324,8 @@ binary_detection = "null-byte-heuristic"
 
 // Re-export for the index registration.
 export { DEFAULT_METERBILITYIGNORE };
+
+/** Local plain-object check (arrays are objects too — exclude them). */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}

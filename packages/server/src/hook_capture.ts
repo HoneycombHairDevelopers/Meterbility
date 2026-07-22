@@ -101,6 +101,8 @@ interface StashRecord {
   tool_name: string;
   tool_input: unknown;
   observed_at: string;
+  /** Drain retries so far. Not consumed by any policy (expiry is
+   *  TTL-based) — kept for humans inspecting pending.json. */
   attempts: number;
   deltas: StashDelta[];
 }
@@ -189,7 +191,10 @@ export async function capturePre(
       refreshed += 1;
     }
   }
-  await saveManifest(dir, root, existing);
+  // Steady state (nothing drifted) skips the manifest rewrite — at
+  // 10k files the serialized manifest is MBs, and pre runs on every
+  // Bash call.
+  if (refreshed > 0) await saveManifest(dir, root, existing);
   const drained = await drainStash(store, opts);
   return { root, primed: false, refreshed, drained };
 }
@@ -217,12 +222,17 @@ export async function capturePost(
 
   const scanned = await scanStats(root, matcher);
   const deltas: StashDelta[] = [];
+  // Entries assigned or removed this pass — includes touch-same-bytes
+  // mtime refreshes that produce no delta but must persist (or the
+  // next scan re-reads and re-hashes the file).
+  let touched = 0;
 
   for (const [rel, st] of scanned) {
     const prev = manifest.files[rel];
     if (prev && prev.size === st.size && prev.mtime_ms === st.mtime_ms) continue;
     const entry = await readEntry(store, root, rel, st, maxBytes);
     manifest.files[rel] = entry;
+    touched += 1;
     if (prev && prev.ref !== undefined && prev.ref === entry.ref) continue; // touch, same bytes
     const bothCaptured =
       entry.ref !== undefined && (prev === undefined || prev.ref !== undefined);
@@ -240,6 +250,7 @@ export async function capturePost(
     if (scanned.has(rel)) continue;
     const prev = manifest.files[rel]!;
     delete manifest.files[rel];
+    touched += 1;
     deltas.push({
       path: rel,
       op: "delete",
@@ -249,7 +260,9 @@ export async function capturePost(
     });
   }
 
-  await saveManifest(dir, root, manifest);
+  // Same steady-state skip as capturePre — post runs on every Bash
+  // call and the serialized manifest scales with repo size.
+  if (touched > 0) await saveManifest(dir, root, manifest);
 
   if (deltas.length > 0 && payload.session_id && payload.tool_name) {
     const stash = await loadStash(dir);

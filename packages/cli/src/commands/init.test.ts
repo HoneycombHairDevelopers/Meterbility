@@ -124,3 +124,30 @@ test("init --hooks: refuses to touch a malformed settings.json", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("init --hooks: refuses unexpected shapes (valid JSON, wrong structure)", async () => {
+  // Valid JSON that isn't the shape we understand must get the same
+  // refuse-and-warn treatment as malformed JSON — never crash, never
+  // silently rewrite (a top-level array would serialize back empty).
+  for (const content of [
+    '{"hooks": []}', // hooks as array
+    '{"hooks": {"PreToolUse": {}}}', // event as object
+    '["not", "an", "object"]', // top-level array
+  ]) {
+    const root = freshRoot();
+    try {
+      mkdirSync(join(root, ".claude"), { recursive: true });
+      const path = join(root, ".claude", "settings.json");
+      writeFileSync(path, content);
+      const result = await installClaudeHooks(root);
+      assert.equal(result, "already-present", `refused for: ${content}`);
+      assert.equal(
+        readFileSync(path, "utf-8"),
+        content,
+        `file untouched for: ${content}`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});

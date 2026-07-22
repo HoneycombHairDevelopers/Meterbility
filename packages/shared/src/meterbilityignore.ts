@@ -47,8 +47,18 @@ export const SENSITIVE_METERBILITYIGNORE: readonly string[] = [
   "id_rsa*",
   "id_ed25519*",
   "credentials.json",
+  // Directory-scoped entries need BOTH forms. The trailing-slash form
+  // is dir-only — walkers use it to prune the directory itself, but it
+  // can never match a FILE candidate, so a suppression check like
+  // matches(".aws/credentials", false) would sail straight past it
+  // (found by the ship security review). The `**/` forms match the
+  // files inside, at any depth AND for absolute paths (an agent editing
+  // ~/.aws/credentials outside the repo cwd reaches the matcher as an
+  // absolute path).
   ".aws/",
+  "**/.aws/**",
   ".kube/config",
+  "**/.kube/config",
 ];
 
 /**

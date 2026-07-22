@@ -123,6 +123,12 @@ export interface LiveOptions {
   loopWindow?: number;
 }
 
+/** How long after a run seals the arrival detector keeps watching it —
+ *  late hook drains attributing to a just-ended session are the norm. */
+const RECENT_TERMINAL_WINDOW_MS = 3_600_000;
+/** Most-recent-runs cap for the per-tick arrival scan. */
+const ARRIVAL_SCAN_RUN_LIMIT = 50;
+
 const DEFAULT_OPTS: Required<LiveOptions> = {
   projectsRoot: claudeProjectsRoot(),
   scanIntervalMs: 1500,
@@ -458,14 +464,22 @@ export class LiveInspector extends EventEmitter {
    */
   private detectFileChangeArrivals(silent: boolean): void {
     const now = Date.now();
-    for (const run of listRuns(this.store, { limit: 50 })) {
+    for (const run of listRuns(this.store, { limit: ARRIVAL_SCAN_RUN_LIMIT })) {
       const recentTerminal =
         run.ended_at !== undefined &&
-        now - new Date(run.ended_at).getTime() < 3_600_000;
+        now - new Date(run.ended_at).getTime() < RECENT_TERMINAL_WINDOW_MS;
       if (run.status !== "in_progress" && !recentTerminal) continue;
+      // Aggregate COUNT, not row materialization — this runs every
+      // tick, and fetching full rows (patch_text included) for every
+      // recent run would re-read megabytes 40×/minute on runs with
+      // heavy capture. idx_fc_run_step covers this query.
       const byStep = new Map<string, number>();
-      for (const fc of listFileChanges(this.store, { runId: run.run_id })) {
-        byStep.set(fc.step_id, (byStep.get(fc.step_id) ?? 0) + 1);
+      for (const row of this.store.db
+        .prepare(
+          "SELECT step_id, COUNT(*) AS n FROM file_change WHERE run_id = ? GROUP BY step_id",
+        )
+        .all(run.run_id) as Array<{ step_id: string; n: number }>) {
+        byStep.set(row.step_id, row.n);
       }
       for (const [stepId, count] of byStep) {
         const prev = this.fcCounts.get(stepId) ?? 0;

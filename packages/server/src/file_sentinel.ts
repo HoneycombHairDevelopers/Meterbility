@@ -115,6 +115,8 @@ export class FileSentinel extends EventEmitter {
   private matcher?: IgnoreMatcher;
   private snapshot = new Map<string, SnapshotEntry>();
   private pending = new Set<string>();
+  /** When the oldest still-pending event was enqueued (max-wait clock). */
+  private pendingSince?: number;
   private flushTimer?: NodeJS.Timeout;
   private watcher?: FSWatcher;
   private stopped = false;
@@ -125,7 +127,13 @@ export class FileSentinel extends EventEmitter {
     super();
     this.store = store;
     this.root = resolve(opts.root ?? process.cwd());
-    this.windowMs = opts.attributionWindowMs ?? DEFAULT_ATTRIBUTION_WINDOW_MS;
+    // Guard NaN/non-positive (e.g. a CLI flag that failed parseInt):
+    // `gapMs > NaN` is always false, which would silently DISABLE the
+    // window and misattribute stale steps.
+    this.windowMs =
+      Number.isFinite(opts.attributionWindowMs) && opts.attributionWindowMs! > 0
+        ? opts.attributionWindowMs!
+        : DEFAULT_ATTRIBUTION_WINDOW_MS;
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.maxFileBytes = opts.maxFileBytes ?? DEFAULT_MAX_PARTIAL_BYTES;
     this.matcher = opts.matcher;
@@ -165,20 +173,34 @@ export class FileSentinel extends EventEmitter {
     this.watcher = undefined;
   }
 
-  /** Queue a repo-relative path for processing after the debounce. */
+  /** Queue a repo-relative path for processing after the debounce.
+   *
+   * The debounce timer is global (reset by every event), so a
+   * sustained event stream — a build writing output, a watch-mode
+   * compiler — could postpone the flush indefinitely while `pending`
+   * grows. The max-wait deadline caps that: once the OLDEST pending
+   * event is 4 debounce periods old, the next event flushes
+   * immediately instead of re-arming the timer. */
   enqueue(relPath: string): void {
     if (this.stopped) return;
     if (this.isIgnored(relPath)) return;
+    if (this.pending.size === 0) this.pendingSince = Date.now();
     this.pending.add(relPath);
+    const overdue =
+      this.pendingSince !== undefined &&
+      Date.now() - this.pendingSince >= this.debounceMs * 4;
     if (this.flushTimer) clearTimeout(this.flushTimer);
-    this.flushTimer = setTimeout(() => {
-      void this.flushNow().catch((err) => {
-        this.emit("data", {
-          type: "sentinel:error",
-          message: String(err),
-        } satisfies FileSentinelEvent);
-      });
-    }, this.debounceMs);
+    this.flushTimer = setTimeout(
+      () => {
+        void this.flushNow().catch((err) => {
+          this.emit("data", {
+            type: "sentinel:error",
+            message: String(err),
+          } satisfies FileSentinelEvent);
+        });
+      },
+      overdue ? 0 : this.debounceMs,
+    );
   }
 
   /**
@@ -189,6 +211,7 @@ export class FileSentinel extends EventEmitter {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
     const batch = Array.from(this.pending).sort();
+    this.pendingSince = undefined;
     this.pending.clear();
     for (const rel of batch) {
       try {

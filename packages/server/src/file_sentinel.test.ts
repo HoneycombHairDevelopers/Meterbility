@@ -483,3 +483,30 @@ test("watch --files: oversize file degrades to a partial stub (create + modify)"
     ctx.cleanup();
   }
 });
+
+test("watch --files: NaN/invalid attribution window falls back to the default", async () => {
+  // Regression: `gapMs > NaN` is always false, which silently DISABLED
+  // the window (a stale step would grab every ambient edit forever).
+  const ctx = await setup({
+    files: { "n.txt": "x\n" },
+    stepAgeMs: 10 * 60_000, // stale — outside the (default) window
+  });
+  const nan = new FileSentinel(ctx.store, {
+    root: ctx.root,
+    attributionWindowMs: Number.NaN,
+  });
+  const events: FileSentinelEvent[] = [];
+  nan.on("data", (e: FileSentinelEvent) => events.push(e));
+  try {
+    await nan.prime();
+    writeFileSync(join(ctx.root, "n.txt"), "y\n");
+    nan.enqueue("n.txt");
+    await nan.flushNow();
+    const un = events.find((e) => e.type === "file:unattributed");
+    assert.ok(un && un.type === "file:unattributed", "window enforced");
+    assert.equal(un.reason, "no-recent-step");
+  } finally {
+    nan.stop();
+    ctx.cleanup();
+  }
+});
