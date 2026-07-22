@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/claude-code-adapter",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -11,9 +11,9 @@
     }
   },
   "dependencies": {
-    "@meterbility/shared": "^0.4.0",
-    "@meterbility/spec": "^0.4.0",
-    "@meterbility/collector": "^0.4.0"
+    "@meterbility/shared": "^0.5.0",
+    "@meterbility/spec": "^0.5.0",
+    "@meterbility/collector": "^0.5.0"
   },
   "description": "Claude Code session + file-change capture adapter for Meterbility",
   "repository": {
