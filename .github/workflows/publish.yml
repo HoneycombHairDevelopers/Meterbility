@@ -1,9 +1,10 @@
 name: Publish to npm
 
 # Publishes every @meterbility/* workspace package when a GitHub release is
-# published (or manually via workflow_dispatch). Requires the NPM_TOKEN
-# repository secret: an npm automation token with publish rights on the
-# @meterbility org.
+# published (or manually via workflow_dispatch). Auth is npm OIDC trusted
+# publishing — no NPM_TOKEN secret. Each package must have this repo +
+# this workflow file registered as its trusted publisher on npmjs.com
+# (Package → Settings → Trusted Publisher).
 
 on:
   release:
@@ -25,6 +26,12 @@ jobs:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
 
+      # OIDC trusted publishing needs npm >= 11.5.1; the npm bundled with
+      # Node 24 can be older and silently falls back to token auth (which
+      # 404s once NPM_TOKEN is gone). Upgrade before publishing.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
       - name: Install
         run: npm ci
 
@@ -34,12 +41,15 @@ jobs:
       - name: Test
         run: npm test
 
+      # Auth is npm OIDC trusted publishing (id-token: write above) — no
+      # NPM_TOKEN secret. Each @meterbility/* package has this repo +
+      # workflow (publish.yml) registered as its trusted publisher on
+      # npmjs.com; a missing/mistyped registration 404s that one package.
+      #
       # Same topological order as the root build script. npm skips nothing
       # silently here: a version that already exists on the registry fails
       # the job, which is the safe default for a release gate.
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for w in packages/shared packages/spec packages/collector \
                    packages/store-postgres adapters/claude-code \
