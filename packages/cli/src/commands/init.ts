@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -39,9 +39,13 @@ export function registerInitCommand(program: Command): void {
       "--quiet",
       "Suppress per-file output (still prints the final summary)",
     )
+    .option(
+      "--hooks",
+      "Also install Claude Code PreToolUse/PostToolUse hooks for exact Bash file capture (meter capture)",
+    )
     .action(async (
       pathArg: string | undefined,
-      opts: { force?: boolean; quiet?: boolean },
+      opts: { force?: boolean; quiet?: boolean; hooks?: boolean },
     ) => {
       const root = resolve(pathArg ?? process.cwd());
       if (!existsSync(root)) {
@@ -69,9 +73,25 @@ export function registerInitCommand(program: Command): void {
         opts.force === true,
       );
 
+      let hooksResult: HooksInstallResult | undefined;
+      if (opts.hooks) {
+        hooksResult = await installClaudeHooks(root);
+      }
+
       if (!opts.quiet) {
         printFileResult(".meterbilityignore", ignorePath, ignoreResult);
         printFileResult(".meterbility/config.toml", configPath, configResult);
+        if (hooksResult) {
+          const tag =
+            hooksResult === "installed"
+              ? pc.green("installed")
+              : pc.dim("already present");
+          console.log(
+            `  ${tag}  ${pc.cyan("meter capture hooks")} ${pc.dim(
+              `(${join(root, ".claude", "settings.json")})`,
+            )}`,
+          );
+        }
       }
 
       // Summary footer. Tells the user what to do next; the call-to-
@@ -100,6 +120,78 @@ export function registerInitCommand(program: Command): void {
 }
 
 type WriteResult = "created" | "skipped" | "overwritten";
+
+type HooksInstallResult = "installed" | "already-present";
+
+/**
+ * Merge the `meter capture` hook pair into the project's
+ * `.claude/settings.json` (v0.4 exact Bash capture):
+ *
+ *   PreToolUse(Bash)  → meter capture pre
+ *   PostToolUse(Bash) → meter capture post
+ *
+ * Non-destructive: existing settings and hook entries are preserved;
+ * we only append our matcher groups if no hook command containing
+ * "meter capture" is already registered for that event. Idempotent by
+ * the same check.
+ */
+async function installClaudeHooks(root: string): Promise<HooksInstallResult> {
+  const dir = join(root, ".claude");
+  const path = join(dir, "settings.json");
+  mkdirSync(dir, { recursive: true });
+
+  let settings: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    try {
+      settings = JSON.parse(await readFile(path, "utf-8")) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      // Malformed settings.json — refuse to clobber the user's file.
+      console.error(
+        pc.yellow(
+          `meter init: ${path} is not valid JSON — skipped hook install. Fix the file and re-run with --hooks.`,
+        ),
+      );
+      return "already-present";
+    }
+  }
+
+  const hooks = (settings.hooks ??= {}) as Record<string, unknown>;
+  let changed = false;
+  for (const [event, phase] of [
+    ["PreToolUse", "pre"],
+    ["PostToolUse", "post"],
+  ] as const) {
+    const groups = (hooks[event] ??= []) as Array<{
+      matcher?: string;
+      hooks?: Array<{ type?: string; command?: string }>;
+    }>;
+    // Present if ANY variant of the capture hook is registered —
+    // `meter capture pre`, `meter-dev capture pre`, or an absolute
+    // path to either. Keying on the subcommand keeps re-runs of
+    // `meter init --hooks` idempotent after a user points the command
+    // at a dev build.
+    const present = groups.some((g) =>
+      (g.hooks ?? []).some(
+        (h) =>
+          typeof h.command === "string" &&
+          /\bcapture (pre|post)\b/.test(h.command),
+      ),
+    );
+    if (present) continue;
+    groups.push({
+      matcher: "Bash",
+      hooks: [{ type: "command", command: `meter capture ${phase}` }],
+    });
+    changed = true;
+  }
+
+  if (!changed) return "already-present";
+  await writeFile(path, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  return "installed";
+}
 
 async function writeIfNeeded(
   path: string,
