@@ -66,9 +66,9 @@ live.on("data", (e) => {
 await live.start();
 ```
 
-## Filesystem side-effect capture (v0.4)
+## Filesystem side-effect capture (v0.5)
 
-Tool-call inspection captures what the agent *thinks* it changed; it can't see what a `Bash` step actually did to disk (`sed`, `mv`, `npm install`, build scripts). v0.4 closes that gap with two capture paths that share one engine:
+Tool-call inspection captures what the agent *thinks* it changed; it can't see what a `Bash` step actually did to disk (`sed`, `mv`, `npm install`, build scripts). v0.5 closes that gap with two capture paths that share one engine:
 
 | | Hook capture (`meter capture`) | FileSentinel (`meter watch --files`) |
 |---|---|---|

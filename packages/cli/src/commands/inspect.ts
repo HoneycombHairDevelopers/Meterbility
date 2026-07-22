@@ -299,7 +299,7 @@ async function printStepFiles(
       console.log(
         indent(
           pc.yellow(
-            "(partial — ran outside captured tools; enable `meter watch --files` in v0.4 for full fidelity)",
+            "(partial — ran outside captured tools; run `meter init --hooks` for exact capture, or `meter watch --files` as a cross-vendor fallback)",
           ),
           "      ",
         ),
