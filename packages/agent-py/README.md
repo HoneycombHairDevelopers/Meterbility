@@ -2,7 +2,7 @@
 
 The Python counterpart to `@meterbility/agent`. Wire any Python LLM agent into
 Meterbility by capturing one **Step** per model call. Runs land in the same
-`~/.meterbility/meterbility.db` store the TypeScript SDK, the CLI, and the web UI
+`~/.meter/meterbility.db` store the TypeScript SDK, the CLI, and the web UI
 read from — so a Python agent shows up in `meter list` and `meter web`
 immediately, with no separate ingest step.
 
@@ -115,7 +115,7 @@ with MeterbilityTracer(project="my-app", agent="rag") as tracer:
 
 | Env var | Effect |
 |---------|--------|
-| `METERBILITY_HOME` | Override the data directory (default `~/.meterbility`) |
+| `METERBILITY_HOME` | Override the data directory (default `~/.meter`) |
 | `METERBILITY_REDACT=off` | Disable regex redaction of API keys / bearer tokens / private keys |
 
 ## Run the tests
@@ -126,4 +126,4 @@ python -m unittest discover -s tests -v
 ```
 
 Tests redirect `METERBILITY_HOME` to a tempdir per test, so they never touch
-your real `~/.meterbility` store.
+your real `~/.meter` store.

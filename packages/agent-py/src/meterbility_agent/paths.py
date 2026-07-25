@@ -2,7 +2,7 @@
 Path helpers — mirror packages/shared/src/paths.ts.
 
 The Python SDK writes into the same ``$METERBILITY_HOME`` directory as the JS
-SDK, the CLI, and the web UI. METERBILITY_HOME defaults to ``~/.meterbility``.
+SDK, the CLI, and the web UI. METERBILITY_HOME defaults to ``~/.meter``.
 """
 
 from __future__ import annotations

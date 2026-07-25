@@ -246,7 +246,7 @@ Native preferences window with 5 tabs:
 
 ### Advanced
 - Polling fallback interval (when `fs.watch` unavailable)
-- Debug logging (writes to `~/.meterbility/desktop.log`)
+- Debug logging (writes to `~/.meter/desktop.log`)
 - "Reset to defaults" button
 
 ---
@@ -295,8 +295,8 @@ Frontend stays as-is from the existing `packages/server/src/html.ts` — Tauri s
 
 ### 11.4 What stays the same
 
-- The SQLite store at `~/.meterbility/meterbility.db`
-- The blob store at `~/.meterbility/blobs/`
+- The SQLite store at `~/.meter/meterbility.db`
+- The blob store at `~/.meter/blobs/`
 - The trace format v0.2
 - The Claude Code / Codex / Cursor adapters
 - The CLI continues to work alongside Desktop (shared store)
@@ -414,12 +414,12 @@ macOS-only. Wraps the existing web UI in a Tauri shell. Adds the minimum amount 
 
 The desktop app inherits everything from a CLI/web install:
 
-- Reads `~/.meterbility/meterbility.db` directly — no schema migration
+- Reads `~/.meter/meterbility.db` directly — no schema migration
 - Continues writing to the same blob store
 - `meter` CLI keeps working alongside Desktop (they share the store via SQLite WAL)
 - If a user runs `meter web` and Desktop is also running, both serve the same data — but they share a port lock, so the second one fails fast with a clear "Desktop is already running" message
 
-Uninstalling Desktop leaves the data untouched — the web UI still works against the same `~/.meterbility/`.
+Uninstalling Desktop leaves the data untouched — the web UI still works against the same `~/.meter/`.
 
 ---
 
@@ -441,7 +441,7 @@ Uninstalling Desktop leaves the data untouched — the web UI still works agains
 **Mitigation**: pause active watching when on battery + low power mode. Show "Battery saver active" in the menu bar status. Bench target: < 1% CPU averaged over 5 minutes when idle.
 
 ### 17.6 macOS sandbox / TCC denies access to `~/.claude/`
-**Mitigation**: detect on first launch (`fs.access` test). If denied, surface a clear modal: "Meterbility needs access to your Claude Code logs. Click here to grant it in System Settings → Privacy & Security → Full Disk Access." Don't crash; degrade to read-only of `~/.meterbility/`.
+**Mitigation**: detect on first launch (`fs.access` test). If denied, surface a clear modal: "Meterbility needs access to your Claude Code logs. Click here to grant it in System Settings → Privacy & Security → Full Disk Access." Don't crash; degrade to read-only of `~/.meter/`.
 
 ---
 
