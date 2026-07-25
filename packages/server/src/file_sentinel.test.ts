@@ -512,3 +512,58 @@ test("watch --files: NaN/invalid attribution window falls back to the default", 
     ctx.cleanup();
   }
 });
+
+test("watch --files: single-path lifecycle — create → rewrite → rewrite → delete", async () => {
+  // The individual ops are covered above; this pins the ARC of one
+  // file across a run: four rows in order, blob refs chained so the
+  // before-side of each op is exactly the after-side of the previous
+  // one (replay/workingTreeAt depends on that chain), sequences
+  // strictly increasing within the watch space.
+  const ctx = await setup();
+  try {
+    const steps: Array<[string | null, string]> = [
+      ["v1\n", "create"],
+      ["v1\nv2\n", "modify"], // append-style rewrite
+      ["v3\n", "modify"], // full rewrite, shrinks the file
+      [null, "delete"],
+    ];
+    for (const [content] of steps) {
+      if (content === null) unlinkSync(join(ctx.root, "life.txt"));
+      else writeFileSync(join(ctx.root, "life.txt"), content);
+      ctx.daemon.enqueue("life.txt");
+      await ctx.daemon.flushNow();
+    }
+
+    const rows = listFileChanges(ctx.store, { runId: ctx.runId })
+      .filter((r) => r.path === "life.txt")
+      .sort((a, b) => a.sequence - b.sequence);
+    assert.deepEqual(
+      rows.map((r) => r.op),
+      ["create", "modify", "modify", "delete"],
+    );
+
+    // Blob chain: create has no before; each later before === prior after;
+    // delete has no after.
+    assert.equal(rows[0]!.before_blob_ref, undefined);
+    assert.equal(rows[1]!.before_blob_ref, rows[0]!.after_blob_ref);
+    assert.equal(rows[2]!.before_blob_ref, rows[1]!.after_blob_ref);
+    assert.equal(rows[3]!.before_blob_ref, rows[2]!.after_blob_ref);
+    assert.equal(rows[3]!.after_blob_ref, undefined);
+
+    // Sequences strictly increase (watch space, no collisions).
+    for (let i = 1; i < rows.length; i++) {
+      assert.ok(rows[i]!.sequence > rows[i - 1]!.sequence);
+    }
+
+    // Line accounting through the arc: +1, +1, then the shrink
+    // (v1+v2 → v3) counts −2/+1, and the delete removes the last line.
+    assert.equal(rows[0]!.lines_added, 1);
+    assert.equal(rows[1]!.lines_added, 1);
+    assert.equal(rows[1]!.lines_removed, 0);
+    assert.equal(rows[2]!.lines_added, 1);
+    assert.equal(rows[2]!.lines_removed, 2);
+    assert.equal(rows[3]!.lines_removed, 1);
+  } finally {
+    ctx.cleanup();
+  }
+});
