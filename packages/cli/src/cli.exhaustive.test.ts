@@ -842,7 +842,7 @@ test("ingest claude-code --cwd <empty-dir> reports 'no sessions to ingest'", () 
 
 // ── init (creates files; exercise via [path] arg) ────────────────────
 
-test("init [path] scaffolds .meterbilityignore + .meterbility/config.toml in the given dir", () => {
+test("init [path] scaffolds .meterbilityignore + .meter/config.toml in the given dir", () => {
   const fx = setupEmpty();
   try {
     const r = runCli(["init", fx.home], fx);
@@ -850,7 +850,7 @@ test("init [path] scaffolds .meterbilityignore + .meterbility/config.toml in the
     assert.ok(existsSync(join(fx.home, ".meterbilityignore")), ".meterbilityignore created");
     assert.ok(
       existsSync(join(fx.home, ".meter", "config.toml")),
-      ".meterbility/config.toml created",
+      ".meter/config.toml created",
     );
     assert.match(r.stdout, /scaffolded|created/i);
   } finally {

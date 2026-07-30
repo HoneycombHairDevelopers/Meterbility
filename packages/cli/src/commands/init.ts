@@ -11,7 +11,7 @@ import { DEFAULT_METERBILITYIGNORE } from "@meterbility/shared";
  *
  * Writes two files at the chosen root (defaults to cwd):
  *
- *   1. `.meterbility/config.toml` — the repo-level opt-in toggle. v0.3 file
+ *   1. `.meter/config.toml` — the repo-level opt-in toggle. v0.3 file
  *      capture is OFF by default until the user runs this command;
  *      that's the local-first stance the spec calls out (§10.3, mirrors
  *      v0.2 §17). Without this file, FileChange rows still emit but
@@ -29,7 +29,7 @@ export function registerInitCommand(program: Command): void {
   program
     .command("init [path]")
     .description(
-      "Scaffold .meterbility/config.toml and .meterbilityignore for v0.3 file capture",
+      "Scaffold .meter/config.toml and .meterbilityignore for v0.3 file capture",
     )
     .option(
       "--force",
@@ -80,7 +80,7 @@ export function registerInitCommand(program: Command): void {
 
       if (!opts.quiet) {
         printFileResult(".meterbilityignore", ignorePath, ignoreResult);
-        printFileResult(".meterbility/config.toml", configPath, configResult);
+        printFileResult(".meter/config.toml", configPath, configResult);
         if (hooksResult) {
           const tag =
             hooksResult === "installed"
@@ -297,12 +297,12 @@ credentials.json
 }
 
 /**
- * The opt-in `.meterbility/config.toml`. v0.3 reads `[capture.files].enabled`
+ * The opt-in `.meter/config.toml`. v0.3 reads `[capture.files].enabled`
  * to gate FileChange blob capture; the other keys are wired through
  * in v0.4 (the spec leaves them defined for forward-compat).
  */
 function renderConfigToml(): string {
-  return `# .meterbility/config.toml — per-project Meterbility configuration.
+  return `# .meter/config.toml — per-project Meterbility configuration.
 # v0.3 reads [capture.files] only; later milestones add more sections.
 
 [capture.files]

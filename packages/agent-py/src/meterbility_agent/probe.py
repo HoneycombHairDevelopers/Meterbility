@@ -47,7 +47,7 @@ from .paths import meter_home
 
 
 #: Runtime probe FSM state. Lives in the on-disk JSON record at
-#: ``~/.meterbility/probe/<run_id>.json`` and drives the live
+#: ``~/.meter/probe/<run_id>.json`` and drives the live
 #: pause/inject/resume protocol between operator and SDK.
 #:
 #: Distinct from the persisted ``Run.probe_state`` column in the TS

@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Resolve the Meterbility data directory. Honors METERBILITY_HOME, defaults to ~/.meterbility.
+ * Resolve the Meterbility data directory. Honors METERBILITY_HOME, defaults to ~/.meter.
  */
 export function meterHome(): string {
   return process.env.METERBILITY_HOME ?? join(homedir(), ".meter");

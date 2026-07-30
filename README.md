@@ -36,6 +36,7 @@ npm install -g @meterbility/cli
 meter doctor                 # verify the Claude Code surface
 meter ingest claude-code --limit 5
 meter list
+meter inspect <run-id> --at 5 --show context   # exactly what the model saw at step 5
 meter web                    # open the inspector at http://127.0.0.1:4317
 ```
 

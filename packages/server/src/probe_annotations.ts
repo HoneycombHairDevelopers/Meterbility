@@ -17,7 +17,7 @@ import { insertAnnotation, type Store } from "@meterbility/collector";
  * AFTER the FSM mutation succeeded, the FSM state is the source of
  * truth — we log + increment the counter and continue. Rolling back
  * the FSM mutation on annotation failure would be worse: the pause
- * is already persisted in `~/.meterbility/probe/<id>.json`, the SDK is
+ * is already persisted in `~/.meter/probe/<id>.json`, the SDK is
  * already blocked, and unwinding would leave the on-disk state and
  * in-memory state divergent. Annotation loss is recoverable; probe
  * desync is not.

@@ -6,7 +6,7 @@ import type { Store } from "./store.ts";
  * watched tools, default fork model, etc. without re-typing per
  * session.
  *
- * Secrets warning: values are stored in plaintext in `~/.meterbility/meterbility.db`.
+ * Secrets warning: values are stored in plaintext in `~/.meter/meterbility.db`.
  * The Settings UI surfaces this clearly. For Keychain-backed storage,
  * see SPEC-DESKTOP.md (the desktop app's job, not the web UI's).
  */
