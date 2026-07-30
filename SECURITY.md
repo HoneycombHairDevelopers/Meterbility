@@ -87,7 +87,7 @@ We won't pursue legal action against good-faith security research that:
 
 Meterbility is **local-first by default**. The web server binds to
 `127.0.0.1` and has no authentication; the SQLite store and probe
-files live under `$METERBILITY_HOME` (default `~/.meterbility`) with the user's
+files live under `$METERBILITY_HOME` (default `~/.meter`) with the user's
 own filesystem permissions.
 
 **We assume:**

@@ -3,7 +3,7 @@ Smoke tests for the Python SDK. Uses ``unittest`` (stdlib only) so the
 test suite has zero install footprint.
 
 Each test isolates ``$METERBILITY_HOME`` to a tempdir so it never touches the
-real ``~/.meterbility`` store.
+real ``~/.meter`` store.
 """
 
 from __future__ import annotations

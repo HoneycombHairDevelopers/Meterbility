@@ -2,7 +2,7 @@
 Meterbility Python SDK.
 
 Wire any Python agent into Meterbility by capturing one Step per model call.
-Runs land in the same ``~/.meterbility/meterbility.db`` SQLite store the TypeScript
+Runs land in the same ``~/.meter/meterbility.db`` SQLite store the TypeScript
 SDK, the CLI, and the web UI read from — so a Python agent shows up in
 ``meter list`` and ``meter web`` immediately, no separate ingest step.
 

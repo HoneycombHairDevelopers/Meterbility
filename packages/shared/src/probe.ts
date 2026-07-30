@@ -68,7 +68,7 @@ import { meterHome } from "./paths.ts";
 
 /**
  * Runtime probe FSM state. Lives in the on-disk JSON record at
- * `~/.meterbility/probe/<run_id>.json` and drives the live pause/inject/
+ * `~/.meter/probe/<run_id>.json` and drives the live pause/inject/
  * resume protocol between operator and SDK.
  *
  * Not to be confused with `ProbeState` on `Run` (see types.ts), which
