@@ -12,7 +12,7 @@ export default function CopyInstall() {
       <span className="d">$</span>
       <span>{CMD}</span>
       <button
-        aria-label="Copy install command"
+        aria-label={copied ? "Copied" : "Copy install command"}
         title="Copy"
         onClick={() => {
           navigator.clipboard.writeText(CMD).then(() => {
@@ -21,7 +21,8 @@ export default function CopyInstall() {
           });
         }}
       >
-        {copied ? "✓" : "⧉"}
+        <span aria-hidden="true">{copied ? "✓" : "⧉"}</span>
+        <span role="status" className="sr-only">{copied ? "Copied to clipboard" : ""}</span>
       </button>
     </span>
   );

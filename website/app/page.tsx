@@ -27,16 +27,16 @@ const FEATURES = [
 export default function Home() {
   return (
     <>
-      <nav>
+      <a className="skip-link" href="#main">Skip to content</a>
+      <nav aria-label="Main">
         <div className="wrap nav-inner">
           <a className="wordmark" href="#">
-            meterbility<span className="tick">_</span>
+            meterbility<span className="tick" aria-hidden="true">_</span>
           </a>
           <div className="nav-links">
             <a href="#devtools">DevTools</a>
             <a href="#features">Features</a>
             <a href="#pricing">Pricing</a>
-            <a href={GITHUB} target="_blank" rel="noopener">Docs</a>
             <a className="btn btn-line" href={GITHUB} target="_blank" rel="noopener">
               <GitHubIcon /> GitHub
             </a>
@@ -45,11 +45,12 @@ export default function Home() {
         </div>
       </nav>
 
+      <main id="main">
       <header className="hero">
         <div className="wrap">
           <Reveal>
             <span className="eyebrow">
-              <span className="dot" /> v0.5 · live on npm as @meterbility/cli
+              <span className="dot" aria-hidden="true" /> v0.5 · live on npm as @meterbility/cli
             </span>
             <h1>
               The{" "}
@@ -92,7 +93,7 @@ export default function Home() {
         <div className="wrap">
           <Reveal>
             <div className="sec-head">
-              <span className="sec-num">01</span>
+              <span className="sec-num" aria-hidden="true">01</span>
               <div>
                 <h2>Browser DevTools, mapped onto agents.</h2>
                 <p>
@@ -102,19 +103,19 @@ export default function Home() {
               </div>
             </div>
           </Reveal>
-          <div className="ledger">
+          <ul className="ledger">
             {PANELS.map((p, i) => (
-              <Reveal key={p.to} className="ledger-row">
-                <span className="ledger-idx">{String(i + 1).padStart(2, "0")}</span>
+              <Reveal key={p.to} as="li" className="ledger-row">
+                <span className="ledger-idx" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
                 <span className="ledger-from">{p.from}</span>
                 <span className="ledger-to">
-                  <span className="arrow">→</span>
+                  <span className="arrow" aria-hidden="true">→</span>
                   {p.to}
                 </span>
                 <span className="ledger-desc">{p.desc}</span>
               </Reveal>
             ))}
-          </div>
+          </ul>
         </div>
       </section>
 
@@ -122,7 +123,7 @@ export default function Home() {
         <div className="wrap">
           <Reveal>
             <div className="sec-head">
-              <span className="sec-num">02</span>
+              <span className="sec-num" aria-hidden="true">02</span>
               <div>
                 <h2>Full-fidelity capture. Local-first storage.</h2>
                 <p>
@@ -132,17 +133,17 @@ export default function Home() {
               </div>
             </div>
           </Reveal>
-          <div className="feats">
+          <ul className="feats">
             {FEATURES.map((f, i) => (
-              <Reveal key={f.title} className="feat">
-                <span className="feat-idx">F{String(i + 1).padStart(2, "0")}</span>
+              <Reveal key={f.title} as="li" className="feat">
+                <span className="feat-idx" aria-hidden="true">F{String(i + 1).padStart(2, "0")}</span>
                 <div>
                   <h3>{f.title}</h3>
                   <p>{f.desc}</p>
                 </div>
               </Reveal>
             ))}
-          </div>
+          </ul>
         </div>
       </section>
 
@@ -150,7 +151,7 @@ export default function Home() {
         <div className="wrap">
           <Reveal>
             <div className="sec-head">
-              <span className="sec-num">03</span>
+              <span className="sec-num" aria-hidden="true">03</span>
               <div>
                 <h2>Open core. Start free, scale when your team does.</h2>
                 <p>
@@ -218,7 +219,7 @@ export default function Home() {
         <div className="wrap">
           <div className="signup-grid">
             <Reveal className="signup-copy">
-              <span className="sec-num" style={{ display: "block", marginBottom: 14 }}>04</span>
+              <span className="sec-num" aria-hidden="true" style={{ display: "block", marginBottom: 14 }}>04</span>
               <h2>Get on the list.</h2>
               <p>
                 The Team and Enterprise tiers are in early access. Tell us about your
@@ -253,11 +254,13 @@ export default function Home() {
         </div>
       </div>
 
+      </main>
+
       <footer>
         <div className="wrap">
           <div className="foot">
             <div className="foot-col" style={{ maxWidth: 280 }}>
-              <a className="wordmark" href="#">meterbility<span className="tick">_</span></a>
+              <a className="wordmark" href="#">meterbility<span className="tick" aria-hidden="true">_</span></a>
               <p style={{ fontSize: 14, color: "var(--ink-3-solid)", marginTop: 12 }}>
                 The debugger for AI agents. Capture, inspect, probe, fork, diff.
               </p>

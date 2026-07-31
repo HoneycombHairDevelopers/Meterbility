@@ -26,17 +26,17 @@ export default function EnterpriseForm() {
       <div className="form-row">
         <div className="field">
           <label htmlFor="f-name">Name</label>
-          <input id="f-name" name="name" required placeholder="Ada Lovelace" />
+          <input id="f-name" name="name" required autoComplete="name" placeholder="Ada Lovelace" />
         </div>
         <div className="field">
           <label htmlFor="f-email">Work email</label>
-          <input id="f-email" name="email" type="email" required placeholder="ada@company.com" />
+          <input id="f-email" name="email" type="email" required autoComplete="email" placeholder="ada@company.com" />
         </div>
       </div>
       <div className="form-row">
         <div className="field">
           <label htmlFor="f-company">Company</label>
-          <input id="f-company" name="company" placeholder="Acme Corp" />
+          <input id="f-company" name="company" autoComplete="organization" placeholder="Acme Corp" />
         </div>
         <div className="field">
           <label htmlFor="f-tier">Tier</label>
@@ -58,11 +58,11 @@ export default function EnterpriseForm() {
       <button className="btn btn-solid" type="submit" style={{ width: "100%" }}>
         Request access
       </button>
-      {sent && (
-        <p className="form-ok">
-          ✓ Opening your email client — send the drafted message and we&apos;ll get back to you.
-        </p>
-      )}
+      <p className="form-ok" role="status" aria-live="polite">
+        {sent
+          ? "✓ Opening your email client — send the drafted message and we'll get back to you."
+          : ""}
+      </p>
       <p className="form-note">
         Submitting drafts an email in your mail client. Or write us directly:{" "}
         <a href="mailto:enterprise@meterbility.com">enterprise@meterbility.com</a>
