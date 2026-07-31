@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meterbility — The debugger for AI agents</title>
+<meta name="description" content="Capture every agent run, inspect every decision, pause and inject live, fork from any step, diff the trajectories. Open-source observability for Claude Code, Codex, Cursor, and custom agents.">
+<style>
+  :root {
+    /* Cerulean Design System — matches the meter web inspector UI */
+    --bg: #08090B;
+    --bg-raised: #0E1014;
+    --bg-card: #161A21;
+    --border: #252D3A;
+    --border-bright: #3A4655;
+    --text: #E8ECEF;
+    --text-dim: #9AA5B5;
+    --text-faint: #5F6B7C;
+    --accent: #38BDF8;
+    --accent-dim: #0284C0;
+    --green: #34D399;
+    --blue: #38BDF8;
+    --purple: #A78BFA;
+    --mono: "SF Mono", "Fira Code", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- Nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(10,12,16,.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-weight: 700; font-size: 17px; color: var(--text);
+  }
+  .logo:hover { text-decoration: none; }
+  .logo-mark {
+    width: 26px; height: 26px; border-radius: 6px;
+    background: linear-gradient(135deg, #38BDF8, #0369A1);
+    display: grid; place-items: center;
+    color: #04141E; font-size: 15px; font-weight: 800;
+  }
+  .nav-links { display: flex; align-items: center; gap: 28px; }
+  .nav-links a { color: var(--text-dim); font-size: 14.5px; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 18px; border-radius: 8px;
+    font-size: 14.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; transition: all .15s;
+  }
+  .btn:hover { text-decoration: none; }
+  .btn.btn-primary { background: var(--accent); color: #04141E; }
+  .btn.btn-primary:hover { background: #6FC1E1; }
+  .btn.btn-ghost { border-color: var(--border-bright); color: var(--text); background: transparent; }
+  .btn.btn-ghost:hover { border-color: var(--text-faint); background: var(--bg-raised); }
+  .gh-icon { width: 17px; height: 17px; fill: currentColor; flex-shrink: 0; }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 96px 0 72px; text-align: center; position: relative; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(600px 300px at 50% 0%, rgba(56,189,248,.08), transparent),
+      radial-gradient(800px 400px at 80% 20%, rgba(167,139,250,.05), transparent);
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 13px; color: var(--green);
+    border: 1px solid rgba(52,211,153,.3); background: rgba(52,211,153,.07);
+    padding: 5px 14px; border-radius: 100px; margin-bottom: 28px;
+  }
+  .hero h1 {
+    font-size: clamp(38px, 6vw, 62px); line-height: 1.08;
+    font-weight: 800; letter-spacing: -.02em; margin-bottom: 22px;
+  }
+  .hero h1 .accent { color: var(--accent); }
+  .hero p.sub {
+    max-width: 680px; margin: 0 auto 36px;
+    font-size: 19px; color: var(--text-dim);
+  }
+  .hero-ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 44px; }
+  .hero-ctas .btn { padding: 13px 26px; font-size: 16px; }
+  .install-line {
+    display: inline-flex; align-items: center; gap: 12px;
+    font-family: var(--mono); font-size: 15px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    padding: 12px 20px; border-radius: 10px; color: var(--text);
+  }
+  .install-line .dollar { color: var(--text-faint); user-select: none; }
+  .install-line button {
+    background: none; border: none; color: var(--text-faint); cursor: pointer;
+    font-size: 15px; padding: 2px; display: grid; place-items: center;
+  }
+  .install-line button:hover { color: var(--text); }
+  .works-with { margin-top: 40px; color: var(--text-faint); font-size: 13.5px; }
+  .works-with .chips { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+  .chip {
+    font-family: var(--mono); font-size: 12.5px; color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px;
+    background: var(--bg-raised);
+  }
+
+  /* ---------- Terminal demo ---------- */
+  .terminal-section { padding: 8px 0 80px; }
+  .terminal {
+    max-width: 780px; margin: 0 auto;
+    background: #0E1014; border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px; border-bottom: 1px solid var(--border); background: var(--bg-raised);
+  }
+  .term-dot { width: 11px; height: 11px; border-radius: 50%; }
+  .term-title { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+  .term-body {
+    padding: 20px 22px; font-family: var(--mono); font-size: 13.5px;
+    line-height: 1.75; overflow-x: auto; white-space: pre; text-align: left;
+  }
+  .t-cmd { color: var(--text); }
+  .t-cmd::before { content: "$ "; color: var(--text-faint); }
+  .t-dim { color: var(--text-faint); }
+  .t-green { color: var(--green); }
+  .t-yellow { color: var(--accent); }
+  .t-blue { color: var(--blue); }
+  .t-purple { color: var(--purple); }
+
+  /* ---------- Sections ---------- */
+  section { padding: 80px 0; }
+  .section-kicker {
+    font-family: var(--mono); font-size: 13px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+  }
+  .section-title { font-size: clamp(28px, 4vw, 38px); font-weight: 750; letter-spacing: -.015em; margin-bottom: 14px; }
+  .section-sub { color: var(--text-dim); font-size: 17px; max-width: 640px; }
+
+  /* ---------- DevTools grid ---------- */
+  .panels-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 18px; margin-top: 44px;
+  }
+  .panel-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px; transition: border-color .15s;
+  }
+  .panel-card:hover { border-color: var(--border-bright); }
+  .panel-map {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 12.5px; margin-bottom: 14px;
+  }
+  .panel-map .from { color: var(--text-faint); }
+  .panel-map .arrow { color: var(--accent); }
+  .panel-map .to { color: var(--green); }
+  .panel-card h3 { font-size: 17px; font-weight: 650; margin-bottom: 8px; }
+  .panel-card p { font-size: 14.5px; color: var(--text-dim); }
+  .panel-card code {
+    font-family: var(--mono); font-size: 13px; color: var(--accent);
+    background: rgba(56,189,248,.08); padding: 1px 6px; border-radius: 4px;
+  }
+
+  /* ---------- Feature rows ---------- */
+  .feat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 44px; }
+  .feat {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 26px;
+  }
+  .feat .icon {
+    width: 40px; height: 40px; border-radius: 9px; display: grid; place-items: center;
+    font-size: 19px; margin-bottom: 16px; background: var(--bg-raised); border: 1px solid var(--border);
+  }
+  .feat h3 { font-size: 16.5px; font-weight: 650; margin-bottom: 8px; }
+  .feat p { font-size: 14.5px; color: var(--text-dim); }
+  .feat code { font-family: var(--mono); font-size: 13px; color: var(--blue); }
+
+  /* ---------- Pricing ---------- */
+  #pricing { background: var(--bg-raised); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 48px; align-items: stretch; }
+  .tier {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 30px 28px; display: flex; flex-direction: column;
+  }
+  .tier.featured {
+    border-color: var(--accent-dim);
+    background: linear-gradient(180deg, rgba(56,189,248,.06), var(--bg-card) 40%);
+    position: relative;
+  }
+  .tier-flag {
+    position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #04141E; font-size: 11.5px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; padding: 3px 14px; border-radius: 100px;
+  }
+  .tier h3 { font-size: 19px; font-weight: 700; margin-bottom: 4px; }
+  .tier .license { font-family: var(--mono); font-size: 12px; color: var(--text-faint); margin-bottom: 18px; }
+  .tier .price { font-size: 34px; font-weight: 800; letter-spacing: -.02em; }
+  .tier .price small { font-size: 14px; font-weight: 500; color: var(--text-dim); }
+  .tier .price-note { font-size: 13px; color: var(--text-faint); margin-bottom: 22px; }
+  .tier ul { list-style: none; margin-bottom: 28px; flex-grow: 1; }
+  .tier li {
+    font-size: 14.5px; color: var(--text-dim); padding: 6px 0 6px 26px; position: relative;
+  }
+  .tier li::before { content: "✓"; position: absolute; left: 2px; color: var(--green); font-weight: 700; }
+  .tier li.soon::before { content: "◷"; color: var(--text-faint); }
+  .tier li.soon { color: var(--text-faint); }
+  .tier .btn { justify-content: center; width: 100%; }
+
+  /* ---------- Enterprise form ---------- */
+  #enterprise .form-card {
+    max-width: 620px; margin: 44px auto 0;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 36px;
+  }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .field { margin-bottom: 18px; display: flex; flex-direction: column; gap: 7px; }
+  .field label { font-size: 13.5px; font-weight: 600; color: var(--text-dim); }
+  .field input, .field select, .field textarea {
+    background: var(--bg); border: 1px solid var(--border-bright); border-radius: 8px;
+    color: var(--text); font-size: 14.5px; padding: 11px 14px; font-family: var(--sans);
+    outline: none; transition: border-color .15s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent-dim); }
+  .field textarea { resize: vertical; min-height: 88px; }
+  .form-note { font-size: 13px; color: var(--text-faint); margin-top: 14px; text-align: center; }
+  .form-status {
+    display: none; margin-top: 16px; text-align: center; font-size: 14.5px;
+    color: var(--green); font-weight: 600;
+  }
+  @media (max-width: 560px) { .form-row { grid-template-columns: 1fr; } }
+
+  /* ---------- Open source strip ---------- */
+  .oss-strip {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 34px 38px; margin-top: 8px;
+  }
+  .oss-strip h3 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+  .oss-strip p { color: var(--text-dim); font-size: 15px; max-width: 520px; }
+  .oss-stats { display: flex; gap: 28px; margin-top: 14px; flex-wrap: wrap; }
+  .stat { font-family: var(--mono); font-size: 13px; color: var(--text-faint); }
+  .stat b { display: block; font-size: 20px; color: var(--text); font-weight: 700; }
+
+  /* ---------- Footer ---------- */
+  footer { border-top: 1px solid var(--border); padding: 44px 0 56px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 32px; flex-wrap: wrap; }
+  .foot-col h4 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 14px; }
+  .foot-col a { display: block; color: var(--text-dim); font-size: 14px; margin-bottom: 9px; }
+  .foot-col a:hover { color: var(--text); text-decoration: none; }
+  .foot-bottom { margin-top: 40px; color: var(--text-faint); font-size: 13px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 720px) {
+    .nav-links a:not(.btn) { display: none; }
+    section { padding: 56px 0; }
+    .hero { padding: 64px 0 48px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="logo" href="#"><span class="logo-mark">M</span>meterbility</a>
+    <div class="nav-links">
+      <a href="#devtools">DevTools</a>
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="https://github.com/HoneycombHairDevelopers/Meterbility" target="_blank" rel="noopener">Docs</a>
+      <a class="btn btn-ghost" href="https://github.com/HoneycombHairDevelopers/Meterbility" target="_blank" rel="noopener">
+        <svg class="gh-icon" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+      <a class="btn btn-primary" href="#enterprise">Get Enterprise</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-badge">● v0.5 — live on npm as @meterbility/cli</div>
+    <h1>The <span class="accent">debugger</span><br>for AI agents.</h1>
+    <p class="sub">Capture every run. Inspect every decision. Pause and inject live. Fork from any step. Diff the trajectories. Meterbility turns agent runs into a queryable, replayable, forkable corpus.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="#pricing">Start free — it's open source</a>
+      <a class="btn btn-ghost" href="https://github.com/HoneycombHairDevelopers/Meterbility" target="_blank" rel="noopener">
+        <svg class="gh-icon" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+    <div class="install-line">
+      <span class="dollar">$</span>
+      <span id="install-cmd">npm install -g @meterbility/cli</span>
+      <button onclick="copyInstall(this)" title="Copy" aria-label="Copy install command">⧉</button>
+    </div>
+    <div class="works-with">
+      Works with
+      <div class="chips">
+        <span class="chip">Claude Code</span>
+        <span class="chip">Codex CLI</span>
+        <span class="chip">Cursor</span>
+        <span class="chip">Anthropic proxy</span>
+        <span class="chip">OpenAI proxy</span>
+        <span class="chip">TypeScript SDK</span>
+        <span class="chip">Python SDK</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="terminal-section">
+  <div class="wrap">
+    <div class="terminal">
+      <div class="term-bar">
+        <span class="term-dot" style="background:#ff5f57"></span>
+        <span class="term-dot" style="background:#febc2e"></span>
+        <span class="term-dot" style="background:#28c840"></span>
+        <span class="term-title">meter — zsh</span>
+      </div>
+      <div class="term-body"><span class="t-cmd">meter ingest claude-code --limit 5</span>
+<span class="t-green">✓</span> <span class="t-dim">ingested 5 sessions · 342 steps · 1.2M tokens</span>
+
+<span class="t-cmd">meter list</span>
+<span class="t-blue">run_9f3c</span>  <span class="t-dim">claude-code</span>  fix-auth-bug        <span class="t-yellow">$1.84</span>  <span class="t-dim">96 steps</span>
+<span class="t-blue">run_a210</span>  <span class="t-dim">claude-code</span>  add-billing-page    <span class="t-yellow">$0.62</span>  <span class="t-dim">41 steps</span>
+
+<span class="t-cmd">meter fork run_9f3c --step 44 --continue live</span>
+<span class="t-green">✓</span> <span class="t-dim">forked → </span><span class="t-purple">run_9f3c.fork1</span> <span class="t-dim">(deterministic prefix, live suffix)</span>
+
+<span class="t-cmd">meter diff run_9f3c run_9f3c.fork1</span>
+<span class="t-dim">step 44:</span> <span class="t-yellow">tool_call diverged</span> <span class="t-dim">— Edit(auth.ts) vs Bash(git revert)</span>
+
+<span class="t-cmd">meter web</span>
+<span class="t-green">✓</span> <span class="t-dim">inspector live at</span> <span class="t-blue">http://127.0.0.1:4317</span></div>
+    </div>
+  </div>
+</div>
+
+<section id="devtools">
+  <div class="wrap">
+    <div class="section-kicker">The mental model</div>
+    <h2 class="section-title">Browser DevTools, mapped onto agents.</h2>
+    <p class="section-sub">You already know how to debug a web page. Meterbility gives your agents the same five panels — all shipping today.</p>
+    <div class="panels-grid">
+      <div class="panel-card">
+        <div class="panel-map"><span class="from">Elements</span><span class="arrow">→</span><span class="to">Context Viewer</span></div>
+        <h3>See what the model saw</h3>
+        <p>The fully resolved context for any step — system prompt, history, tool schemas — at <code>/contexts/:id</code>.</p>
+      </div>
+      <div class="panel-card">
+        <div class="panel-map"><span class="from">Sources</span><span class="arrow">→</span><span class="to">Step Inspector</span></div>
+        <h3>Step through, fork from here</h3>
+        <p><code>meter inspect</code> walks every decision; <code>meter fork</code> branches a new trajectory from any step.</p>
+      </div>
+      <div class="panel-card">
+        <div class="panel-map"><span class="from">Network</span><span class="arrow">→</span><span class="to">I/O Inspector</span></div>
+        <h3>Every request and result</h3>
+        <p>Decision blobs, tool results, and files changed — including Bash side-effects other tools can't see.</p>
+      </div>
+      <div class="panel-card">
+        <div class="panel-map"><span class="from">Performance</span><span class="arrow">→</span><span class="to">Cost Timeline</span></div>
+        <h3>Cost, tokens, latency</h3>
+        <p>Per-step and per-run timelines. Know exactly where the money and the time went.</p>
+      </div>
+      <div class="panel-card">
+        <div class="panel-map"><span class="from">Console</span><span class="arrow">→</span><span class="to">Live Probe</span></div>
+        <h3>Pause. Inject. Resume.</h3>
+        <p>An operator surface for running agents — <code>meter probe</code> or the web panel. Intervene mid-run.</p>
+      </div>
+      <div class="panel-card">
+        <div class="panel-map"><span class="from">git</span><span class="arrow">→</span><span class="to">Trajectory Diff</span></div>
+        <h3>Diff the timelines</h3>
+        <p><code>meter diff</code> compares two runs step-by-step and pinpoints exactly where behavior diverged.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="section-kicker">What ships today</div>
+    <h2 class="section-title">Full-fidelity capture. Local-first storage.</h2>
+    <p class="section-sub">Everything runs on your machine: SQLite plus content-addressed blobs. Add Postgres when you need multi-machine sync.</p>
+    <div class="feat-grid">
+      <div class="feat">
+        <div class="icon">🎥</div>
+        <h3>Capture every surface</h3>
+        <p>Claude Code JSONL hooks, Codex CLI &amp; Desktop, Cursor composer, and Anthropic/OpenAI proxies via <code>meter proxy</code>.</p>
+      </div>
+      <div class="feat">
+        <div class="icon">🕵️</div>
+        <h3>Bash side-effect capture</h3>
+        <p>What tool-call inspection can't see — <code>sed</code>, <code>mv</code>, build scripts — lands as file-change rows via hooks or the FileSentinel.</p>
+      </div>
+      <div class="feat">
+        <div class="icon">🔀</div>
+        <h3>Fork &amp; replay</h3>
+        <p>Deterministic prefix replay with a live suffix. Continue with <code>--continue simulate|live</code> for multi-step what-ifs.</p>
+      </div>
+      <div class="feat">
+        <div class="icon">🧪</div>
+        <h3>Regression suite</h3>
+        <p>Promote a good run to a canonical, add assertions, and catch behavioral drift with <code>meter test</code>.</p>
+      </div>
+      <div class="feat">
+        <div class="icon">📦</div>
+        <h3>SDKs for custom agents</h3>
+        <p><code>@meterbility/agent</code> for TypeScript and <code>meterbility-agent</code> for Python (stdlib-only). One-line Anthropic tracing.</p>
+      </div>
+      <div class="feat">
+        <div class="icon">🔒</div>
+        <h3>Sensitive-path redaction</h3>
+        <p>Edits to <code>.env</code>, keys, and credential stores record the fact of the change — path, op, size — never the contents.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="wrap">
+    <div class="section-kicker">Pricing</div>
+    <h2 class="section-title">Open core. Start free, scale when your team does.</h2>
+    <p class="section-sub">The full single-operator product is MIT-licensed, forever. Paid tiers add multi-tenant fleet orchestration and the hosted cloud.</p>
+    <div class="tiers">
+      <div class="tier">
+        <h3>Open Source</h3>
+        <div class="license">MIT license</div>
+        <div class="price">$0</div>
+        <div class="price-note">free forever, run it anywhere</div>
+        <ul>
+          <li>All capture surfaces (Claude Code, Codex, Cursor, proxies)</li>
+          <li>Terminal + web inspector, Live Probe</li>
+          <li>Fork, replay, diff, regression suite</li>
+          <li>TypeScript &amp; Python SDKs</li>
+          <li>Local SQLite + optional Postgres sync</li>
+          <li>1,290+ tests, zero copyleft deps</li>
+        </ul>
+        <a class="btn btn-ghost" href="https://github.com/HoneycombHairDevelopers/Meterbility" target="_blank" rel="noopener">
+          <svg class="gh-icon" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          Get started on GitHub
+        </a>
+      </div>
+      <div class="tier featured">
+        <div class="tier-flag">For teams</div>
+        <h3>Team</h3>
+        <div class="license">Elastic License 2.0 (ee/)</div>
+        <div class="price">Early access</div>
+        <div class="price-note">join the design-partner program</div>
+        <ul>
+          <li>Everything in Open Source</li>
+          <li class="soon">Multi-tenant fleet orchestration</li>
+          <li class="soon">SSO &amp; role-based access control</li>
+          <li class="soon">Audit logs</li>
+          <li class="soon">Long-retention storage modules</li>
+          <li>Direct line to the maintainers</li>
+        </ul>
+        <a class="btn btn-primary" href="#enterprise" onclick="presetTier('Team')">Sign up for Team</a>
+      </div>
+      <div class="tier">
+        <h3>Enterprise</h3>
+        <div class="license">Commercial · hosted cloud</div>
+        <div class="price">Custom</div>
+        <div class="price-note">tailored to your fleet</div>
+        <ul>
+          <li>Everything in Team</li>
+          <li class="soon">Hosted cloud — zero-ops backend</li>
+          <li class="soon">Compliance &amp; procurement support</li>
+          <li class="soon">SLAs &amp; priority support</li>
+          <li class="soon">Custom capture adapters</li>
+          <li>Shape the roadmap with us</li>
+        </ul>
+        <a class="btn btn-primary" href="#enterprise" onclick="presetTier('Enterprise')">Sign up for Enterprise</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="enterprise">
+  <div class="wrap">
+    <div class="section-kicker" style="text-align:center">Enterprise &amp; Team signup</div>
+    <h2 class="section-title" style="text-align:center">Get on the list.</h2>
+    <p class="section-sub" style="text-align:center; margin: 0 auto;">The Team and Enterprise tiers are in early access. Tell us about your fleet and we'll reach out to set you up as a design partner.</p>
+    <form class="form-card" id="ent-form" onsubmit="return submitEnterprise(event)">
+      <div class="form-row">
+        <div class="field">
+          <label for="f-name">Name</label>
+          <input id="f-name" name="name" required placeholder="Ada Lovelace">
+        </div>
+        <div class="field">
+          <label for="f-email">Work email</label>
+          <input id="f-email" name="email" type="email" required placeholder="ada@company.com">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="f-company">Company</label>
+          <input id="f-company" name="company" placeholder="Acme Corp">
+        </div>
+        <div class="field">
+          <label for="f-tier">Tier</label>
+          <select id="f-tier" name="tier">
+            <option>Enterprise</option>
+            <option>Team</option>
+            <option>Not sure yet</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-notes">What are you running?</label>
+        <textarea id="f-notes" name="notes" placeholder="e.g. 40 engineers on Claude Code, custom agents in production, need SSO + audit logs…"></textarea>
+      </div>
+      <button class="btn btn-primary" type="submit" style="width:100%; justify-content:center; padding: 13px;">Request access</button>
+      <div class="form-status" id="form-status">✓ Opening your email client — send the drafted message and we'll get back to you.</div>
+      <p class="form-note">Or email us directly at <a href="mailto:enterprise@meterbility.com">enterprise@meterbility.com</a></p>
+    </form>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="oss-strip">
+      <div>
+        <h3>Built in the open.</h3>
+        <p>MIT-licensed core, permissive dependencies only, and a fresh-laptop test script that proves the install path on every CI run.</p>
+        <div class="oss-stats">
+          <div class="stat"><b>1,290+</b>tests, two runtimes</div>
+          <div class="stat"><b>11</b>@meterbility/* packages</div>
+          <div class="stat"><b>0</b>copyleft deps</div>
+          <div class="stat"><b>v0.5</b>shipping now</div>
+        </div>
+      </div>
+      <a class="btn btn-ghost" href="https://github.com/HoneycombHairDevelopers/Meterbility" target="_blank" rel="noopener" style="flex-shrink:0">
+        <svg class="gh-icon" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        Star on GitHub
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-inner">
+      <div class="foot-col" style="max-width: 280px;">
+        <a class="logo" href="#" style="margin-bottom: 12px;"><span class="logo-mark">M</span>meterbility</a>
+        <p style="font-size: 13.5px; color: var(--text-faint);">The debugger for AI agents. Capture, inspect, probe, fork, diff.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Product</h4>
+        <a href="#devtools">DevTools panels</a>
+        <a href="#features">Features</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#enterprise">Enterprise signup</a>
+      </div>
+      <div class="foot-col">
+        <h4>Developers</h4>
+        <a href="https://github.com/HoneycombHairDevelopers/Meterbility" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://www.npmjs.com/package/@meterbility/cli" target="_blank" rel="noopener">npm — @meterbility/cli</a>
+        <a href="https://pypi.org/project/meterbility-agent/" target="_blank" rel="noopener">PyPI — meterbility-agent</a>
+        <a href="https://github.com/HoneycombHairDevelopers/Meterbility/blob/main/docs/getting-started.md" target="_blank" rel="noopener">Getting started</a>
+        <a href="https://github.com/HoneycombHairDevelopers/Meterbility/blob/main/docs/architecture.md" target="_blank" rel="noopener">Architecture</a>
+      </div>
+      <div class="foot-col">
+        <h4>Project</h4>
+        <a href="https://github.com/HoneycombHairDevelopers/Meterbility/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
+        <a href="https://github.com/HoneycombHairDevelopers/Meterbility/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+        <a href="https://github.com/HoneycombHairDevelopers/Meterbility/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+        <a href="https://github.com/HoneycombHairDevelopers/Meterbility/blob/main/LICENSES-third-party.md" target="_blank" rel="noopener">Third-party licenses</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Meterbility. MIT (core) · ELv2 (ee/).</span>
+      <span style="font-family: var(--mono);">npm install -g @meterbility/cli</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+function copyInstall(btn) {
+  navigator.clipboard.writeText(document.getElementById('install-cmd').textContent).then(() => {
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = '⧉'; }, 1500);
+  });
+}
+function presetTier(tier) {
+  document.getElementById('f-tier').value = tier;
+}
+function submitEnterprise(e) {
+  e.preventDefault();
+  const f = e.target;
+  const subject = encodeURIComponent(`Meterbility ${f.tier.value} — access request from ${f.company.value || f.name.value}`);
+  const body = encodeURIComponent(
+    `Name: ${f.name.value}\nEmail: ${f.email.value}\nCompany: ${f.company.value}\nTier: ${f.tier.value}\n\nContext:\n${f.notes.value}`
+  );
+  window.location.href = `mailto:enterprise@meterbility.com?subject=${subject}&body=${body}`;
+  document.getElementById('form-status').style.display = 'block';
+  return false;
+}
+</script>
+
+</body>
+</html>
