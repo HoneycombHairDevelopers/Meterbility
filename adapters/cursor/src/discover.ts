@@ -120,3 +120,26 @@ export async function readWorkspaceCwd(
 export function defaultGlobalDbPath(): string {
   return cursorPaths().globalDb;
 }
+
+/**
+ * Resolve a workspaceId (from composerHeaders) to its folder path via
+ * workspaceStorage/<id>/workspace.json. Epoch-ms ids and empty windows
+ * have no workspace.json and resolve to undefined.
+ */
+export async function workspaceCwdById(
+  workspaceId: string,
+): Promise<string | undefined> {
+  const wsJson = join(cursorPaths().workspaceStorage, workspaceId, "workspace.json");
+  if (!existsSync(wsJson)) return undefined;
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const buf = await readFile(wsJson, "utf-8");
+    const obj = JSON.parse(buf) as { folder?: string };
+    if (typeof obj.folder === "string") {
+      return decodeURIComponent(obj.folder.replace(/^file:\/\//, ""));
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}

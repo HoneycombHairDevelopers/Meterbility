@@ -14,6 +14,7 @@
     "@meterbility/shared": "^0.5.0",
     "@meterbility/spec": "^0.5.0",
     "@meterbility/collector": "^0.5.0",
+    "@meterbility/claude-code-adapter": "^0.5.0",
     "better-sqlite3": "^11.3.0"
   },
   "description": "Cursor composer capture adapter for Meterbility",

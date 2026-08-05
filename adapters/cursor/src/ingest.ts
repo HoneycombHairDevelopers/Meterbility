@@ -10,6 +10,7 @@ import type {
   TokenUsage,
 } from "@meterbility/shared";
 import { hashJson } from "@meterbility/shared";
+import { costCents } from "@meterbility/spec";
 import {
   getRunBySessionId,
   insertRun,
@@ -21,6 +22,7 @@ import {
   upsertProjectByCwd,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
+import { extractCursorFileChanges } from "./file_changes.ts";
 import { CursorDb, isMeaningfulComposer } from "./parser.ts";
 import {
   bubbleText,
@@ -126,16 +128,39 @@ export async function ingestCursorGlobal(
       };
     }
 
-    const cwd = opts.cwd ?? "(cursor)";
-    const project = upsertProjectByCwd(store, cwd, "cursor");
-    const agent = upsertAgent(store, project.project_id, "cursor");
+    // Per-composer cwd: composerHeaders.workspaceId → workspace.json
+    // folder. Falls back to the "(cursor)" placeholder only for
+    // ephemeral windows with no workspace — this is what lets the file
+    // sentinel and project grouping work for Cursor runs.
+    const { workspaceCwdById } = await import("./discover.ts");
+    const projectCache = new Map<
+      string,
+      { projectId: string; agentId: string }
+    >();
+    const resolveProject = (cwd: string) => {
+      let hit = projectCache.get(cwd);
+      if (!hit) {
+        const project = upsertProjectByCwd(store, cwd, "cursor");
+        const agent = upsertAgent(store, project.project_id, "cursor");
+        hit = { projectId: project.project_id, agentId: agent.agent_id };
+        projectCache.set(cwd, hit);
+      }
+      return hit;
+    };
 
     let composersIngested = 0;
     let stepsAdded = 0;
     for (const comp of composers) {
+      let cwd = opts.cwd;
+      if (!cwd) {
+        const wsId = cursor.workspaceIdForComposer(comp.composerId);
+        cwd = wsId ? await workspaceCwdById(wsId) : undefined;
+      }
+      cwd ??= "(cursor)";
+      const { projectId, agentId } = resolveProject(cwd);
       const result = await ingestOneComposer(store, cursor, comp, {
-        projectId: project.project_id,
-        agentId: agent.agent_id,
+        projectId,
+        agentId,
         cwd,
       });
       composersIngested += 1;
@@ -271,6 +296,21 @@ async function ingestOneComposer(
         cached_read: 0,
         cache_creation: 0,
       };
+      const model = modelFromComposer(comp) ?? "cursor";
+      // Price whatever local token data exists. The model is usually the
+      // literal "default" (Cursor never persists the served model
+      // locally), so this stays cost:approx — but a real dollar estimate
+      // beats a hardcoded zero, and Admin API data supersedes it when
+      // the usage puller is configured.
+      const priced =
+        tokens.input + tokens.output > 0
+          ? costCents(model, {
+              input: tokens.input,
+              output: tokens.output,
+              cached_read: 0,
+              cache_creation: 0,
+            })
+          : undefined;
 
       const stepId = `stp_${randomUUID()}`;
       const step: Step = {
@@ -279,14 +319,14 @@ async function ingestOneComposer(
         parent_step_id: prevStepId,
         sequence,
         timestamp: bubble.createdAt ?? new Date().toISOString(),
-        model: modelFromComposer(comp) ?? "cursor",
+        model,
         context_snapshot_id: snapshot.id,
         decision_ref: decisionRef,
         action,
         outcome,
         tokens,
         latency_ms: 0,
-        cost_cents: 0,
+        cost_cents: priced?.cost_cents ?? 0,
         tags: ["cost:approx", "cursor"],
         status:
           outcome.status === "error"
@@ -296,6 +336,14 @@ async function ingestOneComposer(
               : "ok",
       };
       insertStep(store, step);
+      await extractCursorFileChanges(
+        store,
+        cursor,
+        comp.composerId,
+        bubble,
+        runId,
+        stepId,
+      );
       prevStepId = stepId;
       sequence += 1;
       stepsAdded += 1;

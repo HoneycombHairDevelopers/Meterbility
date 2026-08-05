@@ -33,9 +33,20 @@ function buildCursorDb(args: {
       text?: string;
       createdAt?: string;
       tokens?: { input: number; output: number };
-      tool?: { name: string; rawArgs?: string; result?: unknown; status?: string };
+      tool?: {
+        name: string;
+        rawArgs?: string;
+        params?: string;
+        result?: unknown;
+        status?: string;
+        additionalData?: unknown;
+      };
     }>;
   }>;
+  /** Arbitrary extra KV rows (content blobs, fate ledgers, ...). */
+  extraKv?: Record<string, string>;
+  /** Rows for the composerHeaders relational table (workspace links). */
+  composerHeaders?: Array<{ composerId: string; workspaceId: string }>;
 }): string {
   const dir = mkdtempSync(join(tmpdir(), "cursor-fixture-"));
   const path = join(dir, "state.vscdb");
@@ -43,7 +54,22 @@ function buildCursorDb(args: {
   db.exec(`
     CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
+  if (args.composerHeaders) {
+    db.exec(`
+      CREATE TABLE composerHeaders (
+        composerId TEXT PRIMARY KEY,
+        workspaceId TEXT,
+        createdAt INTEGER,
+        lastUpdatedAt INTEGER
+      );
+    `);
+    const ch = db.prepare(
+      "INSERT INTO composerHeaders(composerId, workspaceId) VALUES (?, ?)",
+    );
+    for (const h of args.composerHeaders) ch.run(h.composerId, h.workspaceId);
+  }
   const insert = db.prepare("INSERT INTO cursorDiskKV(key, value) VALUES (?, ?)");
+  for (const [k, v] of Object.entries(args.extraKv ?? {})) insert.run(k, v);
   for (const c of args.composers) {
     const composerData = {
       _v: 10,
@@ -73,8 +99,10 @@ function buildCursorDb(args: {
           name: b.tool.name,
           tool: 0,
           rawArgs: b.tool.rawArgs ?? "{}",
+          params: b.tool.params,
           status: b.tool.status ?? "completed",
           result: b.tool.result,
+          additionalData: b.tool.additionalData,
         };
       }
       insert.run(
@@ -230,5 +258,193 @@ test("limit + since options filter composers", async () => {
   const runs = listRuns(store);
   assert.equal(runs.length, 1);
   assert.equal(runs[0]!.title, "new");
+  store.close();
+});
+
+// ---------------------------------------------------------------------------
+// Cross-vendor parity (2026-08-04): file-change extraction, pricing,
+// workspace cwd resolution. Fixture shapes mirror the audited real DB.
+// ---------------------------------------------------------------------------
+
+test("parity: search_replace produces a partial_diff file_change with patch_text", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-sr",
+        name: "fix bug",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tokens: { input: 500, output: 40 },
+            tool: {
+              name: "search_replace",
+              params: JSON.stringify({ relativeWorkspacePath: "src/app.ts" }),
+              result: JSON.stringify({
+                diff: {
+                  chunks: [
+                    {
+                      diffString: "@@ -1,2 +1,2 @@\n-const a = 1\n+const a = 2",
+                      linesAdded: 1,
+                      linesRemoved: 1,
+                    },
+                  ],
+                },
+              }),
+              additionalData: { codeblockId: "cb-1" },
+            },
+          },
+        ],
+      },
+    ],
+    extraKv: {
+      "codeBlockPartialInlineDiffFates:comp-sr:cb-1": JSON.stringify({
+        fates: [{ fate: "accepted" }, { fate: "accepted" }],
+      }),
+    },
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0]!.path, "src/app.ts");
+  assert.equal(fc[0]!.op, "modify");
+  assert.equal(fc[0]!.partial_diff, 1);
+  assert.ok(String(fc[0]!.patch_text).includes("+const a = 2"));
+  assert.equal(fc[0]!.lines_added, 1);
+  assert.equal(fc[0]!.lines_removed, 1);
+  assert.match(String(fc[0]!.normalizer_notes), /fates\{accepted:2\}/);
+
+  // Pricing: tokens present → cost computed (approx, but nonzero).
+  const steps = listSteps(store, runs[0]!.run_id);
+  const toolStep = steps.find((s) => s.action.kind === "tool_call")!;
+  assert.ok(toolStep.cost_cents > 0, "local tokens are priced, not zeroed");
+  store.close();
+});
+
+test("parity: edit_file_v2 resolves content blobs into full before/after file_change", async () => {
+  freshMeterbilityHome();
+  const before = "line one\nline two\n";
+  const after = "line one\nline two changed\nline three\n";
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-efv2",
+        name: "edit file",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "edit_file_v2",
+              params: JSON.stringify({ relativeWorkspacePath: "notes.md" }),
+              result: JSON.stringify({
+                beforeContentId: "sha-before",
+                afterContentId: "sha-after",
+              }),
+            },
+          },
+        ],
+      },
+    ],
+    extraKv: {
+      "composer.content.sha-before": before,
+      "composer.content.sha-after": after,
+    },
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0]!.op, "modify");
+  assert.equal(fc[0]!.partial_diff, 0, "full before/after recovered");
+  assert.ok(fc[0]!.before_blob_ref);
+  assert.ok(fc[0]!.after_blob_ref);
+  assert.equal(fc[0]!.line_count_before, 2);
+  assert.equal(fc[0]!.line_count_after, 3);
+  assert.ok((fc[0]!.lines_added as number) >= 1);
+  store.close();
+});
+
+test("parity: composer cwd resolves via composerHeaders + workspace.json", async () => {
+  freshMeterbilityHome();
+  // Fake Cursor user dir with a workspace mapping.
+  const userDir = mkdtempSync(join(tmpdir(), "cursor-user-"));
+  process.env.CURSOR_USER_DIR = userDir;
+  const wsDir = join(userDir, "workspaceStorage", "ws-hash-1");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  mkdirSync(wsDir, { recursive: true });
+  writeFileSync(
+    join(wsDir, "workspace.json"),
+    JSON.stringify({ folder: "file:///tmp/real-project" }),
+  );
+
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-ws",
+        name: "workspace test",
+        headers: [{ bubbleId: "u1", type: 1 }],
+        bubbles: [{ bubbleId: "u1", type: 1, text: "hello" }],
+      },
+    ],
+    composerHeaders: [{ composerId: "comp-ws", workspaceId: "ws-hash-1" }],
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  assert.equal(runs[0]!.cwd, "/tmp/real-project", "no more (cursor) placeholder");
+  delete process.env.CURSOR_USER_DIR;
+  store.close();
+});
+
+test("parity: pruned content blobs degrade to fact-only partial rows", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-pruned",
+        name: "pruned",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "edit_file_v2",
+              params: JSON.stringify({ relativeWorkspacePath: "gone.ts" }),
+              result: JSON.stringify({
+                beforeContentId: "sha-x",
+                afterContentId: "sha-y",
+              }),
+            },
+          },
+        ],
+      },
+    ],
+    // No composer.content rows — Cursor's retention pruned them.
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0]!.partial_diff, 1);
+  assert.match(String(fc[0]!.normalizer_notes), /pruned/);
   store.close();
 });

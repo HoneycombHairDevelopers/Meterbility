@@ -43,9 +43,18 @@ export function registerInitCommand(program: Command): void {
       "--hooks",
       "Also install Claude Code PreToolUse/PostToolUse hooks for exact Bash file capture (meter capture)",
     )
+    .option(
+      "--cursor-hooks",
+      "Also install Cursor hooks (afterFileEdit/beforeShellExecution/stop → meter cursor-hook) in the project's .cursor/hooks.json",
+    )
     .action(async (
       pathArg: string | undefined,
-      opts: { force?: boolean; quiet?: boolean; hooks?: boolean },
+      opts: {
+        force?: boolean;
+        quiet?: boolean;
+        hooks?: boolean;
+        cursorHooks?: boolean;
+      },
     ) => {
       const root = resolve(pathArg ?? process.cwd());
       if (!existsSync(root)) {
@@ -77,6 +86,10 @@ export function registerInitCommand(program: Command): void {
       if (opts.hooks) {
         hooksResult = await installClaudeHooks(root);
       }
+      let cursorHooksResult: HooksInstallResult | undefined;
+      if (opts.cursorHooks) {
+        cursorHooksResult = await installCursorHooks(root);
+      }
 
       if (!opts.quiet) {
         printFileResult(".meterbilityignore", ignorePath, ignoreResult);
@@ -89,6 +102,17 @@ export function registerInitCommand(program: Command): void {
           console.log(
             `  ${tag}  ${pc.cyan("meter capture hooks")} ${pc.dim(
               `(${join(root, ".claude", "settings.json")})`,
+            )}`,
+          );
+        }
+        if (cursorHooksResult) {
+          const tag =
+            cursorHooksResult === "installed"
+              ? pc.green("installed")
+              : pc.dim("already present");
+          console.log(
+            `  ${tag}  ${pc.cyan("meter cursor-hook hooks")} ${pc.dim(
+              `(${join(root, ".cursor", "hooks.json")})`,
             )}`,
           );
         }
@@ -135,6 +159,78 @@ type HooksInstallResult = "installed" | "already-present";
  * "meter capture" is already registered for that event. Idempotent by
  * the same check.
  */
+/**
+ * Merge `meter cursor-hook` entries into the project's
+ * `.cursor/hooks.json` (Cursor ≥1.7 Hooks):
+ *
+ *   afterFileEdit        → meter cursor-hook   (tool-attributed file capture)
+ *   beforeShellExecution → meter cursor-hook   (command capture; always allows)
+ *   stop                 → meter cursor-hook   (run completion)
+ *
+ * Non-destructive and idempotent by the same rules as the Claude Code
+ * installer: existing hook entries are preserved; we append only when
+ * no command containing "meter cursor-hook" is already registered for
+ * that event, and refuse to touch files with unexpected shapes.
+ */
+export async function installCursorHooks(root: string): Promise<HooksInstallResult> {
+  const dir = join(root, ".cursor");
+  const path = join(dir, "hooks.json");
+  mkdirSync(dir, { recursive: true });
+
+  let config: Record<string, unknown> = { version: 1 };
+  if (existsSync(path)) {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
+      if (!isPlainObject(parsed)) throw new Error("not an object");
+      config = parsed;
+    } catch {
+      console.error(
+        pc.yellow(
+          `meter init: ${path} is not a valid JSON object — skipped Cursor hook install. Fix the file and re-run with --cursor-hooks.`,
+        ),
+      );
+      return "already-present";
+    }
+  }
+
+  if (config.hooks !== undefined && !isPlainObject(config.hooks)) {
+    console.error(
+      pc.yellow(
+        `meter init: ${path} has an unexpected "hooks" shape (expected object) — skipped Cursor hook install.`,
+      ),
+    );
+    return "already-present";
+  }
+  config.version ??= 1;
+  const hooks = (config.hooks ??= {}) as Record<string, unknown>;
+
+  let changed = false;
+  for (const event of ["afterFileEdit", "beforeShellExecution", "stop"]) {
+    const existing = hooks[event];
+    if (existing !== undefined && !Array.isArray(existing)) {
+      console.error(
+        pc.yellow(
+          `meter init: ${path} has an unexpected "${event}" shape (expected array) — skipped Cursor hook install.`,
+        ),
+      );
+      return "already-present";
+    }
+    const entries = (hooks[event] ??= []) as Array<Record<string, unknown>>;
+    const present = entries.some(
+      (e) =>
+        typeof e?.command === "string" && e.command.includes("meter cursor-hook"),
+    );
+    if (!present) {
+      entries.push({ command: "meter cursor-hook" });
+      changed = true;
+    }
+  }
+
+  if (!changed) return "already-present";
+  await writeFile(path, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  return "installed";
+}
+
 export async function installClaudeHooks(root: string): Promise<HooksInstallResult> {
   const dir = join(root, ".claude");
   const path = join(dir, "settings.json");
