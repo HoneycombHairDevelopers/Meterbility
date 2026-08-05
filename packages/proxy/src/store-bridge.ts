@@ -50,15 +50,17 @@ export function ensureRun(
     title?: string;
     cwd?: string;
     git_branch?: string;
+    source_session_id?: string;
   } = {},
 ): void {
-  const project = upsertProjectByCwd(store, spec.project, spec.project);
+  const project = upsertProjectByCwd(store, opts.cwd ?? spec.project, spec.project);
   const agent = upsertAgent(store, project.project_id, spec.agent);
   const run: Run = {
     run_id,
     agent_id: agent.agent_id,
     project_id: project.project_id,
     source_runtime: "proxy",
+    source_session_id: opts.source_session_id,
     title: opts.title ?? "(proxy capture)",
     status: "in_progress",
     started_at: new Date().toISOString(),

@@ -255,6 +255,11 @@ async function persistCapture(args: PersistArgs): Promise<void> {
       title:
         firstUserPreview(parsed.history) ??
         `${args.provider} · ${parsed.model}`,
+      // Edge-supplied attribution (stripped before forwarding upstream,
+      // same as the other x-meterbility-* annotations).
+      cwd: args.headers.get("x-meterbility-cwd") ?? undefined,
+      git_branch: args.headers.get("x-meterbility-git-branch") ?? undefined,
+      source_session_id: explicitRunId,
     });
     args.seenRuns.add(runResolution.run_id);
   }

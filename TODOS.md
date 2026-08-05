@@ -68,6 +68,17 @@ steps; the step-insert loop in the adapter is unwrapped, so one shifted
 step would abort that session's ingest each tick. Wrap per-row like the
 file_change loop or resolve shifts two-phase.
 
+### LiveInspector poll does O(table) work per tick at rest
+**Priority:** P3
+Every 1.5s tick re-scans session files and runs the `file_change`
+GROUP BY arrival query (`live.ts:465`) regardless of activity; cost
+grows with table size and runs forever on an idle team server. After
+the team-MVP's ingest-triggered eventing (eng review 2026-08-04, D3=3B)
+is verified in a pilot, the poll is only a fallback: add an incremental
+cursor (only rows past last-seen id) and adaptive interval backoff when
+eventing is healthy. Blocked by: eventing landing and proving out —
+do not touch the live path during the demo window.
+
 ## Refactors (DRY)
 
 ### Shared helpers for the two capture paths

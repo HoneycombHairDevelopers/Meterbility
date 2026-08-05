@@ -117,6 +117,11 @@ export interface BuildAppOptions {
   live?: LiveInspector;
 }
 
+/** Only the SDKs read probe files and ack pause requests (§4.5). */
+function isProbeCapableRuntime(rt: Run["source_runtime"]): boolean {
+  return rt === "sdk-ts" || rt === "sdk-py";
+}
+
 export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   const app = new Hono();
   const controller = opts.controller ?? new LiveController(store);
@@ -305,7 +310,10 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     // entire run page — the rest of the page renders from the already-
     // open DB handle and is perfectly serviceable.
     let probePanel = "";
-    if (run.status === "in_progress") {
+    // Probe gating: only the SDKs implement the pause/ack protocol.
+    // Offering Pause on transcript/proxy runs wedges them in
+    // pause_requested forever (nothing is on the other end to ack).
+    if (run.status === "in_progress" && isProbeCapableRuntime(run.source_runtime)) {
       try {
         probePanel = renderProbePanel(run.run_id, readProbeState(run.run_id));
       } catch (err) {
@@ -448,6 +456,9 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
     if (run.status !== "in_progress") return c.json({ error: "run sealed" }, 404);
+    if (!isProbeCapableRuntime(run.source_runtime)) {
+      return c.json({ error: "runtime does not support probe" }, 404);
+    }
     c.header("Content-Type", "text/html; charset=utf-8");
     return c.body(renderProbePanel(run.run_id, readProbeState(run.run_id)));
   });
