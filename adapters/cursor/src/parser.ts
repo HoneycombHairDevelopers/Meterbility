@@ -91,7 +91,10 @@ export class CursorDb {
     const headers = composer.fullConversationHeadersOnly ?? [];
     for (const h of headers) {
       const b = this.getBubble(composer.composerId, h.bubbleId);
-      if (b) yield b;
+      // The header key is the identity we fetched by — trust it over
+      // whatever bubbleId the payload claims, so a corrupt row can't
+      // impersonate another turn.
+      if (b) yield { ...b, bubbleId: h.bubbleId };
     }
   }
 

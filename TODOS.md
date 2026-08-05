@@ -65,8 +65,11 @@ window.
 `ON CONFLICT(step_id) DO UPDATE SET sequence=excluded.sequence` can
 violate UNIQUE(run_id, sequence) if a rewritten transcript reorders
 steps; the step-insert loop in the adapter is unwrapped, so one shifted
-step would abort that session's ingest each tick. Wrap per-row like the
-file_change loop or resolve shifts two-phase.
+step would abort that session's ingest each tick. Remaining scope:
+Claude Code adapter only — the Cursor adapter now detects shifts and
+resolves them two-phase (vacate sequences via offset, upsert, trim
+tail) inside one transaction. Wrap claude-code's loop per-row like the
+file_change loop or port the same two-phase rebuild.
 
 ## Refactors (DRY)
 

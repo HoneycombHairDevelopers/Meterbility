@@ -25,3 +25,19 @@ function sortReplacer(_key: string, value: unknown): unknown {
 export function hashJson(value: unknown): string {
   return sha256(canonicalJson(value));
 }
+
+/** Shape of ids minted by deterministicStepId — distinguishes them from
+ *  legacy randomUUID-based ids (hyphenated), which predate deterministic
+ *  ids. */
+export const DETERMINISTIC_STEP_ID_RE = /^stp_[0-9a-f]{32}$/;
+
+/**
+ * Deterministic step id for an ingest unit: the same (runId, key) pair
+ * always yields the same id, so re-ingest upserts existing rows instead
+ * of appending duplicates. The format (`stp_` + first 32 hex chars of
+ * hashJson([runId, key])) is load-bearing — existing databases store
+ * these ids byte-for-byte, so it must never change.
+ */
+export function deterministicStepId(runId: string, key: string): string {
+  return `stp_${hashJson([runId, key]).slice(0, 32)}`;
+}
