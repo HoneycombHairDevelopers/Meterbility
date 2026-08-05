@@ -9,7 +9,11 @@ import type {
   Step,
   TokenUsage,
 } from "@meterbility/shared";
-import { hashJson } from "@meterbility/shared";
+import {
+  DETERMINISTIC_STEP_ID_RE,
+  deterministicStepId,
+  hashJson,
+} from "@meterbility/shared";
 import {
   deleteStepsFromSequence,
   getRunBySessionId,
@@ -39,10 +43,6 @@ const SOURCE_RUNTIME = "cursor" as const;
  *  any real conversation length, so offset rows can never collide with
  *  the walk. */
 const SEQUENCE_REBUILD_OFFSET = 1_000_000;
-
-/** Shape of ids minted by stepIdFor — distinguishes them from legacy
- *  randomUUID-based ids (hyphenated), which predate deterministic ids. */
-const DETERMINISTIC_STEP_ID_RE = /^stp_[0-9a-f]{32}$/;
 
 export interface CursorIngestResult {
   workspace_id?: string;
@@ -268,7 +268,7 @@ async function ingestOneComposer(
     const seqById = new Map<string, number>();
     for (const [seq, id] of existingIdBySeq) seqById.set(id, seq);
     shifted = bubbles.some((b, i) => {
-      const computed = stepIdFor(runId, b.bubbleId);
+      const computed = deterministicStepId(runId, b.bubbleId);
       const at = seqById.get(computed);
       if (at !== undefined && at !== i) return true;
       // A deterministic-format id stored at this sequence that isn't
@@ -322,7 +322,7 @@ async function ingestOneComposer(
       recordContextSnapshot(store, snapshot.id, blobRef, snapshot.components.length);
 
       const decisionRef = await store.blobs.putString(text);
-      const stepId = stepIdFor(runId, bubble.bubbleId);
+      const stepId = deterministicStepId(runId, bubble.bubbleId);
       const step: Step = {
         step_id: stepId,
         run_id: runId,
@@ -376,7 +376,7 @@ async function ingestOneComposer(
         cache_creation: 0,
       };
 
-      const stepId = stepIdFor(runId, bubble.bubbleId);
+      const stepId = deterministicStepId(runId, bubble.bubbleId);
       const step: Step = {
         step_id: stepId,
         run_id: runId,
@@ -452,12 +452,6 @@ async function ingestOneComposer(
   });
   commit();
   return { steps_added: stepsAdded };
-}
-
-/** Deterministic step id so re-ingest upserts the same rows instead of
- *  appending duplicates — same pattern as the Claude Code adapter. */
-function stepIdFor(runId: string, bubbleId: string): string {
-  return `stp_${hashJson([runId, bubbleId]).slice(0, 32)}`;
 }
 
 async function snapshotComponents(
