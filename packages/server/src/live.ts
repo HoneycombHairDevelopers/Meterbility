@@ -15,6 +15,10 @@ import {
   type ShapeWarning,
 } from "@meterbility/claude-code-adapter";
 import {
+  discoverCodexSessions,
+  ingestCodexSession,
+} from "@meterbility/codex-cli-adapter";
+import {
   getRun,
   getStep,
   listFileChanges,
@@ -328,25 +332,54 @@ export class LiveInspector extends EventEmitter {
     if (this.stopped) return;
     const silent = opts.silent === true;
 
+    // Discover across runtimes. Codex rollouts are append-as-you-go
+    // JSONL exactly like Claude Code transcripts, so the same
+    // size-growth tail-poll works; only the ingest function differs.
+    type IngestFn = (
+      store: Store,
+      path: string,
+    ) => Promise<{ run_id: string; status: "ok" | "empty" }>;
+    const candidates: Array<{ path: string; size_bytes: number; ingest: IngestFn }> =
+      [];
     const sessions = await discoverSessions();
+    for (const s of sessions) {
+      candidates.push({
+        path: s.path,
+        size_bytes: s.size_bytes,
+        ingest: ingestSession as IngestFn,
+      });
+    }
+    try {
+      const codexSessions = await discoverCodexSessions();
+      for (const s of codexSessions) {
+        candidates.push({
+          path: s.path,
+          size_bytes: s.size_bytes,
+          ingest: ingestCodexSession as IngestFn,
+        });
+      }
+    } catch {
+      // No ~/.codex on this machine — Claude Code only.
+    }
+
     // De-dupe paths into a single set so a brand-new file (which qualifies
     // as both "new" AND "size grew from 0") doesn't get processed twice.
-    const toProcess = new Set<string>();
-    for (const s of sessions) {
+    const toProcess = new Map<string, IngestFn>();
+    for (const s of candidates) {
       if (!this.knownPaths.has(s.path)) {
         this.knownPaths.add(s.path);
-        toProcess.add(s.path);
+        toProcess.set(s.path, s.ingest);
       }
       const lastSize = this.lastSizes.get(s.path) ?? 0;
       if (s.size_bytes > lastSize) {
-        toProcess.add(s.path);
+        toProcess.set(s.path, s.ingest);
         this.lastSizes.set(s.path, s.size_bytes);
       }
     }
 
-    for (const path of toProcess) {
+    for (const [path, ingest] of toProcess) {
       try {
-        const result = await ingestSession(this.store, path);
+        const result = await ingest(this.store, path);
         if (result.status === "empty") continue;
         const run = getRun(this.store, result.run_id);
         if (!run) continue;

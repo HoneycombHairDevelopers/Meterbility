@@ -1,18 +1,21 @@
-import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import type {
   Action,
   ContextComponent,
   ContextSnapshot,
   ConversationMessage,
+  FileChange,
   Outcome,
   Run,
   Step,
+  TokenUsage,
 } from "@meterbility/shared";
 import { hashJson } from "@meterbility/shared";
+import { costCents } from "@meterbility/spec";
 import {
   getIngestOffset,
   getRunBySessionId,
+  insertFileChange,
   insertRun,
   insertStep,
   recordContextSnapshot,
@@ -29,15 +32,18 @@ import {
   type ParsedCodexRecord,
 } from "./parser.ts";
 import {
+  isCustomToolCall,
+  isCustomToolCallOutput,
   isFunctionCall,
   isFunctionCallOutput,
   isMessage,
   isResponseItem,
+  isTurnContext,
   textOfMessage,
-  type CodexResponseItemFunctionCall,
-  type CodexResponseItemFunctionCallOutput,
-  type CodexResponseItemMessage,
+  type CodexPatchApplyEndPayload,
+  type CodexResponseItemCustomToolCall,
   type CodexSessionMetaPayload,
+  type CodexTokenCountInfo,
 } from "./types.ts";
 
 const SOURCE_RUNTIME = "codex-cli" as const;
@@ -50,15 +56,27 @@ export interface CodexIngestResult {
 }
 
 /**
- * Ingest a Codex Desktop / Codex CLI rollout file. Maps each assistant
- * `response_item.message` (or `function_call`) to one Meterbility Step. The
- * preceding user message becomes the conversation history. If a
- * subsequent function_call_output matches a function_call's call_id, we
- * attach it as the Outcome.
+ * Ingest a Codex Desktop / Codex CLI rollout file.
  *
- * Codex doesn't expose token usage in the rollout JSONL, so token
- * counts are zero and steps are tagged `cost:approx`. The fork engine
- * still works — the conversation history is captured verbatim.
+ * Coverage (verified against real rollouts, 2026-08-04):
+ * - Steps: assistant `response_item.message`, `function_call`, and
+ *   `custom_tool_call` (freeform apply_patch). Outputs join on call_id.
+ * - Tokens: `event_msg/token_count` — `last_token_usage` is the
+ *   per-request delta {input, cached_input, output, reasoning_output}.
+ *   `cached_input_tokens` is a SUBSET of `input_tokens`, so steps store
+ *   input = input − cached (schema semantics: `tokens.input` is uncached,
+ *   matching the Anthropic-normalized columns the cache lane reads).
+ * - Model: `turn_context.payload.model` (real id, per-turn). session_meta
+ *   only has the provider string — never a model id.
+ * - Latency: `task_complete.duration_ms` for the turn's terminal step;
+ *   `Wall time: N seconds` parsed from tool outputs for tool steps.
+ * - File changes: `event_msg/patch_apply_end` — structured changes map
+ *   (adds carry full content; updates carry a unified diff only, stored
+ *   as partial_diff rows with patch_text).
+ *
+ * Steps use deterministic ids derived from (run_id, record offset) so
+ * re-ingest is a no-op via insertStep's upsert; file_change rows use
+ * deterministic ids plus an existence guard (plain INSERT would throw).
  */
 export async function ingestCodexSession(
   store: Store,
@@ -83,11 +101,19 @@ export async function ingestCodexSession(
     ? getRunBySessionId(store, sessionId)
     : undefined;
 
-  let runId: string;
-  if (existing) {
-    runId = existing.run_id;
-  } else {
-    runId = `run_${randomUUID()}`;
+  const runId = existing
+    ? existing.run_id
+    : `run_${hashJson(["codex", sessionId || path])}`;
+
+  const built = await buildSteps(all, runId, store, meta);
+
+  if (!existing) {
+    const hasUsage = built.steps.some(
+      (s) => s.tokens.input + s.tokens.output + s.tokens.cached_read > 0,
+    );
+    const tags = ["codex"];
+    if (!hasUsage) tags.push("cost:approx");
+    if (meta.parent_thread_id) tags.push("codex:subagent");
     const run: Run = {
       run_id: runId,
       agent_id: agent.agent_id,
@@ -104,15 +130,19 @@ export async function ingestCodexSession(
       tokens_total_cached: 0,
       cost_cents: 0,
       step_count: 0,
-      tags: ["cost:approx"],
+      tags,
     };
     insertRun(store, run);
   }
 
-  let stepsAdded = 0;
-  for await (const step of buildSteps(all, runId, store, meta)) {
+  for (const step of built.steps) {
     insertStep(store, step);
-    stepsAdded += 1;
+  }
+  for (const fc of built.fileChanges) {
+    const exists = store.db
+      .prepare(`SELECT 1 FROM file_change WHERE file_change_id = ?`)
+      .get(fc.file_change_id);
+    if (!exists) insertFileChange(store, fc);
   }
 
   const last = lastTimestamp(all);
@@ -123,7 +153,7 @@ export async function ingestCodexSession(
 
   return {
     run_id: runId,
-    steps_added: stepsAdded,
+    steps_added: built.steps.length,
     bytes_read: fullSize - offset,
     status: "ok",
   };
@@ -137,15 +167,27 @@ function inferMeta(records: ParsedCodexRecord[]): CodexSessionMetaPayload {
 }
 
 function inferTitle(records: ParsedCodexRecord[]): string | undefined {
+  let fallback: string | undefined;
   for (const r of records) {
     if (!isResponseItem(r.record)) continue;
     if (!isMessage(r.record.payload)) continue;
     if (r.record.payload.role !== "user") continue;
     const text = textOfMessage(r.record.payload);
     if (text.trim().length === 0) continue;
-    return text.split("\n")[0]!.slice(0, 80);
+    const firstLine = text.split("\n")[0]!.slice(0, 80);
+    fallback ??= firstLine;
+    // Codex injects AGENTS.md / environment context as synthetic user
+    // messages ahead of the real prompt — skip them for the title.
+    if (
+      text.startsWith("# AGENTS.md") ||
+      text.startsWith("<user_instructions>") ||
+      text.startsWith("<environment_context>")
+    ) {
+      continue;
+    }
+    return firstLine;
   }
-  return undefined;
+  return fallback;
 }
 
 function lastTimestamp(records: ParsedCodexRecord[]): string | undefined {
@@ -166,36 +208,185 @@ function finalStatus(records: ParsedCodexRecord[]): "ok" | "in_progress" {
   return "in_progress";
 }
 
-async function* buildSteps(
+interface UsageDelta {
+  input: number;
+  cached: number;
+  output: number;
+  reasoning: number;
+}
+
+interface BuiltSteps {
+  steps: Step[];
+  fileChanges: Array<
+    Omit<FileChange, "created_at"> & { file_change_id: string }
+  >;
+}
+
+async function buildSteps(
   records: ParsedCodexRecord[],
   runId: string,
   store: Store,
   meta: CodexSessionMetaPayload,
-): AsyncGenerator<Step> {
-  // Pre-persist any system prompt embedded in session_meta.
+): Promise<BuiltSteps> {
   const systemPromptText = meta.base_instructions?.text;
   let systemPromptRef: string | undefined;
   if (systemPromptText) {
     systemPromptRef = await store.blobs.putString(systemPromptText);
   }
 
-  // Walk response_items. Build a running history of user messages we've
-  // seen so each assistant step's snapshot includes preceding turns.
-  const history: ConversationMessage[] = [];
-  let sequence = 0;
-  let prevStepId: string | undefined;
+  // ---- Pre-pass: index outputs, usage deltas, latency, and patches. ----
 
-  // Index function_call_output by call_id for quick outcome lookup.
-  const outputByCallId = new Map<string, CodexResponseItemFunctionCallOutput>();
+  // Outputs (function_call_output + custom_tool_call_output) by call_id.
+  const outputByCallId = new Map<string, string>();
   for (const r of records) {
     if (!isResponseItem(r.record)) continue;
-    if (isFunctionCallOutput(r.record.payload) && r.record.payload.call_id) {
-      outputByCallId.set(r.record.payload.call_id, r.record.payload);
+    const p = r.record.payload;
+    if (
+      (isFunctionCallOutput(p) || isCustomToolCallOutput(p)) &&
+      p.call_id !== undefined
+    ) {
+      outputByCallId.set(p.call_id, p.output ?? "");
     }
   }
 
+  // Step-producing record indices, in order (assistant messages + tool
+  // calls). token_count / task_complete events anchor to the nearest
+  // PRECEDING one.
+  const isStepRecord = (r: ParsedCodexRecord): boolean => {
+    if (!isResponseItem(r.record)) return false;
+    const p = r.record.payload;
+    return (
+      (isMessage(p) && p.role === "assistant") ||
+      isFunctionCall(p) ||
+      isCustomToolCall(p)
+    );
+  };
+
+  // usage deltas + turn latency keyed by record index of the anchor step.
+  const usageByAnchor = new Map<number, UsageDelta>();
+  const latencyByAnchor = new Map<number, number>();
+  {
+    let lastStepIdx = -1;
+    for (let i = 0; i < records.length; i++) {
+      const r = records[i]!;
+      if (isStepRecord(r)) {
+        lastStepIdx = i;
+        continue;
+      }
+      if (r.record.type !== "event_msg") continue;
+      const p = r.record.payload;
+      if (p.type === "token_count" && lastStepIdx >= 0) {
+        const info = p.info as CodexTokenCountInfo | null | undefined;
+        const lastUsage = info?.last_token_usage;
+        if (!lastUsage) continue; // rate-limit-only refresh
+        const prev = usageByAnchor.get(lastStepIdx) ?? {
+          input: 0,
+          cached: 0,
+          output: 0,
+          reasoning: 0,
+        };
+        prev.input += lastUsage.input_tokens ?? 0;
+        prev.cached += lastUsage.cached_input_tokens ?? 0;
+        prev.output += lastUsage.output_tokens ?? 0;
+        prev.reasoning += lastUsage.reasoning_output_tokens ?? 0;
+        usageByAnchor.set(lastStepIdx, prev);
+      } else if (p.type === "task_complete" && lastStepIdx >= 0) {
+        const dur = typeof p.duration_ms === "number" ? p.duration_ms : undefined;
+        if (dur !== undefined) latencyByAnchor.set(lastStepIdx, dur);
+      }
+    }
+  }
+
+  // patch_apply_end events, joined later to their tool step via call_id.
+  const patchEvents: CodexPatchApplyEndPayload[] = [];
+  for (const r of records) {
+    if (r.record.type !== "event_msg") continue;
+    if (r.record.payload.type === "patch_apply_end") {
+      patchEvents.push(r.record.payload as CodexPatchApplyEndPayload);
+    }
+  }
+
+  // ---- Main walk. ----
+  const history: ConversationMessage[] = [];
+  const steps: Step[] = [];
+  const fileChanges: BuiltSteps["fileChanges"] = [];
+  const stepIdByCallId = new Map<string, string>();
+  const rawPatchInputByCallId = new Map<string, string>();
+  let sequence = 0;
+  let prevStepId: string | undefined;
+  // Real model id from turn_context; older CLIs never emit it. The
+  // provider string in session_meta is NOT a model id — do not fall back
+  // to it (it would silently price at the wrong row).
+  let currentModel = "codex-unknown";
+
+  const snapshotFor = async (): Promise<{ id: string }> => {
+    const components = await snapshotComponents(
+      store,
+      systemPromptRef,
+      history,
+    );
+    const snapshot: ContextSnapshot = {
+      id: hashJson(components),
+      components,
+    };
+    const snapshotBlobRef = await store.blobs.putJson(snapshot);
+    recordContextSnapshot(
+      store,
+      snapshot.id,
+      snapshotBlobRef,
+      snapshot.components.length,
+    );
+    return snapshot;
+  };
+
+  const tokensFor = (idx: number): { tokens: TokenUsage; hasUsage: boolean } => {
+    const delta = usageByAnchor.get(idx);
+    if (!delta) {
+      return {
+        tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+        hasUsage: false,
+      };
+    }
+    return {
+      tokens: {
+        // Uncached input — cached_input_tokens is a subset of input_tokens.
+        input: Math.max(0, delta.input - delta.cached),
+        output: delta.output,
+        cached_read: delta.cached,
+        cache_creation: 0, // OpenAI bills no cache-write tier.
+        reasoning: delta.reasoning > 0 ? delta.reasoning : undefined,
+      },
+      hasUsage: true,
+    };
+  };
+
+  const priceStep = (
+    tokens: TokenUsage,
+    hasUsage: boolean,
+  ): { cost: number; tags: string[] } => {
+    if (!hasUsage) return { cost: 0, tags: ["cost:approx", "codex"] };
+    const { cost_cents, approx } = costCents(currentModel, {
+      input: tokens.input,
+      output: tokens.output,
+      cached_read: tokens.cached_read,
+      cache_creation: 0,
+    });
+    return {
+      cost: cost_cents,
+      tags: approx ? ["cost:approx", "codex"] : ["codex"],
+    };
+  };
+
   for (let i = 0; i < records.length; i++) {
     const r = records[i]!;
+
+    if (isTurnContext(r.record)) {
+      if (typeof r.record.payload.model === "string") {
+        currentModel = r.record.payload.model;
+      }
+      continue;
+    }
+
     if (!isResponseItem(r.record)) continue;
     const payload = r.record.payload;
 
@@ -210,121 +401,188 @@ async function* buildSteps(
       const text = textOfMessage(payload);
       const action: Action = parseActionFromAgentText(text);
       const decisionRef = await store.blobs.putJson(payload.content);
+      const snapshot = await snapshotFor();
+      const stepId = `stp_${hashJson([runId, r.offset])}`;
+      const { tokens, hasUsage } = tokensFor(i);
+      const { cost, tags } = priceStep(tokens, hasUsage);
 
-      const components = await snapshotComponents(
-        store,
-        systemPromptRef,
-        history,
-      );
-      const snapshot: ContextSnapshot = {
-        id: hashJson(components),
-        components,
-      };
-      const snapshotBlobRef = await store.blobs.putJson(snapshot);
-      recordContextSnapshot(
-        store,
-        snapshot.id,
-        snapshotBlobRef,
-        snapshot.components.length,
-      );
-
-      const stepId = `stp_${randomUUID()}`;
-      const outcome: Outcome = { status: "ok" };
-      const step: Step = {
+      steps.push({
         step_id: stepId,
         run_id: runId,
         parent_step_id: prevStepId,
         sequence,
         timestamp: r.record.timestamp ?? new Date().toISOString(),
-        model: meta.model_provider ?? "codex-unknown",
+        model: currentModel,
         context_snapshot_id: snapshot.id,
         decision_ref: decisionRef,
         action,
-        outcome,
-        tokens: {
-          input: 0,
-          output: 0,
-          cached_read: 0,
-          cache_creation: 0,
-        },
-        latency_ms: 0,
-        cost_cents: 0,
-        tags: ["cost:approx", "codex"],
+        outcome: { status: "ok" },
+        tokens,
+        latency_ms: latencyByAnchor.get(i) ?? 0,
+        cost_cents: cost,
+        tags,
         status: "ok",
-      };
-      yield step;
+      });
 
-      // Add this assistant turn to the running history.
       const historyRef = await store.blobs.putString(text);
       history.push({ role: "assistant", content_ref: historyRef });
-
       sequence += 1;
-      prevStepId = stepId;
+      prevStepId = steps[steps.length - 1]!.step_id;
       continue;
     }
 
-    if (isFunctionCall(payload)) {
+    if (isFunctionCall(payload) || isCustomToolCall(payload)) {
+      const custom = isCustomToolCall(payload);
+      const toolName =
+        payload.name ?? (custom ? "custom_tool" : "function");
+      const toolInput = custom
+        ? (payload as CodexResponseItemCustomToolCall).input
+        : safeParseJson(
+            (payload as { arguments?: string }).arguments,
+          );
       const action: Action = {
         kind: "tool_call",
-        tool_name: payload.name ?? "function",
+        tool_name: toolName,
         tool_use_id: payload.call_id ?? payload.id,
-        tool_input: safeParseJson(payload.arguments),
+        tool_input: toolInput,
       };
       const decisionRef = await store.blobs.putJson(payload);
 
       const matchedOutput = payload.call_id
         ? outputByCallId.get(payload.call_id)
         : undefined;
-      const outcome: Outcome = matchedOutput
-        ? {
-            status: "ok",
-            tool_result_ref: await store.blobs.putString(
-              matchedOutput.output ?? "",
-            ),
-            summary: matchedOutput.output?.split("\n")[0]?.slice(0, 200),
-          }
-        : { status: "pending" };
+      const exitCode = matchedOutput ? parseExitCode(matchedOutput) : undefined;
+      const outcome: Outcome =
+        matchedOutput !== undefined
+          ? {
+              status: exitCode !== undefined && exitCode !== 0 ? "error" : "ok",
+              tool_result_ref: await store.blobs.putString(matchedOutput),
+              summary: matchedOutput.split("\n")[0]?.slice(0, 200),
+              is_error: exitCode !== undefined && exitCode !== 0,
+            }
+          : { status: "pending" };
 
-      const components = await snapshotComponents(
-        store,
-        systemPromptRef,
-        history,
-      );
-      const snapshot: ContextSnapshot = {
-        id: hashJson(components),
-        components,
-      };
-      const snapshotBlobRef = await store.blobs.putJson(snapshot);
-      recordContextSnapshot(
-        store,
-        snapshot.id,
-        snapshotBlobRef,
-        snapshot.components.length,
-      );
+      const snapshot = await snapshotFor();
+      const stepId = `stp_${hashJson([runId, r.offset])}`;
+      const { tokens, hasUsage } = tokensFor(i);
+      const { cost, tags } = priceStep(tokens, hasUsage);
+      const wallMs = matchedOutput ? parseWallTimeMs(matchedOutput) : undefined;
 
-      const stepId = `stp_${randomUUID()}`;
-      yield {
+      steps.push({
         step_id: stepId,
         run_id: runId,
         parent_step_id: prevStepId,
         sequence,
         timestamp: r.record.timestamp ?? new Date().toISOString(),
-        model: meta.model_provider ?? "codex-unknown",
+        model: currentModel,
         context_snapshot_id: snapshot.id,
         decision_ref: decisionRef,
         action,
         outcome,
-        tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
-        latency_ms: 0,
-        cost_cents: 0,
-        tags: ["cost:approx", "codex"],
-        status: outcome.status === "pending" ? "in_progress" : "ok",
-      };
+        tokens,
+        latency_ms: wallMs ?? latencyByAnchor.get(i) ?? 0,
+        cost_cents: cost,
+        tags,
+        status: outcome.status === "pending" ? "in_progress" : outcome.status,
+      });
+
+      if (payload.call_id) {
+        stepIdByCallId.set(payload.call_id, stepId);
+        if (custom && typeof (payload as CodexResponseItemCustomToolCall).input === "string") {
+          rawPatchInputByCallId.set(
+            payload.call_id,
+            (payload as CodexResponseItemCustomToolCall).input!,
+          );
+        }
+      }
       sequence += 1;
       prevStepId = stepId;
       continue;
     }
   }
+
+  // ---- File changes from patch_apply_end (shape pinned 2026-08-04). ----
+  const cwd = meta.cwd ?? "";
+  for (const patch of patchEvents) {
+    const stepId = patch.call_id
+      ? stepIdByCallId.get(patch.call_id)
+      : undefined;
+    // Without a joinable step there is nothing to attribute to; the
+    // fallback step is the last one (patch events follow their call).
+    const targetStepId = stepId ?? steps[steps.length - 1]?.step_id;
+    if (!targetStepId || !patch.changes) continue;
+    const rawInput = patch.call_id
+      ? rawPatchInputByCallId.get(patch.call_id)
+      : undefined;
+
+    let seq = 0;
+    for (const [absPath, change] of Object.entries(patch.changes)) {
+      const relPath = toRepoRelative(absPath, cwd);
+      const isAdd = change.type === "add";
+      const isDelete = change.type === "delete";
+      const movePath = change.move_path ?? undefined;
+      const op: FileChange["op"] = isAdd
+        ? "create"
+        : isDelete
+          ? "delete"
+          : movePath
+            ? "rename"
+            : "modify";
+      const diffCounts = change.unified_diff
+        ? countDiffLines(change.unified_diff)
+        : undefined;
+
+      const fcId = `fc_${hashJson([targetStepId, relPath, seq])}`;
+      if (isAdd && typeof change.content === "string") {
+        const afterRef = await store.blobs.putString(change.content);
+        fileChanges.push({
+          file_change_id: fcId,
+          run_id: runId,
+          step_id: targetStepId,
+          sequence: seq,
+          tool_call_id: patch.call_id,
+          derived_from: "tool_call",
+          path: relPath,
+          op: "create",
+          after_blob_ref: afterRef,
+          partial_diff: false,
+          gitignored: false,
+          size_after: Buffer.byteLength(change.content, "utf-8"),
+          line_count_after: countLines(change.content),
+          lines_added: countLines(change.content),
+          lines_removed: 0,
+          source_tool_name: "apply_patch",
+          source_tool_input: rawInput,
+        });
+      } else {
+        // Updates/deletes/renames carry no before-content in the rollout —
+        // record the FACT of the change as a partial_diff row with the
+        // unified diff cached as patch_text.
+        fileChanges.push({
+          file_change_id: fcId,
+          run_id: runId,
+          step_id: targetStepId,
+          sequence: seq,
+          tool_call_id: patch.call_id,
+          derived_from: "tool_call",
+          path: movePath ? toRepoRelative(movePath, cwd) : relPath,
+          old_path: movePath ? relPath : undefined,
+          op,
+          partial_diff: true,
+          gitignored: false,
+          patch_text: change.unified_diff,
+          patch_format: change.unified_diff ? "unified" : undefined,
+          lines_added: diffCounts?.added ?? 0,
+          lines_removed: diffCounts?.removed ?? 0,
+          source_tool_name: "apply_patch",
+          source_tool_input: rawInput,
+        });
+      }
+      seq += 1;
+    }
+  }
+
+  return { steps, fileChanges };
 }
 
 async function snapshotComponents(
@@ -365,4 +623,53 @@ function safeParseJson(s: string | undefined): unknown {
   } catch {
     return s;
   }
+}
+
+/** `Exit code: 0` (custom_tool_call_output) or `Process exited with code 0`. */
+function parseExitCode(output: string): number | undefined {
+  const m =
+    output.match(/^Exit code:\s*(\d+)/m) ??
+    output.match(/Process exited with code (\d+)/);
+  return m ? Number(m[1]) : undefined;
+}
+
+/** `Wall time: 0.2 seconds` → 200ms. */
+function parseWallTimeMs(output: string): number | undefined {
+  const m = output.match(/Wall time:\s*([\d.]+)\s*seconds/);
+  return m ? Math.round(Number(m[1]) * 1000) : undefined;
+}
+
+function countLines(text: string): number {
+  if (text.length === 0) return 0;
+  const n = text.split("\n").length;
+  return text.endsWith("\n") ? n - 1 : n;
+}
+
+function countDiffLines(unifiedDiff: string): {
+  added: number;
+  removed: number;
+} {
+  let added = 0;
+  let removed = 0;
+  for (const line of unifiedDiff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+/**
+ * Absolute → repo-relative POSIX path. Falls back to the absolute path
+ * when outside cwd (same semantics as the Claude Code adapter).
+ */
+function toRepoRelative(absPath: string, cwd: string): string {
+  const normCwd = cwd.replace(/\/+$/, "");
+  if (normCwd.length > 0) {
+    if (absPath === normCwd) return "";
+    if (absPath.startsWith(normCwd + "/")) {
+      return absPath.slice(normCwd.length + 1).split("\\").join("/");
+    }
+  }
+  return absPath.split("\\").join("/");
 }

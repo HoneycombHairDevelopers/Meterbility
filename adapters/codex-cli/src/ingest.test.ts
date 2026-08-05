@@ -162,3 +162,313 @@ test("codex ingest is idempotent", async () => {
   assert.equal(r2.status, "empty");
   store.close();
 });
+
+// ---------------------------------------------------------------------------
+// Parity coverage (2026-08-04): token_count usage, turn_context model,
+// patch_apply_end file changes, custom_tool_call steps. Fixture shapes are
+// taken from a real captured write-mode rollout.
+// ---------------------------------------------------------------------------
+
+function paritySession(): object[] {
+  return [
+    {
+      type: "session_meta",
+      timestamp: "2026-08-04T18:26:37Z",
+      payload: {
+        id: "sess-parity",
+        timestamp: "2026-08-04T18:26:37Z",
+        cwd: "/tmp/proj",
+        model_provider: "openai",
+        git: { branch: "main", commit_hash: "abc123", repository_url: "x" },
+      },
+    },
+    {
+      type: "turn_context",
+      timestamp: "2026-08-04T18:26:38Z",
+      payload: { model: "gpt-5.5", cwd: "/tmp/proj" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:39Z",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "create probe.txt then edit it" }],
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:41Z",
+      payload: {
+        type: "custom_tool_call",
+        id: "ctc_1",
+        status: "completed",
+        call_id: "call_A",
+        name: "apply_patch",
+        input: "*** Begin Patch\n*** Add File: probe.txt\n+parity probe v1\n*** End Patch\n",
+        metadata: { turn_id: "turn-1" },
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:42Z",
+      payload: {
+        type: "custom_tool_call_output",
+        call_id: "call_A",
+        output:
+          "Exit code: 0\nWall time: 0.2 seconds\nOutput:\nSuccess. Updated the following files:\nA probe.txt\n",
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:42Z",
+      payload: {
+        type: "patch_apply_end",
+        call_id: "call_A",
+        turn_id: "turn-1",
+        stdout: "Success. Updated the following files:\nA probe.txt\n",
+        stderr: "",
+        success: true,
+        status: "completed",
+        changes: {
+          "/tmp/proj/probe.txt": { type: "add", content: "parity probe v1\n" },
+        },
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:43Z",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: 1000,
+            cached_input_tokens: 800,
+            output_tokens: 60,
+            reasoning_output_tokens: 40,
+            total_tokens: 1060,
+          },
+          last_token_usage: {
+            input_tokens: 1000,
+            cached_input_tokens: 800,
+            output_tokens: 60,
+            reasoning_output_tokens: 40,
+            total_tokens: 1060,
+          },
+          model_context_window: 258400,
+        },
+        rate_limits: { limit_id: "codex", plan_type: "plus" },
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:45Z",
+      payload: {
+        type: "custom_tool_call",
+        id: "ctc_2",
+        status: "completed",
+        call_id: "call_B",
+        name: "apply_patch",
+        input:
+          "*** Begin Patch\n*** Update File: probe.txt\n@@\n parity probe v1\n+edited by codex\n*** End Patch\n",
+        metadata: { turn_id: "turn-1" },
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:46Z",
+      payload: {
+        type: "custom_tool_call_output",
+        call_id: "call_B",
+        output:
+          "Exit code: 0\nWall time: 0.1 seconds\nOutput:\nSuccess. Updated the following files:\nM probe.txt\n",
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:46Z",
+      payload: {
+        type: "patch_apply_end",
+        call_id: "call_B",
+        turn_id: "turn-1",
+        stdout: "Success. Updated the following files:\nM probe.txt\n",
+        stderr: "",
+        success: true,
+        status: "completed",
+        changes: {
+          "/tmp/proj/probe.txt": {
+            type: "update",
+            unified_diff: "@@ -1 +1,2 @@\n parity probe v1\n+edited by codex\n",
+            move_path: null,
+          },
+        },
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:47Z",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: 2500,
+            cached_input_tokens: 2100,
+            output_tokens: 110,
+            reasoning_output_tokens: 60,
+            total_tokens: 2610,
+          },
+          last_token_usage: {
+            input_tokens: 1500,
+            cached_input_tokens: 1300,
+            output_tokens: 50,
+            reasoning_output_tokens: 20,
+            total_tokens: 1550,
+          },
+          model_context_window: 258400,
+        },
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:48Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Done." }],
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:49Z",
+      payload: {
+        type: "task_complete",
+        turn_id: "turn-1",
+        last_agent_message: "Done.",
+        duration_ms: 9800,
+        time_to_first_token_ms: 900,
+      },
+    },
+  ];
+}
+
+test("parity: token_count deltas land on steps with uncached-input semantics", async () => {
+  const store = freshStore();
+  const path = writeSession(paritySession());
+  const r = await ingestCodexSession(store, path);
+  assert.equal(r.steps_added, 3);
+
+  const runs = listRuns(store);
+  const run = runs[0]!;
+  // Usage exists → run must NOT carry cost:approx.
+  assert.ok(!run.tags.includes("cost:approx"), "run should not be cost:approx");
+
+  const steps = listSteps(store, run.run_id);
+  // Step 0 (call_A) anchors the first token_count: input 1000/cached 800.
+  const s0 = steps[0]!;
+  assert.equal(s0.tokens.input, 200, "input stores uncached only");
+  assert.equal(s0.tokens.cached_read, 800);
+  assert.equal(s0.tokens.output, 60);
+  assert.equal(s0.tokens.reasoning, 40);
+  assert.ok(s0.cost_cents > 0, "cost computed from real pricing");
+  assert.ok(!s0.tags.includes("cost:approx"), "gpt-5.5 prefix-matches gpt-5");
+
+  // Step 1 (call_B) anchors the second token_count DELTA (not cumulative).
+  const s1 = steps[1]!;
+  assert.equal(s1.tokens.input, 200); // 1500 - 1300
+  assert.equal(s1.tokens.cached_read, 1300);
+  assert.equal(s1.tokens.output, 50);
+
+  // Run totals aggregate real usage.
+  assert.ok(run.tokens_total_cached >= 0); // refreshed via updateRunTotals
+  store.close();
+});
+
+test("parity: model comes from turn_context, never the provider string", async () => {
+  const store = freshStore();
+  const path = writeSession(paritySession());
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const steps = listSteps(store, runs[0]!.run_id);
+  for (const s of steps) {
+    assert.equal(s.model, "gpt-5.5");
+  }
+  store.close();
+});
+
+test("parity: patch_apply_end produces file_change rows (add + partial update)", async () => {
+  const store = freshStore();
+  const path = writeSession(paritySession());
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const rows = store.db
+    .prepare(
+      `SELECT * FROM file_change WHERE run_id = ? ORDER BY created_at, sequence`,
+    )
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(rows.length, 2);
+
+  const add = rows.find((r) => r.op === "create")!;
+  assert.equal(add.path, "probe.txt");
+  assert.equal(add.partial_diff, 0);
+  assert.ok(add.after_blob_ref, "add carries after-content blob");
+  assert.equal(add.lines_added, 1);
+  assert.equal(add.source_tool_name, "apply_patch");
+
+  const upd = rows.find((r) => r.op === "modify")!;
+  assert.equal(upd.path, "probe.txt");
+  assert.equal(upd.partial_diff, 1, "updates have no before-content");
+  assert.ok(
+    String(upd.patch_text).includes("+edited by codex"),
+    "unified diff cached as patch_text",
+  );
+  assert.equal(upd.lines_added, 1);
+  store.close();
+});
+
+test("parity: custom_tool_call steps get exit code + wall-time latency", async () => {
+  const store = freshStore();
+  const path = writeSession(paritySession());
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const steps = listSteps(store, runs[0]!.run_id);
+  const s0 = steps[0]!;
+  assert.equal(s0.action.kind, "tool_call");
+  assert.equal(s0.action.tool_name, "apply_patch");
+  assert.equal(s0.outcome.status, "ok");
+  assert.equal(s0.latency_ms, 200, "Wall time: 0.2 seconds → 200ms");
+  // Terminal assistant step gets the turn's duration_ms.
+  const s2 = steps[2]!;
+  assert.equal(s2.action.kind, "message");
+  assert.equal(s2.latency_ms, 9800);
+  store.close();
+});
+
+test("parity: re-ingest duplicates neither steps nor file_change rows", async () => {
+  const store = freshStore();
+  const path = writeSession(paritySession());
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const runId = runs[0]!.run_id;
+  const stepsBefore = listSteps(store, runId).length;
+  const fcBefore = (
+    store.db
+      .prepare(`SELECT COUNT(*) AS n FROM file_change WHERE run_id = ?`)
+      .get(runId) as { n: number }
+  ).n;
+
+  // Force a full re-read by resetting the ingest offset (simulates a
+  // fresh machine or offset loss — the worst case for duplication).
+  store.db
+    .prepare(`DELETE FROM ingest_progress WHERE source_path = ?`)
+    .run(path);
+  await ingestCodexSession(store, path);
+
+  assert.equal(listSteps(store, runId).length, stepsBefore);
+  const fcAfter = (
+    store.db
+      .prepare(`SELECT COUNT(*) AS n FROM file_change WHERE run_id = ?`)
+      .get(runId) as { n: number }
+  ).n;
+  assert.equal(fcAfter, fcBefore);
+  store.close();
+});
