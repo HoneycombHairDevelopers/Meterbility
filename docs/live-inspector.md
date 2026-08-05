@@ -11,6 +11,25 @@ meter web --live
 
 The `--live` flag tells Meterbility to watch `~/.claude/projects/` for new sessions and growing session files. Every ~1.5s it scans, runs incremental ingest on anything new, and emits structured events over Server-Sent Events (`/api/live`). The fleet view updates without a page refresh.
 
+### How live is it? (near-realtime, not instantaneous)
+
+Ingest is a **poller, not a file-watcher** — the `LiveInspector` re-scans the projects directory on a fixed interval (`scanIntervalMs`, default 1500ms) rather than reacting to individual writes. So a step Claude Code writes shows up in the UI **within ~1.5s**, not the instant it happens. This is a deliberate floor, not the multi-minute delay of the old cold-start GO LIVE bug (that was a one-time backfill blocking the toggle; fixed — steady-state append latency is just the poll interval).
+
+Why polling and not `fs.watch` here — three reasons the sentinel (which *does* use `fs.watch`) doesn't share:
+
+1. **A write event is not an ingest boundary.** Claude Code appends to the JSONL continuously; a single logical step spans many writes. Firing ingest on every write would re-parse the file mid-record. The poller instead reads at a cadence where a step has settled.
+2. **Ingest re-reads the whole file body, not just the tail.** `ingestSession` threads the parent-uuid chain across the record stream to assemble steps, so it isn't an append-only tail-follow — it re-derives from the file. Event-driven wakeups would just run that same O(file) work more often for no fidelity gain; the interval is the natural rate limiter, and the docs note `ingestSession` — not the timer — is the real bottleneck.
+3. **fs.watch is lossy for this job.** It coalesces bursts and drops events under load (the sentinel tolerates that because a missed file event is a missed row, recoverable next event). A missed *session* growth event would strand a run's tail until the next unrelated write — a poller can't miss growth because it re-checks sizes every tick.
+
+Cranking `scanIntervalMs` down tightens the floor but has diminishing returns (you just run the file re-read more often); the honest number to quote is **≤1.5s at default**.
+
+### Latency: near-realtime, by design
+
+Steps appear on the fleet and run pages within **~1.5 seconds** of Claude Code writing them — near-realtime, not zero-lag. Ingest is deliberately a **poller**, not an fs-watcher, for three reasons:
+
+1. **A watcher wouldn't be faster where it counts.** The real cost floor is `ingestSession` itself, which re-reads the session body to thread the parent-uuid chain — event-driven *detection* wouldn't remove that. And Claude Code appends to the transcript continuously, so raw watch events arrive as a storm that needs debouncing right back down to something poll-shaped.
+2. **Polling is self-healing.** A missed `fs.watch` event (coalesced, dropped on overflow — real platform behavior) silently loses a session until restart; a missed poll costs at most one tick, because every tick rescans from scratch. For capture-
+
 ## What you see
 
 Each card in the grid:
@@ -106,7 +125,7 @@ Release verification for both paths lives in the [manual test checklist](test-pl
 
 ## Caveats
 
-- Polling cadence is 1.5s by default. Faster intervals are possible (`scanIntervalMs`) but the bottleneck is `ingestSession`, which re-reads the file body to thread the parent-uuid chain.
+- Polling cadence is 1.5s by default, so live updates are near-realtime (≤~1.5s), not instantaneous — see [How live is it?](#how-live-is-it-near-realtime-not-instantaneous) for why ingest polls rather than watches. Faster intervals are possible (`scanIntervalMs`) but the bottleneck is `ingestSession`, which re-reads the file body to thread the parent-uuid chain.
 - Loop detection uses `JSON.stringify(action.tool_input)` for the signature. Tool inputs that include non-deterministic values (timestamps, uuids) won't trip the heuristic — that's by design.
 - Alert state is in-memory. Restarting `meter web --live` re-fires alerts that already triggered in the previous session.
 - Cursor and Codex CLI surfaces aren't watched in v0.1 — only Claude Code. Both write to disk in append-only JSONL formats compatible with the same tick loop, and they'll plug in via `LiveInspector` constructor options in v0.2.
