@@ -454,6 +454,47 @@ export function offsetStepSequences(
     .run(offset, runId);
 }
 
+/** Rewrite one step's id in place, carrying every reference along:
+ *  file_change children (FK on steps.step_id) and parent_step_id links
+ *  from later steps of the same run. For adapters upgrading legacy
+ *  random ids to deterministic ones so future re-ingests can match
+ *  rows by identity instead of position.
+ *
+ *  MUST run inside a transaction with `PRAGMA defer_foreign_keys = ON`:
+ *  foreign_keys is ON (ensureSchema) and enforcement is immediate, so
+ *  renaming the parent key while file_change children still reference
+ *  the old id — or repointing children before the new id exists — each
+ *  fail mid-flight. Deferral moves the check to COMMIT, where both
+ *  sides have landed; the pragma resets itself when the transaction
+ *  ends, so enforcement is back to immediate afterwards. */
+export function migrateStepId(
+  store: Store,
+  runId: string,
+  oldId: string,
+  newId: string,
+): void {
+  store.db
+    .prepare("UPDATE steps SET step_id = ? WHERE run_id = ? AND step_id = ?")
+    .run(newId, runId, oldId);
+  store.db
+    .prepare(
+      "UPDATE file_change SET step_id = ? WHERE run_id = ? AND step_id = ?",
+    )
+    .run(newId, runId, oldId);
+  store.db
+    .prepare(
+      "UPDATE steps SET parent_step_id = ? WHERE run_id = ? AND parent_step_id = ?",
+    )
+    .run(newId, runId, oldId);
+  // Annotations address steps polymorphically (target_kind, target_id)
+  // — no FK, but a user's note on a legacy step must follow the rename.
+  store.db
+    .prepare(
+      "UPDATE annotations SET target_id = ? WHERE target_kind = 'step' AND target_id = ?",
+    )
+    .run(newId, oldId);
+}
+
 export function getStep(store: Store, stepId: string): Step | undefined {
   const exact = store.db
     .prepare("SELECT * FROM steps WHERE step_id = ?")
