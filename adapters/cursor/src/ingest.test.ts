@@ -6,6 +6,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { Store, listRuns, listSteps } from "@meterbility/collector";
 import { ingestCursorGlobal } from "./ingest.ts";
+import { CursorDb } from "./parser.ts";
 
 function freshMeterbilityHome(): string {
   const dir = mkdtempSync(join(tmpdir(), "meter-cursor-"));
@@ -323,7 +324,53 @@ test("same bubbleId in two different composers yields distinct step ids", async 
   store.close();
 });
 
-test("legacy run with random step ids is upgraded in place, not duplicated", async () => {
+/** Shape of ids minted by the deterministic adapter (mirrors ingest.ts). */
+const DETERMINISTIC_RE = /^stp_[0-9a-f]{32}$/;
+
+/** Rewrite a run's rows to look like the pre-deterministic adapter wrote
+ *  them: random (non-deterministic) step ids at the same sequence slots,
+ *  parent chain pointing at those legacy ids. */
+function legacyifyRun(store: Store, runId: string): void {
+  store.db
+    .prepare(
+      `UPDATE steps SET
+         step_id = 'stp_legacy-' || sequence,
+         parent_step_id = CASE WHEN sequence > 0 THEN 'stp_legacy-' || (sequence - 1) END
+       WHERE run_id = ?`,
+    )
+    .run(runId);
+}
+
+/** Attach a synthetic file_change child (as hook capture / FileSentinel
+ *  would) to a step — these rows have no re-derivation path, so they are
+ *  the canary for destructive reconciliation. */
+function attachFileChange(
+  store: Store,
+  runId: string,
+  stepId: string,
+  id: string,
+): void {
+  store.db
+    .prepare(
+      `INSERT INTO file_change(
+         file_change_id, run_id, step_id, sequence,
+         derived_from, path, op, created_at
+       ) VALUES (?, ?, ?, 0, 'filesystem_watch', 'src/x.ts', 'modify', '2026-01-01T00:00:00Z')`,
+    )
+    .run(id, runId, stepId);
+}
+
+function fileChangeStepId(
+  store: Store,
+  id: string,
+): string | undefined {
+  const row = store.db
+    .prepare("SELECT step_id FROM file_change WHERE file_change_id = ?")
+    .get(id) as { step_id: string } | undefined;
+  return row?.step_id;
+}
+
+test("legacy run with random step ids is migrated to deterministic ids on a quiet re-ingest", async () => {
   freshMeterbilityHome();
   const dbPath = buildCursorDb({
     composers: [
@@ -345,34 +392,168 @@ test("legacy run with random step ids is upgraded in place, not duplicated", asy
   const store = Store.open();
   await ingestCursorGlobal(store, { dbPath });
   const run = listRuns(store)[0]!;
-  // Simulate rows written by the pre-fix adapter: non-deterministic
-  // step ids at the same (run_id, sequence) slots.
-  store.db
-    .prepare(
-      `UPDATE steps SET
-         step_id = 'stp_legacy_' || sequence,
-         parent_step_id = CASE WHEN sequence > 0 THEN 'stp_legacy_' || (sequence - 1) END
-       WHERE run_id = ?`,
-    )
-    .run(run.run_id);
+  legacyifyRun(store, run.run_id);
+  // A child with no re-derivation path hangs off the legacy assistant
+  // step — the migration must carry it to the renamed id, not orphan it
+  // (impossible anyway: FK) or cascade it away.
+  attachFileChange(store, run.run_id, "stp_legacy-1", "fc_legacy");
 
-  await ingestCursorGlobal(store, { dbPath });
+  const r2 = await ingestCursorGlobal(store, { dbPath });
+  assert.equal(r2.steps_added, 0, "a migration renames rows; it adds none");
   const runs = listRuns(store);
   assert.equal(runs.length, 1);
   assert.equal(runs[0]!.step_count, 2);
   const steps = listSteps(store, runs[0]!.run_id);
   assert.equal(steps.length, 2);
-  // The UNIQUE(run_id, sequence) conflict clause keeps the existing
-  // step_id so children stay attached; content is refreshed in place.
-  assert.deepEqual(steps.map((s) => s.step_id), ["stp_legacy_0", "stp_legacy_1"]);
-  // The parent chain must point at the surviving (legacy) ids, not the
-  // deterministic ids the walk computed.
+  // The quiet ingest is the one moment the legacy rows' identity is
+  // known positionally — they get rewritten to deterministic ids so a
+  // later reorder can recognize them by identity.
+  assert.ok(DETERMINISTIC_RE.test(steps[0]!.step_id), "seq 0 migrated");
+  assert.ok(DETERMINISTIC_RE.test(steps[1]!.step_id), "seq 1 migrated");
+  // Parent chain follows the rename.
   assert.equal(steps[0]!.parent_step_id, undefined);
-  assert.equal(steps[1]!.parent_step_id, "stp_legacy_0");
+  assert.equal(steps[1]!.parent_step_id, steps[0]!.step_id);
+  // The file_change child FOLLOWS the migration onto the new id.
+  assert.equal(fileChangeStepId(store, "fc_legacy"), steps[1]!.step_id);
   assert.equal(steps[1]!.action.kind, "message");
   assert.equal(steps[1]!.action.text, "done");
   assert.equal(runs[0]!.tokens_total_input, 20);
   assert.equal(runs[0]!.tokens_total_output, 8);
+
+  // Idempotent: the next ingest matches by identity — no rename, no add.
+  const r3 = await ingestCursorGlobal(store, { dbPath });
+  assert.equal(r3.steps_added, 0);
+  assert.deepEqual(
+    listSteps(store, runs[0]!.run_id).map((s) => s.step_id),
+    steps.map((s) => s.step_id),
+  );
+  store.close();
+});
+
+test("migrated legacy run survives a later reorder with children attached to the right turn", async () => {
+  freshMeterbilityHome();
+  const mk = (withNewFirst: boolean) =>
+    buildCursorDb({
+      composers: [
+        {
+          id: "comp-lshift",
+          name: "LShift",
+          headers: [
+            ...(withNewFirst ? [{ bubbleId: "u0", type: 1 as const }] : []),
+            { bubbleId: "u1", type: 1 as const },
+            { bubbleId: "a1", type: 2 as const },
+          ],
+          bubbles: [
+            ...(withNewFirst
+              ? [{ bubbleId: "u0", type: 1 as const, text: "new first" }]
+              : []),
+            { bubbleId: "u1", type: 1 as const, text: "hello" },
+            { bubbleId: "a1", type: 2 as const, text: "answer" },
+          ],
+        },
+      ],
+    });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath: mk(false) });
+  const run = listRuns(store)[0]!;
+  legacyifyRun(store, run.run_id);
+  attachFileChange(store, run.run_id, "stp_legacy-1", "fc_lshift");
+
+  // Quiet re-ingest migrates the legacy ids...
+  await ingestCursorGlobal(store, { dbPath: mk(false) });
+  const migrated = listSteps(store, run.run_id);
+  assert.ok(migrated.every((s) => DETERMINISTIC_RE.test(s.step_id)));
+
+  // ...so the checkpoint-restore reorder is now recognized by identity:
+  // the old bubbles relocate, keeping their ids and children — exactly
+  // what positional matching used to get wrong for legacy rows.
+  const r = await ingestCursorGlobal(store, { dbPath: mk(true) });
+  assert.equal(r.steps_added, 1, "only the inserted bubble is new");
+  const after = listSteps(store, run.run_id);
+  assert.equal(after.length, 3);
+  assert.deepEqual(
+    after.map((s) => s.action.kind === "message" && s.action.text),
+    ["new first", "hello", "answer"],
+  );
+  assert.equal(after[1]!.step_id, migrated[0]!.step_id, "u1 kept its migrated id");
+  assert.equal(after[2]!.step_id, migrated[1]!.step_id, "a1 kept its migrated id");
+  // The child is still attached to a1 — the turn it belongs to — not
+  // grafted onto whatever now occupies a1's old sequence slot.
+  assert.equal(fileChangeStepId(store, "fc_lshift"), after[2]!.step_id);
+  store.close();
+});
+
+test("mixed legacy+deterministic run: reorder after migration no longer destroys legacy rows", async () => {
+  freshMeterbilityHome();
+  const mk = (withNewFirst: boolean) =>
+    buildCursorDb({
+      composers: [
+        {
+          id: "comp-mixed",
+          name: "Mixed",
+          headers: [
+            ...(withNewFirst ? [{ bubbleId: "u0", type: 1 as const }] : []),
+            { bubbleId: "u1", type: 1 as const },
+            { bubbleId: "a1", type: 2 as const },
+            { bubbleId: "u2", type: 1 as const },
+          ],
+          bubbles: [
+            ...(withNewFirst
+              ? [{ bubbleId: "u0", type: 1 as const, text: "new first" }]
+              : []),
+            { bubbleId: "u1", type: 1 as const, text: "hello" },
+            { bubbleId: "a1", type: 2 as const, text: "answer" },
+            { bubbleId: "u2", type: 1 as const, text: "more" },
+          ],
+        },
+      ],
+    });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath: mk(false) });
+  const run = listRuns(store)[0]!;
+  const original = listSteps(store, run.run_id);
+  // Only the middle row is legacy — a run partially ingested by the old
+  // adapter, then extended by the new one. A detected shift used to
+  // strand exactly this row in the offset range and trim it, cascading
+  // its children away.
+  store.db
+    .prepare(
+      "UPDATE steps SET step_id = 'stp_legacy-mid' WHERE run_id = ? AND sequence = 1",
+    )
+    .run(run.run_id);
+  store.db
+    .prepare(
+      "UPDATE steps SET parent_step_id = 'stp_legacy-mid' WHERE run_id = ? AND sequence = 2",
+    )
+    .run(run.run_id);
+  attachFileChange(store, run.run_id, "stp_legacy-mid", "fc_mixed");
+
+  // Quiet tick migrates the one legacy row back to its deterministic id.
+  const rQuiet = await ingestCursorGlobal(store, { dbPath: mk(false) });
+  assert.equal(rQuiet.steps_added, 0);
+  const migrated = listSteps(store, run.run_id);
+  assert.deepEqual(
+    migrated.map((s) => s.step_id),
+    original.map((s) => s.step_id),
+    "migration restores the deterministic ids the new adapter would mint",
+  );
+  assert.equal(fileChangeStepId(store, "fc_mixed"), original[1]!.step_id);
+
+  // Now the reorder: every row (ex-legacy included) relocates by
+  // identity instead of being trimmed.
+  const rShift = await ingestCursorGlobal(store, { dbPath: mk(true) });
+  assert.equal(rShift.steps_added, 1);
+  const after = listSteps(store, run.run_id);
+  assert.equal(after.length, 4, "no row was destroyed by the rebuild");
+  assert.deepEqual(
+    after.map((s) => s.action.kind === "message" && s.action.text),
+    ["new first", "hello", "answer", "more"],
+  );
+  assert.equal(after[2]!.step_id, original[1]!.step_id, "ex-legacy row kept its id");
+  assert.equal(fileChangeStepId(store, "fc_mixed"), after[2]!.step_id);
+  assert.equal(listRuns(store)[0]!.step_count, 4);
   store.close();
 });
 
@@ -797,6 +978,63 @@ test("duplicated header bubbleId ingests once and stays stable", async () => {
   assert.equal(r2.steps_added, 0, "identical re-ingest must not rebuild");
   assert.equal(listRuns(store)[0]!.step_count, 2);
   store.close();
+});
+
+test("readComposerSnapshot re-reads the envelope inside the transaction and falls back on a wiped row", () => {
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-snap",
+        name: "Snap",
+        headers: [
+          { bubbleId: "u1", type: 1 },
+          { bubbleId: "a1", type: 2 },
+        ],
+        bubbles: [
+          { bubbleId: "u1", type: 1, text: "hello" },
+          { bubbleId: "a1", type: 2, text: "answer" },
+        ],
+      },
+    ],
+  });
+  const cursor = new CursorDb(dbPath);
+  const stale = cursor.listComposers()[0]!;
+
+  // Cursor commits a new turn between listComposers and the per-composer
+  // read: the snapshot must see envelope AND bubbles from one state —
+  // here, the newer one — never headers from one and bubbles from another.
+  const writer = new Database(dbPath);
+  writer
+    .prepare("INSERT INTO cursorDiskKV(key, value) VALUES (?, ?)")
+    .run(
+      "bubbleId:comp-snap:u2",
+      JSON.stringify({ _v: 3, bubbleId: "u2", type: 1, text: "more" }),
+    );
+  writer
+    .prepare("UPDATE cursorDiskKV SET value = ? WHERE key = 'composerData:comp-snap'")
+    .run(
+      JSON.stringify({
+        ...stale,
+        fullConversationHeadersOnly: [
+          ...(stale.fullConversationHeadersOnly ?? []),
+          { bubbleId: "u2", type: 1 },
+        ],
+      }),
+    );
+  const snap = cursor.readComposerSnapshot(stale);
+  assert.equal(snap.composer.fullConversationHeadersOnly?.length, 3);
+  assert.deepEqual(snap.bubbles.map((b) => b.bubbleId), ["u1", "a1", "u2"]);
+
+  // Composer wiped mid-tick (Cursor stores literal "null"): keep the
+  // caller's envelope rather than adopting a meaningless fresh row.
+  writer
+    .prepare("UPDATE cursorDiskKV SET value = 'null' WHERE key = 'composerData:comp-snap'")
+    .run();
+  writer.close();
+  const fallback = cursor.readComposerSnapshot(stale);
+  assert.equal(fallback.composer, stale);
+  assert.deepEqual(fallback.bubbles.map((b) => b.bubbleId), ["u1", "a1"]);
+  cursor.close();
 });
 
 test("erroed tool propagates to step status", async () => {
