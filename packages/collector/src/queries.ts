@@ -401,6 +401,59 @@ export function listSteps(store: Store, runId: string): Step[] {
   return rows.map(rowToStep);
 }
 
+/** Map of sequence → step_id for one run. Loads the whole run: re-ingest
+ *  reconciliation needs the full picture, and runs are conversation-sized. */
+export function listStepIdsBySequence(
+  store: Store,
+  runId: string,
+): Map<number, string> {
+  const rows = store.db
+    .prepare(
+      "SELECT sequence, step_id FROM steps WHERE run_id = ? ORDER BY sequence ASC",
+    )
+    .all(runId) as Array<{ sequence: number; step_id: string }>;
+  return new Map(rows.map((r) => [r.sequence, r.step_id]));
+}
+
+/** Delete a run's steps at `fromSequence` and beyond. For adapters that
+ *  mirror an external source of truth: trims the stale tail after a
+ *  conversation rewind, and (with fromSequence 0) rebuilds a run whose
+ *  turn order shifted. Deleting cascades file_change children — only use
+ *  on runs whose steps are fully re-derivable from the source. */
+export function deleteStepsFromSequence(
+  store: Store,
+  runId: string,
+  fromSequence: number,
+): void {
+  store.db
+    .prepare("DELETE FROM steps WHERE run_id = ? AND sequence >= ?")
+    .run(runId, fromSequence);
+}
+
+/** Shift every step of a run up by `offset` in one statement. Used by
+ *  re-ingest rebuilds to vacate the low sequence range so the upsert can
+ *  relocate surviving steps (same step_id) to new sequences without
+ *  (run_id, sequence) collisions — children stay attached because step
+ *  ids never change. Call inside a transaction: offset rows are an
+ *  intermediate state that must never be visible or persisted. */
+export function offsetStepSequences(
+  store: Store,
+  runId: string,
+  minOffset: number,
+): void {
+  // The offset must clear the run's current maximum so no row's target
+  // sequence collides with a not-yet-moved row under the immediate
+  // UNIQUE(run_id, sequence) constraint — even for corrupt or huge
+  // stored sequences.
+  const row = store.db
+    .prepare("SELECT MAX(sequence) AS m FROM steps WHERE run_id = ?")
+    .get(runId) as { m: number | null };
+  const offset = Math.max(minOffset, (row.m ?? -1) + 1);
+  store.db
+    .prepare("UPDATE steps SET sequence = sequence + ? WHERE run_id = ?")
+    .run(offset, runId);
+}
+
 export function getStep(store: Store, stepId: string): Step | undefined {
   const exact = store.db
     .prepare("SELECT * FROM steps WHERE step_id = ?")
