@@ -20,6 +20,7 @@ import {
   insertRun,
   insertStep,
   listStepIdsBySequence,
+  migrateStepId,
   offsetStepSequences,
   recordContextSnapshot,
   setRunStatus,
@@ -189,6 +190,12 @@ async function ingestOneComposer(
   args: ComposerIngestArgs,
 ): Promise<{ steps_added: number }> {
   const sessionId = comp.composerId;
+  // Re-read the envelope and materialize every bubble inside ONE read
+  // transaction — Cursor commits between bare per-bubble SELECTs, so
+  // without the snapshot the walk can observe a conversation state
+  // that never existed (half old turn order, half new).
+  const snapshot = cursor.readComposerSnapshot(comp);
+  comp = snapshot.composer;
   const existing = getRunBySessionId(store, sessionId);
   let runId: string;
   if (existing) {
@@ -221,7 +228,7 @@ async function ingestOneComposer(
   // bubbleId can never occupy two walk slots (which would corrupt the
   // sequence <-> id mapping and force perpetual rebuilds).
   const bubblesById = new Map<string, CursorBubble>();
-  for (const b of cursor.iterBubbles(comp)) {
+  for (const b of snapshot.bubbles) {
     if (!bubblesById.has(b.bubbleId)) bubblesById.set(b.bubbleId, b);
   }
 
@@ -254,8 +261,9 @@ async function ingestOneComposer(
   // Reconcile against rows from prior ingests. The walk always restarts
   // from bubble zero, so sequence does too — deterministic step ids make
   // insertStep's ON CONFLICT(step_id) upsert a no-op for unchanged
-  // bubbles, and legacy rows (pre-deterministic random ids) hit the
-  // (run_id, sequence) clause, which keeps the stored id. If the turn
+  // bubbles, and legacy rows (pre-deterministic random ids) get renamed
+  // to their deterministic id first (see legacyMigrations below), after
+  // which the same identity upsert covers them too. If the turn
   // order shifted (checkpoint restore, edited turn), relocating rows
   // would collide inside the upsert — detect that here and vacate the
   // sequence range in the commit phase below.
@@ -275,8 +283,9 @@ async function ingestOneComposer(
       // this bubble's id means the turn here was replaced (rewind plus
       // new message) — without a rebuild, the (run_id, sequence) clause
       // would graft the new turn onto the old turn's id. Legacy ids
-      // (random UUIDs, hyphenated) never match the format and keep the
-      // id-preserving upsert path.
+      // (random UUIDs, hyphenated) never match the format and never
+      // trigger a rebuild — the quiet path migrates them to
+      // deterministic ids instead (legacyMigrations below).
       const stored = existingIdBySeq.get(i);
       return (
         stored !== undefined &&
@@ -285,10 +294,38 @@ async function ingestOneComposer(
       );
     });
   }
+  // Legacy-id migration: rows written by the pre-deterministic adapter
+  // carry random ids, which shift detection can't recognize — a later
+  // reorder would rewrite them positionally (children grafted onto the
+  // wrong turn) or strand them in the offset range and trim them
+  // (children cascade-deleted). On a quiet ingest the positional
+  // invariant still holds — stored sequence i IS bubble i — so this is
+  // the one moment the legacy row's true identity is known. Rewrite it
+  // to the deterministic id (children and parent links follow inside
+  // the commit transaction below); every subsequent ingest then matches
+  // the row by identity, and shift detection covers it.
+  const legacyMigrations: Array<{ oldId: string; newId: string }> = [];
+  const migratedSeqs = new Set<number>();
+  if (!shifted && existingIdBySeq.size > 0) {
+    bubbles.forEach((b, i) => {
+      const stored = existingIdBySeq.get(i);
+      if (stored !== undefined && !DETERMINISTIC_STEP_ID_RE.test(stored)) {
+        legacyMigrations.push({ oldId: stored, newId: deterministicStepId(runId, b.bubbleId) });
+        migratedSeqs.add(i);
+      }
+    });
+    // Migrated rows are renames of pre-existing steps, not new ones.
+    for (const m of legacyMigrations) preIds.add(m.newId);
+  }
+
   // When shifted, the commit phase vacates every stored sequence, so the
   // (run_id, sequence) clause never fires and the computed id survives.
+  // A migrated sequence keeps the computed id too — by commit time the
+  // stored row has been renamed to exactly that id.
   const survivingIdAt = (seq: number, computedId: string): string =>
-    shifted ? computedId : existingIdBySeq.get(seq) ?? computedId;
+    shifted || migratedSeqs.has(seq)
+      ? computedId
+      : existingIdBySeq.get(seq) ?? computedId;
 
   // Phase 1 — build every step. Blob and snapshot writes happen here
   // (content-addressed, harmless if a crash strands them); step-table
@@ -341,9 +378,9 @@ async function ingestOneComposer(
         status: "ok",
       };
       steps.push(step);
-      // A legacy row at this sequence keeps its stored step_id through
-      // the (run_id, sequence) conflict clause — chain onto whichever
-      // id will actually survive, and only count genuinely new rows.
+      // Chain onto whichever id will actually survive the commit phase
+      // (migrated rows take the computed id; anything else keeps its
+      // stored id), and only count genuinely new rows.
       prevStepId = survivingIdAt(sequence, stepId);
       if (!preIds.has(prevStepId)) stepsAdded += 1;
       sequence += 1;
@@ -434,6 +471,19 @@ async function ingestOneComposer(
   // server shares this SQLite file) see the old state or the new state,
   // never a partial one.
   const commit = store.db.transaction(() => {
+    if (legacyMigrations.length > 0) {
+      // steps.step_id is a parent key (file_change.step_id references
+      // it; foreign_keys is ON with immediate enforcement). Renaming
+      // the parent while children point at the old id — or repointing
+      // children first, at a not-yet-existing id — would each fail
+      // mid-flight; defer enforcement to COMMIT so the rename and the
+      // child repoint land together. The pragma is transaction-scoped
+      // and resets itself when this transaction ends.
+      store.db.pragma("defer_foreign_keys = ON");
+      for (const m of legacyMigrations) {
+        migrateStepId(store, runId, m.oldId, m.newId);
+      }
+    }
     if (shifted) {
       // Vacate every stored sequence instead of deleting: the upsert
       // below relocates surviving bubbles (same deterministic id) back
