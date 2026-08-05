@@ -98,6 +98,40 @@ export class CursorDb {
     }
   }
 
+  /**
+   * Materialize one composer's conversation — envelope plus bubbles —
+   * inside a single read transaction, so the result is one consistent
+   * snapshot of Cursor's db rather than a state that never existed.
+   *
+   * `iterBubbles` issues an independent SELECT per bubble; Cursor can
+   * commit between any two of them, tearing the view (bubble N from
+   * the old conversation, bubble N+1 from the new one). Cursor runs
+   * WAL mode, so a read transaction on this readonly connection pins
+   * the snapshot for its duration without blocking Cursor's writer —
+   * verified empirically against better-sqlite3 (its `.transaction()`
+   * wraps in plain deferred BEGIN/COMMIT, both legal read-only).
+   *
+   * The envelope is re-fetched inside the same transaction so headers
+   * and bubbles agree; if the fresh row vanished or no longer parses
+   * as a meaningful composer (wiped mid-tick), we keep the caller's
+   * envelope — its headers then point at bubbles the snapshot can't
+   * see, which downstream torn-read guards treat as a skip, never as
+   * a rewind.
+   */
+  readComposerSnapshot(composer: CursorComposerData): {
+    composer: CursorComposerData;
+    bubbles: CursorBubble[];
+  } {
+    const read = this.db.transaction(
+      (c: CursorComposerData) => {
+        const fresh = this.getComposer(c.composerId);
+        const envelope = fresh && isMeaningfulComposer(fresh) ? fresh : c;
+        return { composer: envelope, bubbles: [...this.iterBubbles(envelope)] };
+      },
+    );
+    return read(composer);
+  }
+
   /** Schema sanity check — used by doctor and tests. */
   hasCursorDiskKV(): boolean {
     const r = this.db
