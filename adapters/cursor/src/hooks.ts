@@ -59,7 +59,13 @@ export interface CursorHookResult {
   response?: Record<string, unknown>;
 }
 
-const HOOK_SEQUENCE_BASE = 100_000;
+/**
+ * Hook-plane steps occupy [HOOK_SEQUENCE_BASE, SEQUENCE_REBUILD_OFFSET)
+ * — far above any real bubble walk, far below the DB adapter's rebuild
+ * offset — so DB-side reconciliation (bounded trims/offsets in
+ * ingest.ts) never touches them.
+ */
+export const HOOK_SEQUENCE_BASE = 100_000;
 
 export async function handleCursorHookEvent(
   store: Store,

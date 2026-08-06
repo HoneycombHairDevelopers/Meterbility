@@ -401,6 +401,125 @@ export function listSteps(store: Store, runId: string): Step[] {
   return rows.map(rowToStep);
 }
 
+/** Map of sequence → step_id for one run. Loads the whole run: re-ingest
+ *  reconciliation needs the full picture, and runs are conversation-sized. */
+export function listStepIdsBySequence(
+  store: Store,
+  runId: string,
+): Map<number, string> {
+  const rows = store.db
+    .prepare(
+      "SELECT sequence, step_id FROM steps WHERE run_id = ? ORDER BY sequence ASC",
+    )
+    .all(runId) as Array<{ sequence: number; step_id: string }>;
+  return new Map(rows.map((r) => [r.sequence, r.step_id]));
+}
+
+/** Delete a run's steps at `fromSequence` and beyond. For adapters that
+ *  mirror an external source of truth: trims the stale tail after a
+ *  conversation rewind, and (with fromSequence 0) rebuilds a run whose
+ *  turn order shifted. Deleting cascades file_change children — only use
+ *  on runs whose steps are fully re-derivable from the source. */
+export function deleteStepsFromSequence(
+  store: Store,
+  runId: string,
+  fromSequence: number,
+  belowSequence?: number,
+): void {
+  // Optional upper bound lets adapters that mix capture planes in one
+  // run (e.g. Cursor's bubble walk below 100k + hook-captured steps
+  // above it) trim only their own sequence range.
+  if (belowSequence !== undefined) {
+    store.db
+      .prepare(
+        "DELETE FROM steps WHERE run_id = ? AND sequence >= ? AND sequence < ?",
+      )
+      .run(runId, fromSequence, belowSequence);
+    return;
+  }
+  store.db
+    .prepare("DELETE FROM steps WHERE run_id = ? AND sequence >= ?")
+    .run(runId, fromSequence);
+}
+
+/** Shift every step of a run up by `offset` in one statement. Used by
+ *  re-ingest rebuilds to vacate the low sequence range so the upsert can
+ *  relocate surviving steps (same step_id) to new sequences without
+ *  (run_id, sequence) collisions — children stay attached because step
+ *  ids never change. Call inside a transaction: offset rows are an
+ *  intermediate state that must never be visible or persisted. */
+export function offsetStepSequences(
+  store: Store,
+  runId: string,
+  minOffset: number,
+  belowSequence?: number,
+): void {
+  // The offset must clear the run's current maximum so no row's target
+  // sequence collides with a not-yet-moved row under the immediate
+  // UNIQUE(run_id, sequence) constraint — even for corrupt or huge
+  // stored sequences. The MAX stays global (not range-bounded) so
+  // relocated rows can't collide with rows outside the bounded range
+  // either.
+  const row = store.db
+    .prepare("SELECT MAX(sequence) AS m FROM steps WHERE run_id = ?")
+    .get(runId) as { m: number | null };
+  const offset = Math.max(minOffset, (row.m ?? -1) + 1);
+  if (belowSequence !== undefined) {
+    // Bounded: adapters mixing capture planes offset only their own
+    // range (see deleteStepsFromSequence's bound).
+    store.db
+      .prepare(
+        "UPDATE steps SET sequence = sequence + ? WHERE run_id = ? AND sequence < ?",
+      )
+      .run(offset, runId, belowSequence);
+    return;
+  }
+  store.db
+    .prepare("UPDATE steps SET sequence = sequence + ? WHERE run_id = ?")
+    .run(offset, runId);
+}
+
+/** Rewrite one step's id in place, carrying every reference along:
+ *  file_change children (FK on steps.step_id) and parent_step_id links
+ *  from later steps of the same run. For adapters upgrading legacy
+ *  random ids to deterministic ones so future re-ingests can match
+ *  rows by identity instead of position.
+ *
+ *  MUST run inside a transaction with `PRAGMA defer_foreign_keys = ON`:
+ *  foreign_keys is ON (ensureSchema) and enforcement is immediate, so
+ *  renaming the parent key while file_change children still reference
+ *  the old id — or repointing children before the new id exists — each
+ *  fail mid-flight. Deferral moves the check to COMMIT, where both
+ *  sides have landed; the pragma resets itself when the transaction
+ *  ends, so enforcement is back to immediate afterwards. */
+export function migrateStepId(
+  store: Store,
+  runId: string,
+  oldId: string,
+  newId: string,
+): void {
+  store.db
+    .prepare("UPDATE steps SET step_id = ? WHERE run_id = ? AND step_id = ?")
+    .run(newId, runId, oldId);
+  store.db
+    .prepare(
+      "UPDATE file_change SET step_id = ? WHERE run_id = ? AND step_id = ?",
+    )
+    .run(newId, runId, oldId);
+  store.db
+    .prepare(
+      "UPDATE steps SET parent_step_id = ? WHERE run_id = ? AND parent_step_id = ?",
+    )
+    .run(newId, runId, oldId);
+  // Annotations address steps polymorphically (target_kind, target_id)
+  // — no FK, but a user's note on a legacy step must follow the rename.
+  store.db
+    .prepare(
+      "UPDATE annotations SET target_id = ? WHERE target_kind = 'step' AND target_id = ?",
+    )
+    .run(newId, oldId);
+}
+
 export function getStep(store: Store, stepId: string): Step | undefined {
   const exact = store.db
     .prepare("SELECT * FROM steps WHERE step_id = ?")

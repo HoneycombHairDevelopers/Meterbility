@@ -131,3 +131,68 @@ test("unknown events and missing conversation_id are ignored, never throw", asyn
   assert.equal(listRuns(store).length, 0);
   store.close();
 });
+
+test("hook steps survive DB-ingest reconciliation (bounded trims/offsets)", async () => {
+  freshHome();
+  const store = Store.open();
+  const { mkdtempSync: mkTmp } = await import("node:fs");
+  const { tmpdir: tmp } = await import("node:os");
+  const { join: j } = await import("node:path");
+  const Database = (await import("better-sqlite3")).default;
+
+  // 1. Hook event arrives first (real-time plane).
+  await handleCursorHookEvent(store, {
+    hook_event_name: "afterFileEdit",
+    conversation_id: "comp-mixed",
+    generation_id: "gen-x",
+    workspace_roots: ["/tmp/mixed"],
+    file_path: "/tmp/mixed/a.ts",
+    edits: [{ old_string: "1", new_string: "2" }],
+  });
+
+  // 2. DB ingest of the same composer (batch plane) — twice, to run
+  //    reconciliation against existing rows.
+  const dir = mkTmp(j(tmp(), "cursor-mixed-"));
+  const dbPath = j(dir, "state.vscdb");
+  const cdb = new Database(dbPath);
+  cdb.exec("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+  const ins = cdb.prepare("INSERT INTO cursorDiskKV(key, value) VALUES (?, ?)");
+  ins.run(
+    "composerData:comp-mixed",
+    JSON.stringify({
+      _v: 10,
+      composerId: "comp-mixed",
+      name: "mixed planes",
+      status: "completed",
+      createdAt: Date.now(),
+      lastUpdatedAt: Date.now(),
+      fullConversationHeadersOnly: [{ bubbleId: "u1", type: 1 }],
+      text: "mixed planes",
+      unifiedMode: "agent",
+    }),
+  );
+  ins.run(
+    "bubbleId:comp-mixed:u1",
+    JSON.stringify({ _v: 3, bubbleId: "u1", type: 1, text: "hi", createdAt: new Date().toISOString() }),
+  );
+  cdb.close();
+
+  const { ingestCursorGlobal } = await import("./ingest.ts");
+  await ingestCursorGlobal(store, { dbPath });
+  await ingestCursorGlobal(store, { dbPath }); // reconcile pass
+
+  const runs = listRuns(store);
+  assert.equal(runs.length, 1, "hook run and DB run merged on conversation_id");
+  const steps = listSteps(store, runs[0]!.run_id);
+  const hookSteps = steps.filter((s) => s.sequence >= 100_000);
+  const walkSteps = steps.filter((s) => s.sequence < 100_000);
+  assert.equal(hookSteps.length, 1, "hook step survived reconciliation trims");
+  assert.equal(walkSteps.length, 1, "bubble walk ingested normally");
+  const fcCount = (
+    store.db
+      .prepare(`SELECT COUNT(*) AS n FROM file_change WHERE run_id = ?`)
+      .get(runs[0]!.run_id) as { n: number }
+  ).n;
+  assert.equal(fcCount, 1, "hook file_change not cascade-deleted");
+  store.close();
+});

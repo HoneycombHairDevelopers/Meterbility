@@ -9,12 +9,20 @@ import type {
   Step,
   TokenUsage,
 } from "@meterbility/shared";
-import { hashJson } from "@meterbility/shared";
 import { costCents } from "@meterbility/spec";
 import {
+  DETERMINISTIC_STEP_ID_RE,
+  deterministicStepId,
+  hashJson,
+} from "@meterbility/shared";
+import {
+  deleteStepsFromSequence,
   getRunBySessionId,
   insertRun,
   insertStep,
+  listStepIdsBySequence,
+  migrateStepId,
+  offsetStepSequences,
   recordContextSnapshot,
   setRunStatus,
   updateRunTotals,
@@ -23,6 +31,7 @@ import {
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import { extractCursorFileChanges } from "./file_changes.ts";
+import { HOOK_SEQUENCE_BASE } from "./hooks.ts";
 import { CursorDb, isMeaningfulComposer } from "./parser.ts";
 import {
   bubbleText,
@@ -34,10 +43,17 @@ import {
 
 const SOURCE_RUNTIME = "cursor" as const;
 
+/** Rebuilds vacate stored sequences by at least this offset — far above
+ *  any real conversation length, so offset rows can never collide with
+ *  the walk. */
+const SEQUENCE_REBUILD_OFFSET = 1_000_000;
+
 export interface CursorIngestResult {
   workspace_id?: string;
   composers_seen: number;
   composers_ingested: number;
+  /** Composers whose ingest threw and rolled back; retried next run. */
+  composers_failed?: number;
   steps_added: number;
   status: "ok" | "no_db" | "no_composers";
   reason?: string;
@@ -149,27 +165,36 @@ export async function ingestCursorGlobal(
     };
 
     let composersIngested = 0;
+    let composersFailed = 0;
     let stepsAdded = 0;
     for (const comp of composers) {
-      let cwd = opts.cwd;
-      if (!cwd) {
-        const wsId = cursor.workspaceIdForComposer(comp.composerId);
-        cwd = wsId ? await workspaceCwdById(wsId) : undefined;
+      try {
+        let cwd = opts.cwd;
+        if (!cwd) {
+          const wsId = cursor.workspaceIdForComposer(comp.composerId);
+          cwd = wsId ? await workspaceCwdById(wsId) : undefined;
+        }
+        cwd ??= "(cursor)";
+        const { projectId, agentId } = resolveProject(cwd);
+        const result = await ingestOneComposer(store, cursor, comp, {
+          projectId,
+          agentId,
+          cwd,
+        });
+        composersIngested += 1;
+        stepsAdded += result.steps_added;
+      } catch {
+        // One poisoned composer (schema drift, torn concurrent write)
+        // must not starve every other conversation on every tick — the
+        // step-table transaction rolled back; the next ingest retries.
+        composersFailed += 1;
       }
-      cwd ??= "(cursor)";
-      const { projectId, agentId } = resolveProject(cwd);
-      const result = await ingestOneComposer(store, cursor, comp, {
-        projectId,
-        agentId,
-        cwd,
-      });
-      composersIngested += 1;
-      stepsAdded += result.steps_added;
     }
 
     return {
       composers_seen: composers.length,
       composers_ingested: composersIngested,
+      ...(composersFailed > 0 ? { composers_failed: composersFailed } : {}),
       steps_added: stepsAdded,
       status: "ok",
     };
@@ -191,6 +216,12 @@ async function ingestOneComposer(
   args: ComposerIngestArgs,
 ): Promise<{ steps_added: number }> {
   const sessionId = comp.composerId;
+  // Re-read the envelope and materialize every bubble inside ONE read
+  // transaction — Cursor commits between bare per-bubble SELECTs, so
+  // without the snapshot the walk can observe a conversation state
+  // that never existed (half old turn order, half new).
+  const snapshot = cursor.readComposerSnapshot(comp);
+  comp = snapshot.composer;
   const existing = getRunBySessionId(store, sessionId);
   let runId: string;
   if (existing) {
@@ -219,14 +250,131 @@ async function ingestOneComposer(
     insertRun(store, run);
   }
 
+  // Cursor's db is trusted verbatim — dedupe headers so a repeated
+  // bubbleId can never occupy two walk slots (which would corrupt the
+  // sequence <-> id mapping and force perpetual rebuilds).
+  const bubblesById = new Map<string, CursorBubble>();
+  for (const b of snapshot.bubbles) {
+    if (!bubblesById.has(b.bubbleId)) bubblesById.set(b.bubbleId, b);
+  }
+
+  // Only user/assistant bubbles become steps; drop the rest up front so
+  // a bubble's index in this array equals its step sequence.
+  const bubbles = [...bubblesById.values()].filter(
+    (b) => isUserBubble(b) || isAssistantBubble(b),
+  );
+
+  // Torn-read guards: Cursor flushes composer headers before bubble
+  // rows, and each bubble is a separate SELECT, so the walk can see
+  // fewer bubbles than the headers claim — or none that classify as
+  // user/assistant, if Cursor drifts the type encoding. Reconciling an
+  // existing run against such a partial view would delete real steps
+  // and cascade away file_change children that cannot be re-derived.
+  // Skip; the next ingest sees the flushed rows. Trade-off: a composer
+  // whose bubble rows Cursor permanently dropped stops updating —
+  // stale, never destructive.
+  const uniqueHeaderCount = new Set(
+    (comp.fullConversationHeadersOnly ?? []).map((h) => h.bubbleId),
+  ).size;
+  if (
+    existing &&
+    uniqueHeaderCount > 0 &&
+    (bubblesById.size < uniqueHeaderCount || bubbles.length === 0)
+  ) {
+    return { steps_added: 0 };
+  }
+
+  // Reconcile against rows from prior ingests. The walk always restarts
+  // from bubble zero, so sequence does too — deterministic step ids make
+  // insertStep's ON CONFLICT(step_id) upsert a no-op for unchanged
+  // bubbles, and legacy rows (pre-deterministic random ids) get renamed
+  // to their deterministic id first (see legacyMigrations below), after
+  // which the same identity upsert covers them too. If the turn
+  // order shifted (checkpoint restore, edited turn), relocating rows
+  // would collide inside the upsert — detect that here and vacate the
+  // sequence range in the commit phase below.
+  // Reconciliation only concerns the bubble-walk range — hook-plane
+  // steps (sequence >= HOOK_SEQUENCE_BASE, written by meter cursor-hook)
+  // are a separate capture channel and must be invisible to shift
+  // detection, migration, counting, and trims.
+  const existingIdBySeq = new Map<number, string>();
+  if (existing) {
+    for (const [seq, id] of listStepIdsBySequence(store, runId)) {
+      if (seq < HOOK_SEQUENCE_BASE) existingIdBySeq.set(seq, id);
+    }
+  }
+  const preIds = new Set(existingIdBySeq.values());
+  let shifted = false;
+  if (existingIdBySeq.size > 0) {
+    const seqById = new Map<string, number>();
+    for (const [seq, id] of existingIdBySeq) seqById.set(id, seq);
+    shifted = bubbles.some((b, i) => {
+      const computed = deterministicStepId(runId, b.bubbleId);
+      const at = seqById.get(computed);
+      if (at !== undefined && at !== i) return true;
+      // A deterministic-format id stored at this sequence that isn't
+      // this bubble's id means the turn here was replaced (rewind plus
+      // new message) — without a rebuild, the (run_id, sequence) clause
+      // would graft the new turn onto the old turn's id. Legacy ids
+      // (random UUIDs, hyphenated) never match the format and never
+      // trigger a rebuild — the quiet path migrates them to
+      // deterministic ids instead (legacyMigrations below).
+      const stored = existingIdBySeq.get(i);
+      return (
+        stored !== undefined &&
+        stored !== computed &&
+        DETERMINISTIC_STEP_ID_RE.test(stored)
+      );
+    });
+  }
+  // Legacy-id migration: rows written by the pre-deterministic adapter
+  // carry random ids, which shift detection can't recognize — a later
+  // reorder would rewrite them positionally (children grafted onto the
+  // wrong turn) or strand them in the offset range and trim them
+  // (children cascade-deleted). On a quiet ingest the positional
+  // invariant still holds — stored sequence i IS bubble i — so this is
+  // the one moment the legacy row's true identity is known. Rewrite it
+  // to the deterministic id (children and parent links follow inside
+  // the commit transaction below); every subsequent ingest then matches
+  // the row by identity, and shift detection covers it.
+  const legacyMigrations: Array<{ oldId: string; newId: string }> = [];
+  const migratedSeqs = new Set<number>();
+  if (!shifted && existingIdBySeq.size > 0) {
+    bubbles.forEach((b, i) => {
+      const stored = existingIdBySeq.get(i);
+      if (stored !== undefined && !DETERMINISTIC_STEP_ID_RE.test(stored)) {
+        legacyMigrations.push({ oldId: stored, newId: deterministicStepId(runId, b.bubbleId) });
+        migratedSeqs.add(i);
+      }
+    });
+    // Migrated rows are renames of pre-existing steps, not new ones.
+    for (const m of legacyMigrations) preIds.add(m.newId);
+  }
+
+  // When shifted, the commit phase vacates every stored sequence, so the
+  // (run_id, sequence) clause never fires and the computed id survives.
+  // A migrated sequence keeps the computed id too — by commit time the
+  // stored row has been renamed to exactly that id.
+  const survivingIdAt = (seq: number, computedId: string): string =>
+    shifted || migratedSeqs.has(seq)
+      ? computedId
+      : existingIdBySeq.get(seq) ?? computedId;
+
+  // Phase 1 — build every step. Blob and snapshot writes happen here
+  // (content-addressed, harmless if a crash strands them); step-table
+  // writes are deferred to the atomic commit phase below.
+  //
   // History accumulates as we walk bubbles in order. Each assistant step
   // sees all prior user/assistant bubbles in its context snapshot.
   const history: ConversationMessage[] = [];
-  let sequence = existing ? (existing.step_count ?? 0) : 0;
+  const steps: Step[] = [];
+  const pendingFileChanges: Array<{ bubble: CursorBubble; stepId: string }> =
+    [];
+  let sequence = 0;
   let prevStepId: string | undefined;
   let stepsAdded = 0;
 
-  for (const bubble of cursor.iterBubbles(comp)) {
+  for (const bubble of bubbles) {
     const text = bubbleText(bubble);
 
     if (isUserBubble(bubble)) {
@@ -246,7 +394,7 @@ async function ingestOneComposer(
       recordContextSnapshot(store, snapshot.id, blobRef, snapshot.components.length);
 
       const decisionRef = await store.blobs.putString(text);
-      const stepId = `stp_${randomUUID()}`;
+      const stepId = deterministicStepId(runId, bubble.bubbleId);
       const step: Step = {
         step_id: stepId,
         run_id: runId,
@@ -264,10 +412,13 @@ async function ingestOneComposer(
         tags: ["cursor", "user-turn"],
         status: "ok",
       };
-      insertStep(store, step);
-      prevStepId = stepId;
+      steps.push(step);
+      // Chain onto whichever id will actually survive the commit phase
+      // (migrated rows take the computed id; anything else keeps its
+      // stored id), and only count genuinely new rows.
+      prevStepId = survivingIdAt(sequence, stepId);
+      if (!preIds.has(prevStepId)) stepsAdded += 1;
       sequence += 1;
-      stepsAdded += 1;
       continue;
     }
 
@@ -312,7 +463,7 @@ async function ingestOneComposer(
             })
           : undefined;
 
-      const stepId = `stp_${randomUUID()}`;
+      const stepId = deterministicStepId(runId, bubble.bubbleId);
       const step: Step = {
         step_id: stepId,
         run_id: runId,
@@ -335,18 +486,15 @@ async function ingestOneComposer(
               ? "in_progress"
               : "ok",
       };
-      insertStep(store, step);
-      await extractCursorFileChanges(
-        store,
-        cursor,
-        comp.composerId,
-        bubble,
-        runId,
-        stepId,
-      );
-      prevStepId = stepId;
+      steps.push(step);
+      prevStepId = survivingIdAt(sequence, stepId);
+      if (!preIds.has(prevStepId)) stepsAdded += 1;
+      // File-change extraction runs AFTER the commit phase (needs the
+      // step rows to exist for the FK) against whichever id survives.
+      if (bubble.toolFormerData) {
+        pendingFileChanges.push({ bubble, stepId: prevStepId });
+      }
       sequence += 1;
-      stepsAdded += 1;
 
       // Append a synthetic assistant entry to history so subsequent
       // bubbles see the prior turn.
@@ -358,8 +506,73 @@ async function ingestOneComposer(
     }
   }
 
-  setRunStatus(store, runId, composerStatus(comp), epochMsToIso(comp.lastUpdatedAt));
-  updateRunTotals(store, runId);
+  // Partial classification drift: some fetched bubbles no longer
+  // classify as user/assistant (per-row schema drift or a torn row).
+  // If reconciliation would be destructive — a shift rebuild or a tail
+  // trim — don't trust the reduced view; skip and let a later ingest
+  // (or an adapter fix) see the full conversation. Composers with a
+  // legitimately unclassifiable bubble type still ingest normally as
+  // long as no destructive action is pending.
+  if (
+    existing &&
+    bubbles.length < bubblesById.size &&
+    (shifted || sequence < existingIdBySeq.size)
+  ) {
+    return { steps_added: 0 };
+  }
+
+  // Phase 2 — commit every step-table write atomically. A crash must
+  // never leave the run half-rebuilt, and concurrent readers (the live
+  // server shares this SQLite file) see the old state or the new state,
+  // never a partial one.
+  const commit = store.db.transaction(() => {
+    if (legacyMigrations.length > 0) {
+      // steps.step_id is a parent key (file_change.step_id references
+      // it; foreign_keys is ON with immediate enforcement). Renaming
+      // the parent while children point at the old id — or repointing
+      // children first, at a not-yet-existing id — would each fail
+      // mid-flight; defer enforcement to COMMIT so the rename and the
+      // child repoint land together. The pragma is transaction-scoped
+      // and resets itself when this transaction ends.
+      store.db.pragma("defer_foreign_keys = ON");
+      for (const m of legacyMigrations) {
+        migrateStepId(store, runId, m.oldId, m.newId);
+      }
+    }
+    if (shifted) {
+      // Vacate every stored sequence instead of deleting: the upsert
+      // below relocates surviving bubbles (same deterministic id) back
+      // into place, so file_change children stay attached. Offset rows
+      // left unmatched are bubbles that vanished from the source; the
+      // trim below removes them.
+      offsetStepSequences(store, runId, SEQUENCE_REBUILD_OFFSET, HOOK_SEQUENCE_BASE);
+    }
+    for (const step of steps) insertStep(store, step);
+    // A rewound composer (checkpoint restore) has fewer bubbles than the
+    // run has steps — trim the stale tail (and any unmatched offset
+    // rows) so totals mirror the source. Bounded below HOOK_SEQUENCE_BASE
+    // so hook-captured steps (the real-time plane, sequence 100000+)
+    // survive DB-side reconciliation; offset strays are trimmed by the
+    // second, unbounded-from-the-rebuild-offset call.
+    deleteStepsFromSequence(store, runId, sequence, HOOK_SEQUENCE_BASE);
+    deleteStepsFromSequence(store, runId, SEQUENCE_REBUILD_OFFSET);
+    setRunStatus(store, runId, composerStatus(comp), epochMsToIso(comp.lastUpdatedAt));
+    updateRunTotals(store, runId);
+  });
+  commit();
+
+  // File-change extraction (blob writes are async, and the rows FK onto
+  // the just-committed steps). Idempotent per (run, bubble, path).
+  for (const p of pendingFileChanges) {
+    await extractCursorFileChanges(
+      store,
+      cursor,
+      comp.composerId,
+      p.bubble,
+      runId,
+      p.stepId,
+    );
+  }
   return { steps_added: stepsAdded };
 }
 
