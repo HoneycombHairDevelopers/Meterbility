@@ -177,6 +177,33 @@ export class CursorDb {
     return read(composer);
   }
 
+  /** List cursorDiskKV keys under a prefix (checkpoints, fates, ...). */
+  listKeysByPrefix(prefix: string): string[] {
+    const rows = this.db
+      .prepare("SELECT key FROM cursorDiskKV WHERE key LIKE ? ORDER BY key")
+      .all(prefix + "%") as Array<{ key: string }>;
+    return rows.map((r) => r.key);
+  }
+
+  /**
+   * Read a value from the ItemTable (VS Code-style key/value store —
+   * home of aiCodeTrackingLines). Guarded: fixtures and future Cursor
+   * versions may not have the table.
+   */
+  getItemTable(key: string): string | undefined {
+    const hasTable = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='ItemTable'",
+      )
+      .get();
+    if (!hasTable) return undefined;
+    const row = this.db
+      .prepare("SELECT value FROM ItemTable WHERE key = ?")
+      .get(key) as { value: string | Buffer | null } | undefined;
+    if (!row || row.value == null) return undefined;
+    return typeof row.value === "string" ? row.value : row.value.toString("utf-8");
+  }
+
   /** Schema sanity check — used by doctor and tests. */
   hasCursorDiskKV(): boolean {
     const r = this.db

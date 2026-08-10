@@ -31,6 +31,7 @@ import {
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import { extractCursorFileChanges } from "./file_changes.ts";
+import { ingestCursorExtras, readAiTrackingSummary } from "./extras.ts";
 import { HOOK_SEQUENCE_BASE } from "./hooks.ts";
 import { CursorDb, isMeaningfulComposer } from "./parser.ts";
 import {
@@ -164,6 +165,10 @@ export async function ingestCursorGlobal(
       return hit;
     };
 
+    // Cursor's own per-line AI-authorship ledger — parsed once per pull
+    // (it's one large ItemTable row), summarized per composer below.
+    const aiSummary = readAiTrackingSummary(cursor);
+
     let composersIngested = 0;
     let composersFailed = 0;
     let stepsAdded = 0;
@@ -183,6 +188,13 @@ export async function ingestCursorGlobal(
         });
         composersIngested += 1;
         stepsAdded += result.steps_added;
+        // Supplementary evidence (checkpoint fallback rows + AI-lines
+        // annotation). Best-effort: extras must never fail an ingest.
+        try {
+          await ingestCursorExtras(store, cursor, comp.composerId, aiSummary);
+        } catch {
+          // ignore — extras are additive
+        }
       } catch {
         // One poisoned composer (schema drift, torn concurrent write)
         // must not starve every other conversation on every tick — the

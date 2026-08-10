@@ -5,3 +5,4 @@ export * from "./ingest.ts";
 export * from "./file_changes.ts";
 export * from "./hooks.ts";
 export * from "./admin_api.ts";
+export * from "./extras.ts";
