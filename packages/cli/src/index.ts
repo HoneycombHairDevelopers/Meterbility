@@ -25,6 +25,7 @@ import { registerFilesCommand } from "./commands/files.ts";
 import { registerProbeCommand } from "./commands/probe.ts";
 import { registerCaptureCommand } from "./commands/capture.ts";
 import { registerCursorHookCommand } from "./commands/cursor-hook.ts";
+import { registerCursorUsageCommand } from "./commands/cursor-usage.ts";
 
 // Single source of truth for the version: the package manifest. Both
 // the dev entry (src/index.ts via tsx) and the built one (dist/index.js)
@@ -61,6 +62,7 @@ registerConfigCommand(program);
 registerWatchCommand(program);
 registerCaptureCommand(program);
 registerCursorHookCommand(program);
+registerCursorUsageCommand(program);
 registerOpenCommand(program);
 registerProxyCommand(program);
 registerRunCommand(program);
