@@ -9,7 +9,7 @@ meter web --live
 # → http://127.0.0.1:4317  (auto-opens browser)
 ```
 
-The `--live` flag tells Meterbility to watch `~/.claude/projects/` for new sessions and growing session files. Every ~1.5s it scans, runs incremental ingest on anything new, and emits structured events over Server-Sent Events (`/api/live`). The fleet view updates without a page refresh.
+The `--live` flag tells Meterbility to watch `~/.claude/projects/` (Claude Code) and, as of v0.5.1, `~/.codex` (Codex CLI rollouts) for new sessions and growing session files. Every ~1.5s it scans, runs incremental ingest on anything new, and emits structured events over Server-Sent Events (`/api/live`). The fleet view updates without a page refresh.
 
 ### How live is it? (near-realtime, not instantaneous)
 
