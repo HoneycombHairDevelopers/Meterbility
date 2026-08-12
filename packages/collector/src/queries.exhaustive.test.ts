@@ -9,6 +9,7 @@ import type { Run, Step, TokenUsage } from "@meterbility/shared";
 import { Store } from "./store.ts";
 import {
   aggregateTokens,
+  deleteStepsFromSequence,
   findBaselineByManifest,
   getBaselineTree,
   getIngestOffset,
@@ -25,6 +26,7 @@ import {
   listForks,
   listRuns,
   listSteps,
+  offsetStepSequences,
   recordContextSnapshot,
   resolveSnapshotBlobRef,
   setIngestOffset,
@@ -1254,6 +1256,54 @@ test("property P4: getRun is idempotent — calling twice with the same id retur
       }),
       { numRuns: 30 },
     );
+  } finally {
+    c.cleanup();
+  }
+});
+
+/* ====================================================================
+ * Bounded reconciliation helpers (cross-vendor parity, 2026-08).
+ * Adapters that mix capture planes in one run (Cursor: bubble walk
+ * below 100k, hook/admin/checkpoint steps above) pass belowSequence so
+ * trims and offsets only touch their own range; the default (no bound)
+ * path must keep its original whole-run semantics.
+ * ==================================================================== */
+
+test("deleteStepsFromSequence/offsetStepSequences: belowSequence bounds the range; default path is unbounded", () => {
+  const c = freshCtx();
+  try {
+    const proj = upsertProjectByCwd(c.store, "/tmp/bounded", "bounded");
+    const agent = upsertAgent(c.store, proj.project_id, "cursor");
+    const run = mkRun(proj.project_id, agent.agent_id);
+    insertRun(c.store, run);
+    // Bubble plane: 0,1,2. Hook plane: 100000, 100001.
+    for (const seq of [0, 1, 2, 100_000, 100_001]) {
+      insertStep(c.store, mkStep(run.run_id, seq));
+    }
+
+    // Bounded trim: removes [1, 100000) only — hook rows survive.
+    deleteStepsFromSequence(c.store, run.run_id, 1, 100_000);
+    let seqs = listSteps(c.store, run.run_id).map((s) => s.sequence);
+    assert.deepEqual(seqs, [0, 100_000, 100_001]);
+
+    // Bounded offset: relocates only rows below the bound, and the
+    // offset clears the GLOBAL max so relocated rows cannot collide
+    // with rows outside the bounded range.
+    offsetStepSequences(c.store, run.run_id, 1_000_000, 100_000);
+    seqs = listSteps(c.store, run.run_id).map((s) => s.sequence);
+    assert.equal(seqs.length, 3);
+    assert.ok(seqs.includes(100_000) && seqs.includes(100_001), "hook rows untouched");
+    const relocated = seqs.find((s) => s >= 1_000_000);
+    assert.ok(relocated !== undefined, "bubble row relocated above the global max");
+
+    // Default (unbounded) trim keeps its original semantics: everything
+    // from the given sequence up, hook rows included when in range.
+    deleteStepsFromSequence(c.store, run.run_id, 1_000_000);
+    seqs = listSteps(c.store, run.run_id).map((s) => s.sequence);
+    assert.deepEqual(seqs, [100_000, 100_001], "unbounded trim removed the strays");
+
+    deleteStepsFromSequence(c.store, run.run_id, 0);
+    assert.equal(listSteps(c.store, run.run_id).length, 0, "unbounded trim from 0 clears the run");
   } finally {
     c.cleanup();
   }

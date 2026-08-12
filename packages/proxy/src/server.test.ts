@@ -408,3 +408,67 @@ test("proxy strips x-meterbility-* headers before forwarding upstream", async ()
     await upstream.close();
   }
 });
+
+test("proxy persists x-meterbility-cwd/git-branch/run-id as run metadata", async () => {
+  freshHome();
+  const upstream = await startFakeUpstream((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: "msg_meta",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 3, output_tokens: 1 },
+      }),
+    );
+  });
+  const proxy = await startProxy({
+    port: 0,
+    upstreams: { anthropic: upstream.url },
+    spec: { project: "/tmp/proxy-meta", agent: "smoke" },
+    logger: () => {},
+  });
+  try {
+    await fetch(proxy.url + "/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-meterbility-run-id": "run_meta_test",
+        "x-meterbility-cwd": "/home/dev/edge-project",
+        "x-meterbility-git-branch": "feat/edge",
+      },
+      body: JSON.stringify({
+        model: "claude-opus-4-7",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    await settled();
+
+    const store = Store.open();
+    try {
+      const runs = listRuns(store);
+      assert.equal(runs.length, 1);
+      const run = runs[0]!;
+      // Edge-supplied attribution lands on the Run row.
+      assert.equal(run.run_id, "run_meta_test", "explicit run id wins");
+      assert.equal(run.cwd, "/home/dev/edge-project");
+      assert.equal(run.git_branch, "feat/edge");
+      assert.equal(
+        run.source_session_id,
+        "run_meta_test",
+        "explicit run id doubles as source_session_id for cross-channel joins",
+      );
+      // Project identity keys off the edge cwd, not the proxy's spec.
+      const project = store.db
+        .prepare(`SELECT cwd FROM projects WHERE project_id = ?`)
+        .get(run.project_id) as { cwd: string };
+      assert.equal(project.cwd, "/home/dev/edge-project");
+    } finally {
+      store.close();
+    }
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});

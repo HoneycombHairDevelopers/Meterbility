@@ -410,3 +410,52 @@ test("operator round-trip via /api/probe: pause → inject → resume → state"
     store.close();
   }
 });
+
+// ─── Probe UI gating (cross-vendor parity, 2026-08) ─────────────────
+// Only the SDKs implement the pause/ack protocol; transcript-derived
+// runs (claude-code / codex-cli / cursor / proxy) must NOT be offered
+// the panel — Pause would wedge them in pause_requested forever.
+
+test("probe panel partial is gated on probe-capable runtimes", async () => {
+  freshStore();
+  const store = Store.open();
+  try {
+    const sdkRunId = scaffold(store); // source_runtime: "sdk-ts"
+    const project = upsertProjectByCwd(store, "/tmp/probe-gate", "probe-gate");
+    const agent = upsertAgent(store, project.project_id, "claude-code");
+    const transcriptRunId = `run_${randomUUID()}`;
+    insertRun(store, {
+      run_id: transcriptRunId,
+      agent_id: agent.agent_id,
+      project_id: project.project_id,
+      source_runtime: "claude-code",
+      title: "transcript fixture",
+      status: "in_progress",
+      started_at: new Date().toISOString(),
+      tokens_total_input: 0,
+      tokens_total_output: 0,
+      tokens_total_cached: 0,
+      cost_cents: 0,
+      step_count: 0,
+      tags: [],
+    });
+
+    const app = buildApp(store);
+
+    // SDK run: panel renders.
+    const okRes = await app.fetch(
+      new Request(`http://x/api/runs/${sdkRunId}/probe/panel`),
+    );
+    assert.equal(okRes.status, 200, "sdk-ts run still gets the panel");
+
+    // Transcript run: 404 despite being in_progress.
+    const gatedRes = await app.fetch(
+      new Request(`http://x/api/runs/${transcriptRunId}/probe/panel`),
+    );
+    assert.equal(gatedRes.status, 404, "transcript run is gated");
+    const body = (await gatedRes.json()) as { error: string };
+    assert.match(body.error, /does not support probe/);
+  } finally {
+    store.close();
+  }
+});
