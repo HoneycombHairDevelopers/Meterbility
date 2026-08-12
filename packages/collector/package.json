@@ -13,7 +13,7 @@
   "dependencies": {
     "@meterbility/shared": "^0.5.0",
     "@meterbility/spec": "^0.5.0",
-    "better-sqlite3": "^11.3.0"
+    "better-sqlite3": "^13.0.3"
   },
   "description": "SQLite store, content-addressed blob storage, and replay primitives for Meterbility",
   "repository": {
