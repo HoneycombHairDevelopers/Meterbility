@@ -32,9 +32,11 @@ Reference-count against file_change/baseline/context tables and add a
 
 ### Step-level tool_input still carries sensitive content
 **Priority:** P2
-Sensitive-path suppression covers the FileChange row (blobs, patch,
-source_tool_input), but `steps.action_json` retains the full Write body /
-Edit strings, as does the raw transcript. Deciding whether to scrub the
+Sensitive-path suppression covers the FileChange row, and as of
+v0.5.1 the inline capture planes (cursor/codex patch_text and
+source_tool_input) run through redactString — but `steps.action_json`
+still retains the full Write body / Edit strings across all adapters
+(incl. the new cursor hook shell commands), as does the raw transcript. Deciding whether to scrub the
 step record is a product call — the transcript on disk has the content
 regardless.
 
