@@ -674,3 +674,137 @@ test("idle tail (chatter-only append) skips the rebuild; a real append still ing
   );
   store.close();
 });
+
+// ---------------------------------------------------------------------------
+// Coverage closure (ship 2026-08-11): title-preamble skip, subagent tag,
+// null-info token_count refresh.
+// ---------------------------------------------------------------------------
+
+test("title skips injected AGENTS.md/user_instructions preambles", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    {
+      type: "session_meta",
+      timestamp: "2026-08-11T10:00:00Z",
+      payload: { id: "sess-title", timestamp: "2026-08-11T10:00:00Z", cwd: "/tmp/t" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-11T10:00:01Z",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "# AGENTS.md instructions for this repo\nrules..." }],
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-11T10:00:02Z",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "<user_instructions>be terse</user_instructions>" }],
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-11T10:00:03Z",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "fix the flaky sentinel test" }],
+      },
+    },
+  ]);
+  await ingestCodexSession(store, path);
+  assert.equal(listRuns(store)[0]!.title, "fix the flaky sentinel test");
+  store.close();
+});
+
+test("title falls back to the preamble when no real prompt exists", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    {
+      type: "session_meta",
+      timestamp: "2026-08-11T10:00:00Z",
+      payload: { id: "sess-title2", timestamp: "2026-08-11T10:00:00Z", cwd: "/tmp/t2" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-11T10:00:01Z",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "# AGENTS.md instructions only" }],
+      },
+    },
+  ]);
+  await ingestCodexSession(store, path);
+  assert.equal(listRuns(store)[0]!.title, "# AGENTS.md instructions only");
+  store.close();
+});
+
+test("parent_thread_id tags the run codex:subagent", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    {
+      type: "session_meta",
+      timestamp: "2026-08-11T10:00:00Z",
+      payload: {
+        id: "sess-sub",
+        timestamp: "2026-08-11T10:00:00Z",
+        cwd: "/tmp/sub",
+        parent_thread_id: "parent-123",
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-11T10:00:01Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "child working" }],
+      },
+    },
+  ]);
+  await ingestCodexSession(store, path);
+  assert.ok(listRuns(store)[0]!.tags.includes("codex:subagent"));
+  store.close();
+});
+
+test("token_count with info:null (rate-limit refresh) attributes no usage and keeps cost:approx", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    {
+      type: "session_meta",
+      timestamp: "2026-08-11T10:00:00Z",
+      payload: { id: "sess-nullinfo", timestamp: "2026-08-11T10:00:00Z", cwd: "/tmp/ni" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-11T10:00:01Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "thinking..." }],
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-11T10:00:02Z",
+      payload: {
+        type: "token_count",
+        info: null,
+        rate_limits: { limit_id: "codex", plan_type: "plus" },
+      },
+    },
+  ]);
+  const r = await ingestCodexSession(store, path);
+  assert.equal(r.status, "ok");
+  const run = listRuns(store)[0]!;
+  const steps = listSteps(store, run.run_id);
+  assert.equal(steps[0]!.tokens.input, 0);
+  assert.equal(steps[0]!.tokens.cached_read, 0);
+  assert.ok(run.tags.includes("cost:approx"), "no usage → still approx");
+  store.close();
+});

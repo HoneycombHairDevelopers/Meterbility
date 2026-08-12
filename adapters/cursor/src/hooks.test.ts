@@ -222,3 +222,33 @@ test("hook steps survive DB-ingest reconciliation (bounded trims/offsets)", asyn
   assert.equal(fcCount, 1, "hook file_change not cascade-deleted");
   store.close();
 });
+
+test("afterFileEdit without file_path is ignored; empty edits still records the step", async () => {
+  freshHome();
+  const store = Store.open();
+  const missing = await handleCursorHookEvent(store, {
+    hook_event_name: "afterFileEdit",
+    conversation_id: "comp-nofile",
+    generation_id: "gen-nf",
+    workspace_roots: ["/tmp/nf"],
+    // file_path absent
+    edits: [{ old_string: "a", new_string: "b" }],
+  });
+  assert.equal(missing.handled, false);
+  assert.equal(listRuns(store).length, 0, "no run created for unusable payload");
+
+  const empty = await handleCursorHookEvent(store, {
+    hook_event_name: "afterFileEdit",
+    conversation_id: "comp-empty-edits",
+    generation_id: "gen-ee",
+    workspace_roots: ["/tmp/ee"],
+    file_path: "/tmp/ee/a.ts",
+    edits: [],
+  });
+  assert.equal(empty.handled, true);
+  assert.equal(empty.file_changes, 0);
+  const runs = listRuns(store);
+  assert.equal(runs.length, 1);
+  assert.equal(listSteps(store, runs[0]!.run_id).length, 1, "step recorded, zero fc rows");
+  store.close();
+});
