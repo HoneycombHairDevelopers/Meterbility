@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  unlinkSync,
+  watch as fsWatch,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
@@ -406,12 +413,15 @@ test("watch --files: duplicate event for identical content is deduped", async ()
 /**
  * The only test that binds an actual OS watcher — everything above
  * drives enqueue()/flushNow() directly. Event timing is platform-
- * dependent (macOS FSEvents coalesce, inotify doesn't), so this polls
- * for convergence with a generous deadline instead of asserting on
- * sleeps. If it flakes on an exotic CI platform, the deterministic
- * suite above remains the functional gate; this one proves the wiring.
+ * dependent (macOS FSEvents coalesce, inotify doesn't), so this first
+ * proves the watcher is delivering (probe writes to a throwaway file),
+ * then polls for convergence with a generous deadline instead of
+ * asserting on sleeps. On environments where the OS starves watch
+ * events entirely (verified via a bare fs.watch control), it skips —
+ * the deterministic suite above remains the functional gate; this one
+ * proves the wiring.
  */
-test("watch --files: real fs.watch events flow end-to-end", async () => {
+test("watch --files: real fs.watch events flow end-to-end", async (t) => {
   const ctx = await setup({ files: { "hello.txt": "before\n" } });
   const live = new FileSentinel(ctx.store, {
     root: ctx.root,
@@ -419,23 +429,82 @@ test("watch --files: real fs.watch events flow end-to-end", async () => {
   });
   const events: FileWatcherEventLog = [];
   live.on("data", (e: FileSentinelEvent) => events.push(e.type));
+  // macOS FSEvents starts its stream asynchronously — writes landing in
+  // the first instants after fs.watch() can be silently dropped. Prove
+  // the watcher is delivering before running the asserted mutations:
+  // keep touching a throwaway probe file (fresh content each attempt,
+  // so dedupe never suppresses the row) until its row lands. Probe rows
+  // are filtered out of every assertion below.
+  const PROBE = "__watch_probe__.txt";
+  const probeRows = () =>
+    listFileChanges(ctx.store, { runId: ctx.runId }).filter(
+      (r) => r.path === PROBE,
+    );
+  const realRows = () =>
+    listFileChanges(ctx.store, { runId: ctx.runId }).filter(
+      (r) => r.path !== PROBE,
+    );
+  // Control watcher: a bare fs.watch on the same root, so a dead probe
+  // can be attributed. If the OS delivers to neither, the environment
+  // starves watch events (heavily loaded / QoS-throttled shells do)
+  // and the test skips; if the control fires but the sentinel never
+  // captures, the wiring is genuinely broken and the test fails.
+  let osDelivered = false;
+  const control = fsWatch(ctx.root, { recursive: true }, () => {
+    osDelivered = true;
+  });
   try {
     await live.start();
-    // macOS FSEvents starts its stream asynchronously — writes landing
-    // in the first instants after fs.watch() can be silently dropped.
-    // Give the OS watcher a beat before mutating (real agent runs
-    // always start well after `meter watch --files` is up).
-    await new Promise((r) => setTimeout(r, 500));
+
+    // Stream startup is usually <1s but has been observed taking ~15s+
+    // under load — keep this generous; the wait ends the moment the
+    // first probe row lands. The control and sentinel bind separate
+    // FSEvents streams which can come live at different times on a
+    // starved machine, so once the control fires, extend the deadline
+    // rather than declaring the sentinel broken on a coin flip.
+    const probeStart = Date.now();
+    let attempt = 0;
+    let watcherLive = false;
+    while (
+      !watcherLive &&
+      Date.now() < probeStart + (osDelivered ? 45_000 : 30_000)
+    ) {
+      writeFileSync(join(ctx.root, PROBE), `probe ${attempt++}\n`);
+      // debounceMs is 150, so a delivered event surfaces as a row well
+      // inside this window; if nothing lands, the write predated the
+      // stream going live — touch again.
+      const settle = Date.now() + 500;
+      while (!watcherLive && Date.now() < settle) {
+        await new Promise((r) => setTimeout(r, 50));
+        watcherLive = probeRows().length > 0;
+      }
+    }
+    if (!watcherLive && !osDelivered) {
+      t.skip(
+        "OS delivered no fs.watch events at all within 30s — environment " +
+          "cannot exercise the live-watcher path; the deterministic suite " +
+          "above remains the functional gate",
+      );
+      return;
+    }
+    assert.ok(
+      watcherLive,
+      `bare fs.watch delivered events but the sentinel captured none; ` +
+        `events seen: ${events.join(",")}`,
+    );
 
     writeFileSync(join(ctx.root, "hello.txt"), "before\nafter\n"); // modify
     writeFileSync(join(ctx.root, "fresh.sh"), "#!/bin/sh\necho hi\n"); // create
 
-    // Poll until both rows land or the deadline passes.
-    const deadline = Date.now() + 10_000;
-    let rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    // Poll until both rows land or the deadline passes. Delivery is
+    // normally quick once the stream is live, but under heavy load
+    // per-event latency has been observed in the ~15s range — match
+    // the probe loop's generosity; polling exits as soon as rows land.
+    const deadline = Date.now() + 30_000;
+    let rows = realRows();
     while (rows.length < 2 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 200));
-      rows = listFileChanges(ctx.store, { runId: ctx.runId });
+      rows = realRows();
     }
 
     assert.equal(rows.length, 2, `events seen: ${events.join(",")}`);
@@ -446,6 +515,7 @@ test("watch --files: real fs.watch events flow end-to-end", async () => {
     assert.equal(created.op, "create");
     assert.ok(events.includes("sentinel:ready"));
   } finally {
+    control.close();
     live.stop();
     ctx.cleanup();
   }
