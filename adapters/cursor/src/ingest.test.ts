@@ -1505,7 +1505,7 @@ test("parity: write tool flows through the diff-chunks path", async () => {
 test("parity: source_tool_input stores redacted params, never the raw secret", async () => {
   freshMeterbilityHome();
   const key =
-    "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    ["sk-ant", "api03", "A".repeat(80)].join("-");
   const dbPath = buildCursorDb({
     composers: [
       {

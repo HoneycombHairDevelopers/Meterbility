@@ -100,7 +100,7 @@ test("afterFileEdit patch_text is redacted before it hits SQLite", async () => {
   freshHome();
   const store = Store.open();
   const key =
-    "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    ["sk-ant", "api03", "A".repeat(80)].join("-");
   const res = await handleCursorHookEvent(store, {
     hook_event_name: "afterFileEdit",
     conversation_id: "comp-hook-redact",
