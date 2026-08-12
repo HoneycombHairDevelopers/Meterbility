@@ -39,6 +39,29 @@ export type SettingKey =
   | "cursor.admin_api_key"
   | "cursor.admin_api_base";
 
+/**
+ * Runtime enumeration of every SettingKey — keep in sync with the union
+ * above. Lets API surfaces (the web settings endpoint) reject unknown
+ * keys instead of silently storing garbage.
+ */
+export const SETTING_KEYS: readonly SettingKey[] = [
+  "slack.webhook",
+  "slack.default_events",
+  "live.watch_tools",
+  "live.stall_seconds",
+  "fork.default_model",
+  "fork.default_max_iterations",
+  "anthropic.api_key",
+  "postgres.url",
+  "export.include_file_blobs",
+  "web.bind_token",
+  "capture.files.enabled",
+  "capture.files.max_partial_bytes",
+  "capture.files.max_skip_bytes",
+  "cursor.admin_api_key",
+  "cursor.admin_api_base",
+];
+
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db
     .prepare("SELECT value FROM settings WHERE key = ?")

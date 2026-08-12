@@ -385,3 +385,106 @@ test("codex rollout appearing post-boot fires run:created; append fires run:upda
   live.stop();
   store.close();
 });
+
+test("nonexistent CODEX_HOME: Claude run:created still fires, no throw", async () => {
+  const { claude } = freshHome();
+  // Point Codex discovery at a directory that does not exist — the
+  // inspector must skip Codex silently and keep the Claude plane alive.
+  process.env.CODEX_HOME = join(tmpdir(), `codex-definitely-missing-${Date.now()}`);
+  try {
+    const store = Store.open();
+    const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+    await live.start(); // silent backfill
+
+    const events: LiveEvent[] = [];
+    live.on("data", (e: LiveEvent) => events.push(e));
+
+    writeFakeSession(
+      claude,
+      "codexless-proj",
+      "sess-codexless",
+      basicSession("sess-codexless", "/tmp/codexless"),
+    );
+    await live.tick();
+
+    const created = events.filter((e) => e.type === "run:created");
+    assert.equal(created.length, 1, "Claude discovery unaffected by missing CODEX_HOME");
+    live.stop();
+    store.close();
+  } finally {
+    delete process.env.CODEX_HOME;
+  }
+});
+
+test("fleet entries ignore synthetic band steps when deriving last activity", async () => {
+  freshHome();
+  const { upsertProjectByCwd, upsertAgent, insertRun, insertStep } = await import(
+    "@meterbility/collector"
+  );
+  const { buildFleetEntries } = await import("./live.ts");
+  const store = Store.open();
+  const project = upsertProjectByCwd(store, "/tmp/band-proj", "cursor");
+  const agent = upsertAgent(store, project.project_id, "cursor");
+  insertRun(store, {
+    run_id: "run_band",
+    agent_id: agent.agent_id,
+    project_id: project.project_id,
+    source_session_id: "comp-band",
+    source_runtime: "cursor",
+    status: "in_progress",
+    started_at: "2026-08-04T10:00:00.000Z",
+    tokens_total_input: 0,
+    tokens_total_output: 0,
+    tokens_total_cached: 0,
+    cost_cents: 0,
+    step_count: 0,
+    tags: ["cursor"],
+  });
+  const mkStep = (partial: Record<string, unknown>) =>
+    ({
+      run_id: "run_band",
+      timestamp: "2026-08-04T10:00:01.000Z",
+      model: "cursor",
+      context_snapshot_id: "ctx",
+      decision_ref: "dec",
+      action: { kind: "message", text: "hi" },
+      outcome: { status: "ok" },
+      tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+      latency_ms: 0,
+      cost_cents: 0,
+      tags: [],
+      status: "ok",
+      ...partial,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+  // Transcript step (walk range) at T1...
+  insertStep(
+    store,
+    mkStep({ step_id: "stp_walk", sequence: 0, timestamp: "2026-08-04T10:00:01.000Z" }),
+  );
+  // ...and a synthetic hook step at 100k with a MUCH later timestamp and
+  // a tool_call action that must not leak into recent_tools.
+  insertStep(
+    store,
+    mkStep({
+      step_id: "stp_hook",
+      sequence: 100_000,
+      timestamp: "2026-08-04T11:30:00.000Z",
+      action: { kind: "tool_call", tool_name: "afterFileEdit", tool_input: {} },
+      tags: ["cursor-hook"],
+    }),
+  );
+
+  const entries = buildFleetEntries(store, { limit: 10 });
+  const entry = entries.find((e) => e.run.run_id === "run_band")!;
+  assert.equal(
+    entry.last_step_at,
+    "2026-08-04T10:00:01.000Z",
+    "last activity derives from the transcript step, not the 100k band step",
+  );
+  assert.ok(
+    !entry.recent_tools.includes("afterFileEdit"),
+    "synthetic hook tool not in recent_tools",
+  );
+  store.close();
+});

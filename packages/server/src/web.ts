@@ -3,6 +3,7 @@ import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import type { Annotation, Run, Step } from "@meterbility/shared";
 import {
+  RESERVED_SEQUENCE_BASE,
   clearProbe,
   consumeInject as consumeProbeInject,
   readState as readProbeState,
@@ -32,6 +33,7 @@ import {
   resolveSetting,
   isSecret,
   maskSecret,
+  SETTING_KEYS,
   type SettingKey,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
@@ -120,6 +122,20 @@ export interface BuildAppOptions {
 /** Only the SDKs read probe files and ack pause requests (§4.5). */
 function isProbeCapableRuntime(rt: Run["source_runtime"]): boolean {
   return rt === "sdk-ts" || rt === "sdk-py";
+}
+
+/** cursor.admin_api_base must be https, or plain http only to loopback. */
+function isSecureAdminBase(value: string): boolean {
+  if (value.startsWith("https://")) return true;
+  try {
+    const u = new URL(value);
+    return (
+      u.protocol === "http:" &&
+      (u.hostname === "localhost" || u.hostname === "127.0.0.1")
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function buildApp(store: Store, opts: BuildAppOptions = {}) {
@@ -469,6 +485,11 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.post("/api/runs/:id/probe/pause", (c) => {
     const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
+    // Same gate as the panel: pausing a transcript/proxy run wedges it
+    // in pause_requested forever (nothing on the other end to ack).
+    if (!isProbeCapableRuntime(run.source_runtime)) {
+      return c.json({ error: "runtime does not support probe" }, 404);
+    }
     const state = probeRequestPause(run.run_id);
     recordProbeIntervention(store, run.run_id, "probe_pause", {
       paused_at: new Date(state.requested_at_ms ?? Date.now()).toISOString(),
@@ -482,6 +503,9 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.post("/api/runs/:id/probe/resume", (c) => {
     const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
+    if (!isProbeCapableRuntime(run.source_runtime)) {
+      return c.json({ error: "runtime does not support probe" }, 404);
+    }
     // Snapshot any staged inject BEFORE resume so we can record the
     // edit. Resume itself doesn't consume injects — the SDK does, on
     // its next poll — but the operator's intent to ship this inject is
@@ -509,6 +533,9 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.post("/api/runs/:id/probe/inject", async (c) => {
     const run = getRun(store, c.req.param("id"));
     if (!run) return c.json({ error: "run not found" }, 404);
+    if (!isProbeCapableRuntime(run.source_runtime)) {
+      return c.json({ error: "runtime does not support probe" }, 404);
+    }
     let body: { message?: string; force?: boolean; clear?: boolean };
     try {
       body = (await c.req.json()) as typeof body;
@@ -931,6 +958,18 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     if (!body.origin_run_id || body.at === undefined || !body.edit_type) {
       return c.json({ error: "missing origin_run_id / at / edit_type" }, 400);
     }
+    // Synthetic capture-plane steps (hook/admin/checkpoint bands) carry
+    // no conversation context — replaying "up to" one is meaningless.
+    const forkTarget =
+      typeof body.at === "number"
+        ? getStepBySequence(store, body.origin_run_id, body.at)
+        : getStep(store, body.at);
+    if (forkTarget && forkTarget.sequence >= RESERVED_SEQUENCE_BASE) {
+      return c.json(
+        { error: "cannot fork from a synthetic capture-plane step" },
+        400,
+      );
+    }
     const apiKey = resolveSetting(
       store,
       "anthropic.api_key",
@@ -1217,9 +1256,24 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   app.post("/api/settings", async (c) => {
     const body = (await c.req.json()) as { key?: string; value?: string };
     if (!body.key) return c.json({ error: "missing key" }, 400);
+    if (!(SETTING_KEYS as readonly string[]).includes(body.key)) {
+      return c.json({ error: "unknown setting key" }, 400);
+    }
     if (body.value === undefined || body.value === "") {
       deleteSetting(store, body.key as SettingKey);
     } else {
+      // The Admin API key rides in an Authorization header — refuse a
+      // base URL that would send it over plaintext to a non-loopback
+      // host (mirrors the pull-time guard in the cursor adapter).
+      if (
+        body.key === "cursor.admin_api_base" &&
+        !isSecureAdminBase(body.value)
+      ) {
+        return c.json(
+          { error: "cursor.admin_api_base must be https:// (or localhost http)" },
+          400,
+        );
+      }
       setSetting(store, body.key as SettingKey, body.value);
     }
     return c.json({ ok: true });

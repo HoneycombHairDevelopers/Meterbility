@@ -83,7 +83,7 @@ test("no API key configured → no_api_key status, nothing written", async () =>
   store.close();
 });
 
-test("events join runs on conversationId: admin steps with billed cost + cache splits", async () => {
+test("events join runs on conversationId: admin steps with token value + cache splits", async () => {
   freshHome();
   const store = Store.open();
   const run = cursorRun(store, "comp-a");
@@ -106,7 +106,13 @@ test("events join runs on conversationId: admin steps with billed cost + cache s
   assert.equal(r.events_applied, 1);
   assert.equal(r.events_unmatched, 1);
   assert.equal(r.events_skipped, 1);
+  assert.equal(r.events_duplicate, 0);
   assert.equal(r.runs_updated, 1);
+  assert.equal(
+    r.events_seen,
+    r.events_applied + r.events_unmatched + r.events_skipped + r.events_duplicate,
+    "counter invariant",
+  );
 
   const steps = listSteps(store, run.run_id);
   assert.equal(steps.length, 1);
@@ -116,14 +122,129 @@ test("events join runs on conversationId: admin steps with billed cost + cache s
   assert.equal(s.tokens.input, 1000);
   assert.equal(s.tokens.cached_read, 5000);
   assert.equal(s.tokens.cache_creation, 300);
-  assert.equal(s.cost_cents, 4.2, "billed totalCents, not a computed estimate");
-  assert.ok(s.tags.includes("cost:actual"));
+  assert.equal(s.cost_cents, 4.2, "token value (totalCents), not a computed estimate");
+  // chargedCents: 0 — subscription-included, so value not actual.
+  assert.ok(s.tags.includes("cost:value"));
+  assert.ok(!s.tags.includes("cost:actual"));
+  assert.ok(s.tags.includes("billing:included"));
 
-  // Run totals recomputed from real data; tag swapped.
+  // Run totals recomputed from real data; tag swapped to cost:value.
   const updated = listRuns(store).find((x) => x.run_id === run.run_id)!;
   assert.equal(updated.cost_cents, 4.2);
+  assert.ok(updated.tags.includes("cost:value"));
+  assert.ok(!updated.tags.includes("cost:actual"));
+  assert.ok(!updated.tags.includes("cost:approx"));
+  store.close();
+});
+
+test("billed events (chargedCents > 0) mark step and run cost:actual", async () => {
+  freshHome();
+  const store = Store.open();
+  const run = cursorRun(store, "comp-a");
+
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    fetchImpl: stubFetch([{ usageEvents: [{ ...EVENT, chargedCents: 3 }] }]),
+  });
+  assert.equal(r.events_applied, 1);
+
+  const steps = listSteps(store, run.run_id);
+  assert.equal(steps.length, 1);
+  assert.ok(steps[0]!.tags.includes("cost:actual"));
+  assert.ok(!steps[0]!.tags.includes("cost:value"));
+  assert.ok(!steps[0]!.tags.includes("billing:included"));
+
+  const updated = listRuns(store).find((x) => x.run_id === run.run_id)!;
   assert.ok(updated.tags.includes("cost:actual"));
   assert.ok(!updated.tags.includes("cost:approx"));
+  store.close();
+});
+
+test("{events: [...]} response key works as a fallback for usageEvents", async () => {
+  freshHome();
+  const store = Store.open();
+  const run = cursorRun(store, "comp-a");
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    fetchImpl: stubFetch([{ events: [EVENT] }]),
+  });
+  assert.equal(r.status, "ok");
+  assert.equal(r.events_applied, 1);
+  assert.equal(listSteps(store, run.run_id).length, 1);
+  store.close();
+});
+
+test("mid-pagination HTTP error returns http_error with the applied count so far", async () => {
+  freshHome();
+  const store = Store.open();
+  cursorRun(store, "comp-a");
+  let call = 0;
+  const flakyFetch = (async () => {
+    call += 1;
+    if (call === 1) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ usageEvents: [EVENT] }),
+      } as Response;
+    }
+    return { ok: false, status: 500, json: async () => ({}) } as Response;
+  }) as typeof fetch;
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    pageSize: 1,
+    fetchImpl: flakyFetch,
+  });
+  assert.equal(r.status, "http_error");
+  assert.equal(r.events_applied, 1);
+  assert.match(r.reason ?? "", /500 on page 2/);
+  store.close();
+});
+
+test("garbage timestamp still produces a valid ISO timestamp on the step", async () => {
+  freshHome();
+  const store = Store.open();
+  const run = cursorRun(store, "comp-a");
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    fetchImpl: stubFetch([
+      { usageEvents: [{ ...EVENT, timestamp: "garbage" }] },
+    ]),
+  });
+  assert.equal(r.events_applied, 1);
+  const steps = listSteps(store, run.run_id);
+  assert.equal(steps.length, 1);
+  assert.ok(
+    !Number.isNaN(new Date(steps[0]!.timestamp).getTime()),
+    "timestamp parses as a real date",
+  );
+  store.close();
+});
+
+test("insecure http base URL is refused before any network call", async () => {
+  freshHome();
+  const store = Store.open();
+  let called = false;
+  const spyFetch = (async () => {
+    called = true;
+    return { ok: true, status: 200, json: async () => ({}) } as Response;
+  }) as typeof fetch;
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    baseUrl: "http://evil.example.com",
+    fetchImpl: spyFetch,
+  });
+  assert.equal(r.status, "http_error");
+  assert.match(r.reason ?? "", /https required/);
+  assert.equal(called, false, "no request was sent");
+
+  // Loopback http is fine (test gateways).
+  const r2 = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    baseUrl: "http://127.0.0.1:9999",
+    fetchImpl: stubFetch([{ usageEvents: [] }]),
+  });
+  assert.equal(r2.status, "ok");
   store.close();
 });
 
@@ -141,6 +262,12 @@ test("re-pulling an overlapping window is a no-op (deduped on event identity)", 
     fetchImpl: stubFetch([{ usageEvents: [EVENT] }]),
   });
   assert.equal(r2.events_applied, 0, "duplicate event not re-applied");
+  assert.equal(r2.events_duplicate, 1, "duplicate counter populated on re-pull");
+  assert.equal(
+    r2.events_seen,
+    r2.events_applied + r2.events_unmatched + r2.events_skipped + r2.events_duplicate,
+    "counter invariant",
+  );
   assert.equal(listSteps(store, run.run_id).length, 1);
   store.close();
 });

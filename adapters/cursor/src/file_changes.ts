@@ -1,5 +1,5 @@
 import type { FileChange } from "@meterbility/shared";
-import { hashJson } from "@meterbility/shared";
+import { hashJson, redactString } from "@meterbility/shared";
 // Reusing the CC adapter's line differ until it moves to shared — see
 // TODOS.md "Shared helpers for the two capture paths".
 import { diffLines } from "@meterbility/claude-code-adapter";
@@ -37,9 +37,12 @@ const FILE_TOOLS = new Set([
   "delete_file",
 ]);
 
-export function isFileTool(name: string | undefined): boolean {
+function isFileTool(name: string | undefined): boolean {
   return name !== undefined && FILE_TOOLS.has(name);
 }
+
+/** Every branch emits exactly one row per (run, bubble, path). */
+const FIRST_CHANGE_SEQ = 0;
 
 interface DiffChunk {
   diffString?: string;
@@ -69,6 +72,7 @@ export async function extractCursorFileChanges(
   // Stable across re-ingests regardless of step-id scheme: keyed on the
   // bubble, not the step.
   const anchor = bubble.bubbleId ?? stepId;
+  const fcId = `fc_${hashJson([runId, anchor, relPath, FIRST_CHANGE_SEQ])}`;
   const notes = fateNotes(cursor, composerId, tf);
 
   const base = {
@@ -96,8 +100,8 @@ export async function extractCursorFileChanges(
   if (tf.name === "delete_file") {
     return insertGuarded({
       ...base,
-      file_change_id: `fc_${hashJson([runId, anchor, relPath, 0])}`,
-      sequence: 0,
+      file_change_id: fcId,
+      sequence: FIRST_CHANGE_SEQ,
       path: relPath,
       op: "delete",
       partial_diff: true,
@@ -117,8 +121,15 @@ export async function extractCursorFileChanges(
         : undefined;
     const beforeContent = beforeId ? cursor.getContentBlob(beforeId) : undefined;
     const afterContent = afterId ? cursor.getContentBlob(afterId) : undefined;
+    // A beforeContentId whose blob was pruned by Cursor's retention is
+    // NOT a create — the file existed, its prior content is just gone.
+    // Only a genuinely absent beforeContentId (or an empty "" before
+    // body) means create; a pruned before degrades the whole row to the
+    // partial-diff branch below (the partial_diff invariant requires
+    // BOTH blob refs null, so the after content can't be stored either).
+    const beforePruned = beforeId !== undefined && beforeContent === undefined;
 
-    if (afterContent !== undefined) {
+    if (afterContent !== undefined && !beforePruned) {
       const isCreate = beforeContent === undefined || beforeContent.length === 0;
       const stats =
         beforeContent !== undefined
@@ -131,8 +142,8 @@ export async function extractCursorFileChanges(
       const afterRef = await store.blobs.putString(afterContent);
       return insertGuarded({
         ...base,
-        file_change_id: `fc_${hashJson([runId, anchor, relPath, 0])}`,
-        sequence: 0,
+        file_change_id: fcId,
+        sequence: FIRST_CHANGE_SEQ,
         path: relPath,
         op: isCreate ? "create" : "modify",
         before_blob_ref: beforeRef,
@@ -149,14 +160,19 @@ export async function extractCursorFileChanges(
     // Content blobs pruned by Cursor's retention — degrade to fact-only.
     return insertGuarded({
       ...base,
-      file_change_id: `fc_${hashJson([runId, anchor, relPath, 0])}`,
-      sequence: 0,
+      file_change_id: fcId,
+      sequence: FIRST_CHANGE_SEQ,
       path: relPath,
       op: "modify",
       partial_diff: true,
       lines_added: 0,
       lines_removed: 0,
-      normalizer_notes: joinNotes(notes, "content blobs pruned by Cursor retention"),
+      normalizer_notes: joinNotes(
+        notes,
+        beforePruned && afterContent !== undefined
+          ? "before content pruned by Cursor retention"
+          : "content blobs pruned by Cursor retention",
+      ),
     });
   }
 
@@ -165,17 +181,21 @@ export async function extractCursorFileChanges(
     isObj(result) && isObj(result.diff) && Array.isArray(result.diff.chunks)
       ? (result.diff.chunks as DiffChunk[])
       : [];
-  const patchText = chunks
-    .map((c) => c.diffString)
-    .filter((s): s is string => typeof s === "string" && s.length > 0)
-    .join("\n");
+  // Inline patch text bypasses the blob pipeline's redaction — apply
+  // the same pass before it hits SQLite.
+  const patchText = redactString(
+    chunks
+      .map((c) => c.diffString)
+      .filter((s): s is string => typeof s === "string" && s.length > 0)
+      .join("\n"),
+  ).text;
   const linesAdded = chunks.reduce((n, c) => n + (c.linesAdded ?? 0), 0);
   const linesRemoved = chunks.reduce((n, c) => n + (c.linesRemoved ?? 0), 0);
 
   return insertGuarded({
     ...base,
-    file_change_id: `fc_${hashJson([runId, anchor, relPath, 0])}`,
-    sequence: 0,
+    file_change_id: fcId,
+    sequence: FIRST_CHANGE_SEQ,
     path: relPath,
     op: "modify",
     partial_diff: true,

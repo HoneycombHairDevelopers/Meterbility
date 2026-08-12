@@ -30,9 +30,9 @@ import {
   upsertProjectByCwd,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
+import { HOOK_SEQUENCE_BASE, SEQUENCE_REBUILD_OFFSET } from "./bands.ts";
 import { extractCursorFileChanges } from "./file_changes.ts";
 import { ingestCursorExtras, readAiTrackingSummary } from "./extras.ts";
-import { HOOK_SEQUENCE_BASE } from "./hooks.ts";
 import { CursorDb, isMeaningfulComposer } from "./parser.ts";
 import {
   bubbleText,
@@ -43,11 +43,6 @@ import {
 } from "./types.ts";
 
 const SOURCE_RUNTIME = "cursor" as const;
-
-/** Rebuilds vacate stored sequences by at least this offset — far above
- *  any real conversation length, so offset rows can never collide with
- *  the walk. */
-const SEQUENCE_REBUILD_OFFSET = 1_000_000;
 
 export interface CursorIngestResult {
   workspace_id?: string;
@@ -69,7 +64,11 @@ export interface IngestCursorOptions {
   sinceMs?: number;
   /** Only ingest the N newest composers. */
   limit?: number;
-  /** Project cwd to attribute the run to (defaults to "(cursor)"). */
+  /**
+   * Override per-composer workspace resolution; when unset, each
+   * composer's cwd is resolved via composerHeaders/workspace.json,
+   * falling back to "(cursor)" for ephemeral windows.
+   */
   cwd?: string;
 }
 
@@ -84,8 +83,19 @@ export interface IngestCursorOptions {
  *     non-empty).
  *
  * Cursor doesn't expose system prompts in the SQLite (they're injected
- * server-side), and per-step token usage is sparse. We capture what we
- * can and tag steps with `cost:approx` where cost is a wild estimate.
+ * server-side), and per-step token usage is sparse. Steps with local
+ * token data are priced via costCents and tagged `cost:approx`; the
+ * Admin API usage puller supersedes those estimates with `cost:actual`
+ * (billed) or `cost:value` (subscription-included) when configured.
+ *
+ * Each composer's run attributes to its workspace: cwd resolves per
+ * composer via composerHeaders → workspace.json (memoized per pull),
+ * falling back to "(cursor)" only for ephemeral windows.
+ *
+ * This is one of three capture planes (bubble walk here, hooks, Admin
+ * API) plus the extras pass (checkpoint fallback + AI-lines ledger).
+ * Walk reconciliation (shift rebuilds, tail trims) is bounded below
+ * RESERVED_SEQUENCE_BASE, so synthetic band steps always survive it.
  */
 export async function ingestCursorGlobal(
   store: Store,
@@ -150,6 +160,17 @@ export async function ingestCursorGlobal(
     // ephemeral windows with no workspace — this is what lets the file
     // sentinel and project grouping work for Cursor runs.
     const { workspaceCwdById } = await import("./discover.ts");
+    // Memoized per pull: each workspace's cwd resolution hits disk
+    // (workspace.json), and many composers share a workspace.
+    const wsCwdCache = new Map<string, string | undefined>();
+    const resolveWorkspaceCwd = async (
+      wsId: string,
+    ): Promise<string | undefined> => {
+      if (wsCwdCache.has(wsId)) return wsCwdCache.get(wsId);
+      const cwd = await workspaceCwdById(wsId);
+      wsCwdCache.set(wsId, cwd);
+      return cwd;
+    };
     const projectCache = new Map<
       string,
       { projectId: string; agentId: string }
@@ -177,7 +198,7 @@ export async function ingestCursorGlobal(
         let cwd = opts.cwd;
         if (!cwd) {
           const wsId = cursor.workspaceIdForComposer(comp.composerId);
-          cwd = wsId ? await workspaceCwdById(wsId) : undefined;
+          cwd = wsId ? await resolveWorkspaceCwd(wsId) : undefined;
         }
         cwd ??= "(cursor)";
         const { projectId, agentId } = resolveProject(cwd);
@@ -568,7 +589,24 @@ async function ingestOneComposer(
     // second, unbounded-from-the-rebuild-offset call.
     deleteStepsFromSequence(store, runId, sequence, HOOK_SEQUENCE_BASE);
     deleteStepsFromSequence(store, runId, SEQUENCE_REBUILD_OFFSET);
-    setRunStatus(store, runId, composerStatus(comp), epochMsToIso(comp.lastUpdatedAt));
+    // Status ping-pong guard: the hook plane seals runs in real time
+    // (stop → ok/error/abandoned) while the composer row often still
+    // looks in_progress. Never let a DB re-ingest reopen a sealed run —
+    // only apply "in_progress" when the run is new or already open —
+    // and never null-out an ended_at that a prior pass set.
+    const newStatus = composerStatus(comp);
+    if (
+      newStatus !== "in_progress" ||
+      !existing ||
+      existing.status === "in_progress"
+    ) {
+      setRunStatus(
+        store,
+        runId,
+        newStatus,
+        epochMsToIso(comp.lastUpdatedAt) ?? existing?.ended_at,
+      );
+    }
     updateRunTotals(store, runId);
   });
   commit();

@@ -1262,31 +1262,73 @@ test("parity: composer cwd resolves via composerHeaders + workspace.json", async
   // Fake Cursor user dir with a workspace mapping.
   const userDir = mkdtempSync(join(tmpdir(), "cursor-user-"));
   process.env.CURSOR_USER_DIR = userDir;
-  const wsDir = join(userDir, "workspaceStorage", "ws-hash-1");
-  const { mkdirSync, writeFileSync } = await import("node:fs");
-  mkdirSync(wsDir, { recursive: true });
-  writeFileSync(
-    join(wsDir, "workspace.json"),
-    JSON.stringify({ folder: "file:///tmp/real-project" }),
-  );
+  try {
+    const wsDir = join(userDir, "workspaceStorage", "ws-hash-1");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(wsDir, { recursive: true });
+    writeFileSync(
+      join(wsDir, "workspace.json"),
+      JSON.stringify({ folder: "file:///tmp/real-project" }),
+    );
 
+    const dbPath = buildCursorDb({
+      composers: [
+        {
+          id: "comp-ws",
+          name: "workspace test",
+          headers: [{ bubbleId: "u1", type: 1 }],
+          bubbles: [{ bubbleId: "u1", type: 1, text: "hello" }],
+        },
+      ],
+      composerHeaders: [{ composerId: "comp-ws", workspaceId: "ws-hash-1" }],
+    });
+
+    const store = Store.open();
+    await ingestCursorGlobal(store, { dbPath });
+    const runs = listRuns(store);
+    assert.equal(runs[0]!.cwd, "/tmp/real-project", "no more (cursor) placeholder");
+    store.close();
+  } finally {
+    delete process.env.CURSOR_USER_DIR;
+  }
+});
+
+test("hook-sealed terminal status survives DB re-ingest of an in-progress composer", async () => {
+  freshMeterbilityHome();
+  const store = Store.open();
+  const { handleCursorHookEvent } = await import("./hooks.ts");
+
+  // 1. Hook plane creates and seals the run in real time.
+  await handleCursorHookEvent(store, {
+    hook_event_name: "beforeShellExecution",
+    conversation_id: "comp-seal",
+    workspace_roots: ["/tmp/seal"],
+    command: "ls",
+  });
+  await handleCursorHookEvent(store, {
+    hook_event_name: "stop",
+    conversation_id: "comp-seal",
+    status: "completed",
+  });
+  assert.equal(listRuns(store)[0]!.status, "ok", "hook sealed the run");
+
+  // 2. DB ingest sees a composer row that still looks in-progress
+  //    (Cursor's status flush lags) — it must NOT reopen the run.
   const dbPath = buildCursorDb({
     composers: [
       {
-        id: "comp-ws",
-        name: "workspace test",
+        id: "comp-seal",
+        name: "seal test",
+        status: "none", // → composerStatus() = in_progress
         headers: [{ bubbleId: "u1", type: 1 }],
-        bubbles: [{ bubbleId: "u1", type: 1, text: "hello" }],
+        bubbles: [{ bubbleId: "u1", type: 1, text: "hi" }],
       },
     ],
-    composerHeaders: [{ composerId: "comp-ws", workspaceId: "ws-hash-1" }],
   });
-
-  const store = Store.open();
   await ingestCursorGlobal(store, { dbPath });
-  const runs = listRuns(store);
-  assert.equal(runs[0]!.cwd, "/tmp/real-project", "no more (cursor) placeholder");
-  delete process.env.CURSOR_USER_DIR;
+  const run = listRuns(store)[0]!;
+  assert.equal(run.status, "ok", "sealed status not ping-ponged back to in_progress");
+  assert.ok(run.ended_at, "ended_at not nulled out");
   store.close();
 });
 
@@ -1326,5 +1368,136 @@ test("parity: pruned content blobs degrade to fact-only partial rows", async () 
   assert.equal(fc.length, 1);
   assert.equal(fc[0]!.partial_diff, 1);
   assert.match(String(fc[0]!.normalizer_notes), /pruned/);
+  store.close();
+});
+
+test("parity: pruned BEFORE with surviving after degrades to partial modify, not create", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-before-pruned",
+        name: "before pruned",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "edit_file_v2",
+              params: JSON.stringify({ relativeWorkspacePath: "existed.ts" }),
+              result: JSON.stringify({
+                beforeContentId: "sha-pruned",
+                afterContentId: "sha-alive",
+              }),
+            },
+          },
+        ],
+      },
+    ],
+    // The BEFORE blob was pruned by retention; the after survived. The
+    // file existed before the edit — mislabeling this as `create` with
+    // full after content would fabricate provenance.
+    extraKv: { "composer.content.sha-alive": "new body\n" },
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0]!.op, "modify", "not a create — the file existed");
+  assert.equal(fc[0]!.partial_diff, 1, "degraded to partial (both blob refs null)");
+  assert.equal(fc[0]!.before_blob_ref, null);
+  assert.equal(fc[0]!.after_blob_ref, null);
+  assert.match(String(fc[0]!.normalizer_notes), /before content pruned/);
+  store.close();
+});
+
+test("parity: delete_file produces a fact-only delete row", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-del",
+        name: "delete file",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "delete_file",
+              params: JSON.stringify({ relativeWorkspacePath: "old.ts" }),
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0]!.path, "old.ts");
+  assert.equal(fc[0]!.op, "delete");
+  assert.equal(fc[0]!.partial_diff, 1);
+  assert.equal(fc[0]!.lines_added, 0);
+  assert.equal(fc[0]!.lines_removed, 0);
+  store.close();
+});
+
+test("parity: write tool flows through the diff-chunks path", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-write",
+        name: "write file",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "write",
+              params: JSON.stringify({ relativeWorkspacePath: "made.ts" }),
+              result: JSON.stringify({
+                diff: {
+                  chunks: [
+                    {
+                      diffString: "@@ -0,0 +1,2 @@\n+export const x = 1;\n+export const y = 2;",
+                      linesAdded: 2,
+                      linesRemoved: 0,
+                    },
+                  ],
+                },
+              }),
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0]!.path, "made.ts");
+  assert.equal(fc[0]!.op, "modify");
+  assert.equal(fc[0]!.partial_diff, 1);
+  assert.ok(String(fc[0]!.patch_text).includes("+export const x = 1;"));
+  assert.equal(fc[0]!.lines_added, 2);
+  assert.equal(fc[0]!.lines_removed, 0);
   store.close();
 });

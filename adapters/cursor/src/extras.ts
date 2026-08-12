@@ -9,6 +9,11 @@ import {
   updateRunTotals,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
+import {
+  CHECKPOINT_SEQUENCE_BASE,
+  SEQUENCE_REBUILD_OFFSET,
+  nextSequenceInBand,
+} from "./bands.ts";
 import type { CursorDb } from "./parser.ts";
 
 /**
@@ -35,7 +40,9 @@ import type { CursorDb } from "./parser.ts";
  * (100k) and admin (200k) planes; see ingest.ts.
  */
 
-export const CHECKPOINT_SEQUENCE_BASE = 300_000;
+// Re-exported for back-compat (tests import it from here); canonical
+// definition lives in bands.ts.
+export { CHECKPOINT_SEQUENCE_BASE } from "./bands.ts";
 const TRACKING_AUTHOR = "meter/cursor-tracking";
 
 interface CheckpointFileEntry {
@@ -123,17 +130,51 @@ async function ingestCheckpoints(
   composerId: string,
   run: Run,
 ): Promise<number> {
+  // Path canonicalization is impossible without a real workspace cwd —
+  // checkpoint URIs are absolute, tool rows are repo-relative, so every
+  // comparison would mismatch and double-count. Skip entirely.
+  if (run.cwd === undefined || run.cwd === "(cursor)") return 0;
+
   const keys = cursor.listKeysByPrefix(`checkpointId:${composerId}:`);
   if (keys.length === 0) return 0;
 
-  // Fallback semantics: only add paths no other channel captured.
-  const covered = new Set(
+  // Fallback semantics: only add paths no tool-attributed channel
+  // captured. NULL-safe: hook/sentinel rows may carry no tool name.
+  const coveredByTools = new Set(
     (
       store.db
-        .prepare(`SELECT DISTINCT path FROM file_change WHERE run_id = ?`)
+        .prepare(
+          `SELECT DISTINCT path FROM file_change
+           WHERE run_id = ? AND COALESCE(source_tool_name, '') != 'cursor-checkpoint'`,
+        )
         .all(run.run_id) as Array<{ path: string }>
     ).map((r) => r.path),
   );
+
+  // Supersede: checkpoint rows are fallback evidence. When a later
+  // ingest captures the same path through a real tool channel, the
+  // checkpoint row is redundant double-counting — delete it.
+  store.db
+    .prepare(
+      `DELETE FROM file_change
+       WHERE run_id = ? AND source_tool_name = 'cursor-checkpoint'
+         AND path IN (
+           SELECT DISTINCT path FROM file_change
+           WHERE run_id = ? AND COALESCE(source_tool_name, '') != 'cursor-checkpoint'
+         )`,
+    )
+    .run(run.run_id, run.run_id);
+
+  // Covered set = tool-attributed paths + surviving checkpoint paths.
+  const covered = new Set(coveredByTools);
+  for (const r of store.db
+    .prepare(
+      `SELECT DISTINCT path FROM file_change
+       WHERE run_id = ? AND source_tool_name = 'cursor-checkpoint'`,
+    )
+    .all(run.run_id) as Array<{ path: string }>) {
+    covered.add(r.path);
+  }
 
   let inserted = 0;
   for (const key of keys) {
@@ -217,11 +258,12 @@ async function ensureCheckpointStep(
     .get(stepId);
   if (exists) return stepId;
 
-  const seqRow = store.db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM steps WHERE run_id = ? AND sequence >= ? AND sequence < 1000000`,
-    )
-    .get(run.run_id, CHECKPOINT_SEQUENCE_BASE) as { n: number };
+  const sequence = nextSequenceInBand(
+    store,
+    run.run_id,
+    CHECKPOINT_SEQUENCE_BASE,
+    SEQUENCE_REBUILD_OFFSET,
+  );
 
   const snapshotId = hashJson(["cursor-ckpt-snapshot", stepId]);
   const snapshotRef = await store.blobs.putJson({ id: snapshotId, components: [] });
@@ -234,7 +276,7 @@ async function ensureCheckpointStep(
   const step: Step = {
     step_id: stepId,
     run_id: run.run_id,
-    sequence: CHECKPOINT_SEQUENCE_BASE + seqRow.n,
+    sequence,
     timestamp: new Date().toISOString(),
     model: "cursor",
     context_snapshot_id: snapshotId,
@@ -272,7 +314,7 @@ function upsertTrackingAnnotation(
 
   const existing = store.db
     .prepare(
-      `SELECT annotation_id, note FROM annotations WHERE target_id = ? AND author = ?`,
+      `SELECT annotation_id, note FROM annotations WHERE target_id = ? AND author = ? AND target_kind = 'run'`,
     )
     .get(run.run_id, TRACKING_AUTHOR) as
     | { annotation_id: string; note: string | null }

@@ -70,7 +70,7 @@ test("afterFileEdit is idempotent per (generation, path, edit)", async () => {
   store.close();
 });
 
-test("beforeShellExecution records the command and always answers allow", async () => {
+test("beforeShellExecution records the command and always answers continue (no permission vote)", async () => {
   freshHome();
   const store = Store.open();
   const res = await handleCursorHookEvent(store, {
@@ -82,7 +82,7 @@ test("beforeShellExecution records the command and always answers allow", async 
     cwd: "/tmp/p3",
   });
   assert.equal(res.handled, true);
-  assert.deepEqual(res.response, { continue: true, permission: "allow" });
+  assert.deepEqual(res.response, { continue: true });
   const runs = listRuns(store);
   const steps = listSteps(store, runs[0]!.run_id);
   assert.equal(steps.length, 1);
@@ -93,6 +93,32 @@ test("beforeShellExecution records the command and always answers allow", async 
   });
   // Hook steps live above the DB adapter's sequence space.
   assert.ok(steps[0]!.sequence >= 100_000);
+  store.close();
+});
+
+test("afterFileEdit patch_text is redacted before it hits SQLite", async () => {
+  freshHome();
+  const store = Store.open();
+  const key =
+    "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const res = await handleCursorHookEvent(store, {
+    hook_event_name: "afterFileEdit",
+    conversation_id: "comp-hook-redact",
+    generation_id: "gen-r",
+    workspace_roots: ["/tmp/pr"],
+    file_path: "/tmp/pr/.env",
+    edits: [{ old_string: "", new_string: `ANTHROPIC_API_KEY=${key}` }],
+  });
+  assert.equal(res.file_changes, 1);
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT patch_text FROM file_change WHERE run_id = ?`)
+    .get(runs[0]!.run_id) as { patch_text: string };
+  assert.ok(
+    fc.patch_text.includes("«meter:redacted:"),
+    "redaction placeholder present",
+  );
+  assert.ok(!fc.patch_text.includes("sk-ant-"), "raw key absent");
   store.close();
 });
 

@@ -456,8 +456,8 @@ test("proxy persists x-meterbility-cwd/git-branch/run-id as run metadata", async
       assert.equal(run.git_branch, "feat/edge");
       assert.equal(
         run.source_session_id,
-        "run_meta_test",
-        "explicit run id doubles as source_session_id for cross-channel joins",
+        "proxy:run_meta_test",
+        "explicit run id is namespaced into source_session_id so it can't collide with other vendors' session ids",
       );
       // Project identity keys off the edge cwd, not the proxy's spec.
       const project = store.db

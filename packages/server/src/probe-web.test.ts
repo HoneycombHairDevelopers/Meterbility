@@ -459,3 +459,64 @@ test("probe panel partial is gated on probe-capable runtimes", async () => {
     store.close();
   }
 });
+
+// ─── Probe POST gating: transcript runtimes can't be paused ──────────
+
+test("POST pause/resume/inject on a transcript-runtime run → 404; clear stays open", async () => {
+  freshStore();
+  const store = Store.open();
+  try {
+    // claude-code transcripts have nothing on the other end to ack a
+    // pause — offering the POSTs would wedge the run in
+    // pause_requested forever.
+    const project = upsertProjectByCwd(store, "/tmp/probe-web", "probe-web");
+    const agent = upsertAgent(store, project.project_id, "claude-code");
+    const runId = `run_${randomUUID()}`;
+    insertRun(store, {
+      run_id: runId,
+      agent_id: agent.agent_id,
+      project_id: project.project_id,
+      source_runtime: "claude-code",
+      title: "transcript run",
+      status: "in_progress",
+      started_at: new Date().toISOString(),
+      tokens_total_input: 0,
+      tokens_total_output: 0,
+      tokens_total_cached: 0,
+      cost_cents: 0,
+      step_count: 0,
+      tags: [],
+    } as Run);
+    const app = buildApp(store);
+
+    const pause = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/pause`, { method: "POST" }),
+    );
+    assert.equal(pause.status, 404);
+    const pauseBody = (await pause.json()) as { error: string };
+    assert.match(pauseBody.error, /does not support probe/);
+    assert.equal(readState(runId).state, "running", "no probe file mutation");
+
+    const resume = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/resume`, { method: "POST" }),
+    );
+    assert.equal(resume.status, 404);
+
+    const inject = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "hi" }),
+      }),
+    );
+    assert.equal(inject.status, 404);
+
+    // CLEAR stays ungated — it exists to recover stale probe files.
+    const clear = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/clear`, { method: "POST" }),
+    );
+    assert.equal(clear.status, 200);
+  } finally {
+    store.close();
+  }
+});

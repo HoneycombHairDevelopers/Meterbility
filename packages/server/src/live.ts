@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import {
+  RESERVED_SEQUENCE_BASE,
   claudeProjectsRoot,
   probeFilePath,
   readState as readProbeState,
@@ -15,6 +16,7 @@ import {
   type ShapeWarning,
 } from "@meterbility/claude-code-adapter";
 import {
+  codexSessionsRoot,
   discoverCodexSessions,
   ingestCodexSession,
 } from "@meterbility/codex-cli-adapter";
@@ -162,7 +164,13 @@ export function buildFleetEntries(
   const firedAlerts = opts.firedAlerts;
   const runs = listRuns(store, { limit });
   return runs.map((run) => {
-    const steps = listSteps(store, run.run_id);
+    // Synthetic capture-plane steps (hook/admin/checkpoint bands, seq ≥
+    // RESERVED_SEQUENCE_BASE) are bookkeeping, not conversation activity
+    // — they must never masquerade as the latest step for stall/context/
+    // tool heuristics. step_count displays stay raw.
+    const steps = listSteps(store, run.run_id).filter(
+      (s) => s.sequence < RESERVED_SEQUENCE_BASE,
+    );
     const lastStep = steps[steps.length - 1];
     const status = classifyRunStatus(run, steps, stallSeconds);
     const ctxPct = contextUtilization(lastStep);
@@ -228,6 +236,10 @@ export class LiveInspector extends EventEmitter {
   private firedAlerts = new Map<string, Map<string, FiredAlert>>();
   private lastSizes = new Map<string, number>(); // path → size at last poll
   private lastStepCounts = new Map<string, number>(); // run_id → step count
+  // run_id → max non-synthetic sequence already emitted. Drives
+  // collectNewSteps by explicit sequence (not slice-by-count, which
+  // band steps at 100k+ would silently skew).
+  private lastMaxSeq = new Map<string, number>();
   // step_id → file_change row count last announced via files:changed.
   // Drives the out-of-band arrival detector (hook drain / sentinel).
   private fcCounts = new Map<string, number>();
@@ -257,6 +269,16 @@ export class LiveInspector extends EventEmitter {
     for (const run of listRuns(this.store, { limit: 100_000 })) {
       this.lastStepCounts.set(run.run_id, run.step_count);
       this.lastStatus.set(run.run_id, run.status);
+    }
+    // Seed lastMaxSeq alongside lastStepCounts — one grouped query,
+    // bounded below the reserved band so synthetic steps don't inflate
+    // the high-water mark.
+    for (const row of this.store.db
+      .prepare(
+        `SELECT run_id, MAX(sequence) AS m FROM steps WHERE sequence < ? GROUP BY run_id`,
+      )
+      .all(RESERVED_SEQUENCE_BASE) as Array<{ run_id: string; m: number }>) {
+      this.lastMaxSeq.set(row.run_id, row.m);
     }
     // First tick = silent backfill. Populate every internal map (knownPaths,
     // lastSizes, lastStepCounts, lastStatus, firedAlerts) without firing
@@ -349,17 +371,22 @@ export class LiveInspector extends EventEmitter {
         ingest: ingestSession as IngestFn,
       });
     }
-    try {
-      const codexSessions = await discoverCodexSessions();
-      for (const s of codexSessions) {
-        candidates.push({
-          path: s.path,
-          size_bytes: s.size_bytes,
-          ingest: ingestCodexSession as IngestFn,
-        });
+    // No ~/.codex on this machine → Claude Code only. Real discovery
+    // failures (EACCES, EIO) must be visible, not swallowed.
+    if (existsSync(codexSessionsRoot())) {
+      try {
+        const codexSessions = await discoverCodexSessions();
+        for (const s of codexSessions) {
+          candidates.push({
+            path: s.path,
+            size_bytes: s.size_bytes,
+            ingest: ingestCodexSession as IngestFn,
+          });
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[meter/live] codex discovery failed:", err);
       }
-    } catch {
-      // No ~/.codex on this machine — Claude Code only.
     }
 
     // De-dupe paths into a single set so a brand-new file (which qualifies
@@ -383,11 +410,19 @@ export class LiveInspector extends EventEmitter {
         if (result.status === "empty") continue;
         const run = getRun(this.store, result.run_id);
         if (!run) continue;
-        const newSteps = collectNewSteps(this.store, run, this.lastStepCounts);
+        const newSteps = collectNewSteps(this.store, run, this.lastMaxSeq);
         const wasKnown = this.lastStepCounts.has(run.run_id);
         const prevStatus = this.lastStatus.get(run.run_id);
+        // lastStepCounts stays for wasKnown/run:created bookkeeping;
+        // lastMaxSeq is the append cursor (updated after emit below).
         this.lastStepCounts.set(run.run_id, run.step_count);
         this.lastStatus.set(run.run_id, run.status);
+        if (newSteps.length > 0) {
+          this.lastMaxSeq.set(
+            run.run_id,
+            newSteps[newSteps.length - 1]!.sequence,
+          );
+        }
 
         if (!silent) {
           if (!wasKnown) {
@@ -614,7 +649,9 @@ export class LiveInspector extends EventEmitter {
         record.paused_at_ms !== null &&
         record.paused_at_ms !== tracked.lastPausedAtMs;
       if (newPause) {
-        const steps = listSteps(this.store, runId);
+        const steps = listSteps(this.store, runId).filter(
+          (s) => s.sequence < RESERVED_SEQUENCE_BASE,
+        );
         const lastStep = steps[steps.length - 1];
         this.emit("data", {
           type: "run:paused",
@@ -697,8 +734,13 @@ export class LiveInspector extends EventEmitter {
       }
     }
 
-    // Loop detection.
-    const allSteps = listSteps(this.store, run.run_id);
+    // Loop detection. Synthetic band steps are excluded — a burst of
+    // hook/admin bookkeeping steps must not read as a tool loop, and
+    // the stall detector below must anchor on real conversation
+    // activity, not a checkpoint row's insert time.
+    const allSteps = listSteps(this.store, run.run_id).filter(
+      (s) => s.sequence < RESERVED_SEQUENCE_BASE,
+    );
     const loop = detectLoop(allSteps, this.opts.loopWindow);
     if (loop) {
       fireOrSeed(`loop:${loop.tool}:${loop.signature}`, {
@@ -748,11 +790,17 @@ export class LiveInspector extends EventEmitter {
 function collectNewSteps(
   store: Store,
   run: Run,
-  lastCounts: Map<string, number>,
+  lastMaxSeq: Map<string, number>,
 ): Step[] {
-  const last = lastCounts.get(run.run_id) ?? 0;
+  // Max-sequence tracking, not slice-by-count: synthetic band steps
+  // (hooks 100k / admin 200k / checkpoints 300k) inflate step counts
+  // without being conversation activity, and reconciliation can shrink
+  // counts. Only walk-range steps past the high-water mark are "new".
+  const floor = lastMaxSeq.get(run.run_id) ?? -1;
   const all = listSteps(store, run.run_id);
-  return all.slice(last);
+  return all.filter(
+    (s) => s.sequence > floor && s.sequence < RESERVED_SEQUENCE_BASE,
+  );
 }
 
 /** "312s" reads worse than "5m 12s" on a fleet card. */

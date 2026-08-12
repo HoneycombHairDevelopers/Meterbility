@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type {
   Action,
   ContextComponent,
@@ -10,7 +10,7 @@ import type {
   Step,
   TokenUsage,
 } from "@meterbility/shared";
-import { hashJson } from "@meterbility/shared";
+import { hashJson, redactString } from "@meterbility/shared";
 import { costCents } from "@meterbility/spec";
 import {
   getIngestOffset,
@@ -28,7 +28,7 @@ import {
 import type { Store } from "@meterbility/collector";
 import {
   endOffset,
-  readCodexSession,
+  parseBuffer,
   type ParsedCodexRecord,
 } from "./parser.ts";
 import {
@@ -83,23 +83,41 @@ export async function ingestCodexSession(
   path: string,
 ): Promise<CodexIngestResult> {
   const offset = getIngestOffset(store, SOURCE_RUNTIME, path);
-  const tail = await readCodexSession(path, offset);
+  // Parse-once: one read of the file feeds both the tail check and the
+  // full rebuild — a live tick was previously re-reading the whole file
+  // twice.
+  const buf = await readFile(path);
+  const tail = parseBuffer(buf, offset);
   if (tail.length === 0) {
     return { run_id: "", steps_added: 0, bytes_read: 0, status: "empty" };
   }
-  const fileStat = await stat(path);
-  const fullSize = fileStat.size;
+  const fullSize = buf.length;
 
-  const all = offset === 0 ? tail : await readCodexSession(path, 0);
+  const all = offset === 0 ? tail : parseBuffer(buf, 0);
   const meta = inferMeta(all);
   const sessionId = meta.id;
-
-  const project = upsertProjectByCwd(store, meta.cwd ?? "(unknown)");
-  const agent = upsertAgent(store, project.project_id, "codex-cli");
 
   const existing = sessionId
     ? getRunBySessionId(store, sessionId)
     : undefined;
+
+  // Idle-tail gate: a tail that carries no step material (no
+  // response_item, no turn_context, no token_count / patch_apply_end /
+  // task_complete event) can't change any step, cost, or file-change
+  // row — advance the offset and skip the O(n) rebuild. Live ticks on
+  // chatter-only appends (agent_message streams etc.) hit this path.
+  if (offset > 0 && !tail.some(isMaterialRecord)) {
+    setIngestOffset(store, SOURCE_RUNTIME, path, endOffset(tail, fullSize));
+    return {
+      run_id: existing?.run_id ?? "",
+      steps_added: 0,
+      bytes_read: fullSize - offset,
+      status: "ok",
+    };
+  }
+
+  const project = upsertProjectByCwd(store, meta.cwd ?? "(unknown)");
+  const agent = upsertAgent(store, project.project_id, "codex-cli");
 
   const runId = existing
     ? existing.run_id
@@ -107,10 +125,10 @@ export async function ingestCodexSession(
 
   const built = await buildSteps(all, runId, store, meta);
 
+  const hasUsage = built.steps.some(
+    (s) => s.tokens.input + s.tokens.output + s.tokens.cached_read > 0,
+  );
   if (!existing) {
-    const hasUsage = built.steps.some(
-      (s) => s.tokens.input + s.tokens.output + s.tokens.cached_read > 0,
-    );
     const tags = ["codex"];
     if (!hasUsage) tags.push("cost:approx");
     if (meta.parent_thread_id) tags.push("codex:subagent");
@@ -133,6 +151,28 @@ export async function ingestCodexSession(
       tags,
     };
     insertRun(store, run);
+  } else if (hasUsage) {
+    // A run first ingested before its token_count events landed was
+    // tagged cost:approx at creation — drop the tag once real usage
+    // shows up in the rebuild.
+    const row = store.db
+      .prepare(`SELECT tags FROM runs WHERE run_id = ?`)
+      .get(runId) as { tags: string } | undefined;
+    if (row) {
+      try {
+        const tags = JSON.parse(row.tags) as string[];
+        if (tags.includes("cost:approx")) {
+          store.db
+            .prepare(`UPDATE runs SET tags = ? WHERE run_id = ?`)
+            .run(
+              JSON.stringify(tags.filter((t) => t !== "cost:approx")),
+              runId,
+            );
+        }
+      } catch {
+        // Malformed tags — leave untouched.
+      }
+    }
   }
 
   for (const step of built.steps) {
@@ -157,6 +197,18 @@ export async function ingestCodexSession(
     bytes_read: fullSize - offset,
     status: "ok",
   };
+}
+
+/**
+ * True when the record can affect steps, tokens, cost, latency, status,
+ * or file changes — the idle-tail gate skips rebuilds whose appended
+ * tail is all immaterial chatter.
+ */
+function isMaterialRecord(r: ParsedCodexRecord): boolean {
+  if (isResponseItem(r.record) || isTurnContext(r.record)) return true;
+  if (r.record.type !== "event_msg") return false;
+  const t = r.record.payload.type;
+  return t === "token_count" || t === "patch_apply_end" || t === "task_complete";
 }
 
 function inferMeta(records: ParsedCodexRecord[]): CodexSessionMetaPayload {
@@ -503,6 +555,11 @@ async function buildSteps(
 
   // ---- File changes from patch_apply_end (shape pinned 2026-08-04). ----
   const cwd = meta.cwd ?? "";
+  // Per-step sequence counter spanning ALL patch events: two events
+  // falling back onto the same step (e.g. both with unmatched call_ids)
+  // must not both start at 0 — that collided on UNIQUE(step_id,
+  // sequence) and crash-looped the ingest before setIngestOffset.
+  const fcSeqByStep = new Map<string, number>();
   for (const patch of patchEvents) {
     const stepId = patch.call_id
       ? stepIdByCallId.get(patch.call_id)
@@ -514,9 +571,14 @@ async function buildSteps(
     const rawInput = patch.call_id
       ? rawPatchInputByCallId.get(patch.call_id)
       : undefined;
+    // Inline capture bypasses the blob pipeline's redaction — apply the
+    // same pass to the raw V4A patch text and unified diffs.
+    const redactedInput =
+      rawInput !== undefined ? redactString(rawInput).text : undefined;
 
-    let seq = 0;
     for (const [absPath, change] of Object.entries(patch.changes)) {
+      const seq = fcSeqByStep.get(targetStepId) ?? 0;
+      fcSeqByStep.set(targetStepId, seq + 1);
       const relPath = toRepoRelative(absPath, cwd);
       const isAdd = change.type === "add";
       const isDelete = change.type === "delete";
@@ -552,7 +614,7 @@ async function buildSteps(
           lines_added: countLines(change.content),
           lines_removed: 0,
           source_tool_name: "apply_patch",
-          source_tool_input: rawInput,
+          source_tool_input: redactedInput,
         });
       } else {
         // Updates/deletes/renames carry no before-content in the rollout —
@@ -570,15 +632,16 @@ async function buildSteps(
           op,
           partial_diff: true,
           gitignored: false,
-          patch_text: change.unified_diff,
+          patch_text: change.unified_diff
+            ? redactString(change.unified_diff).text
+            : undefined,
           patch_format: change.unified_diff ? "unified" : undefined,
           lines_added: diffCounts?.added ?? 0,
           lines_removed: diffCounts?.removed ?? 0,
           source_tool_name: "apply_patch",
-          source_tool_input: rawInput,
+          source_tool_input: redactedInput,
         });
       }
-      seq += 1;
     }
   }
 

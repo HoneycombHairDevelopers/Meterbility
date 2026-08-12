@@ -5,3 +5,4 @@ export * from "./redact.ts";
 export * from "./meterbilityignore.ts";
 export * from "./probe.ts";
 export * from "./format.ts";
+export * from "./sequence.ts";

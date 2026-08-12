@@ -24,8 +24,11 @@ import { openStore } from "../util.ts";
  * discriminating; conversation_id is the composerId, which joins hook
  * captures to DB-ingested runs.
  *
- * Contract: NEVER block the agent. beforeShellExecution always answers
- * {"continue": true, "permission": "allow"}; every failure path exits 0.
+ * Contract: NEVER block the agent. Every before* event (and any event
+ * we can't identify because the payload was empty/unparseable) is
+ * answered with {"continue": true} on stdout BEFORE any persistence
+ * work runs — capture is an observer and doesn't vote (no `permission`
+ * field; Cursor's own approval flow decides). Every failure path exits 0.
  */
 export function registerCursorHookCommand(program: Command): void {
   program
@@ -35,15 +38,26 @@ export function registerCursorHookCommand(program: Command): void {
     )
     .option("--json", "Print a JSON summary of what was captured to stderr")
     .action(async (opts: { json?: boolean }) => {
+      const respond = (): void => {
+        process.stdout.write(JSON.stringify({ continue: true }) + "\n");
+      };
+      let responded = false;
       try {
         const payload = await readStdinJson();
+        const event = payload.hook_event_name;
+        // Fail-open FIRST: Cursor blocks the agent on stdout for
+        // permission-gated (before*) events. Respond before touching
+        // the store so a capture failure or stall can never leave the
+        // agent hanging. An unknown/empty payload might be a before*
+        // event whose body we couldn't parse — respond for those too.
+        if (!event || event.startsWith("before")) {
+          respond();
+          responded = true;
+        }
         const store = openStore();
         try {
+          // Capture only — the fail-open response already went out.
           const res = await handleCursorHookEvent(store, payload);
-          // before* events expect a JSON permission response on stdout.
-          if (res.response) {
-            process.stdout.write(JSON.stringify(res.response) + "\n");
-          }
           if (opts.json) {
             process.stderr.write(JSON.stringify(res) + "\n");
           }
@@ -55,10 +69,8 @@ export function registerCursorHookCommand(program: Command): void {
         console.error(
           pc.red(`meter cursor-hook: ${(err as Error).message}`),
         );
-        // Fail open for permission-gated events.
-        process.stdout.write(
-          JSON.stringify({ continue: true, permission: "allow" }) + "\n",
-        );
+        // Fail open for permission-gated events (unless already sent).
+        if (!responded) respond();
       }
       process.exitCode = 0;
     });
@@ -72,11 +84,16 @@ async function readStdinJson(): Promise<CursorHookPayload> {
       chunks.push(Buffer.from(chunk));
     }
     return Buffer.concat(chunks).toString("utf-8").trim();
-  })();
+  })().catch(() => "");
   const text = await Promise.race([
     read,
     new Promise<string>((resolve) => {
-      const t = setTimeout(() => resolve(""), 5_000);
+      const t = setTimeout(() => {
+        // Destroy stdin so the open stream can't keep the process
+        // alive after the timeout fires — the hook must actually exit.
+        process.stdin.destroy();
+        resolve("");
+      }, 5_000);
       t.unref?.();
     }),
   ]);

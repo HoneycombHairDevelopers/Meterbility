@@ -1,3 +1,4 @@
+export * from "./bands.ts";
 export * from "./discover.ts";
 export * from "./types.ts";
 export * from "./parser.ts";

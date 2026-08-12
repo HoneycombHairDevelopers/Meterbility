@@ -148,18 +148,6 @@ type WriteResult = "created" | "skipped" | "overwritten";
 type HooksInstallResult = "installed" | "already-present";
 
 /**
- * Merge the `meter capture` hook pair into the project's
- * `.claude/settings.json` (v0.4 exact Bash capture):
- *
- *   PreToolUse(Bash)  → meter capture pre
- *   PostToolUse(Bash) → meter capture post
- *
- * Non-destructive: existing settings and hook entries are preserved;
- * we only append our matcher groups if no hook command containing
- * "meter capture" is already registered for that event. Idempotent by
- * the same check.
- */
-/**
  * Merge `meter cursor-hook` entries into the project's
  * `.cursor/hooks.json` (Cursor ≥1.7 Hooks):
  *
@@ -231,6 +219,18 @@ export async function installCursorHooks(root: string): Promise<HooksInstallResu
   return "installed";
 }
 
+/**
+ * Merge the `meter capture` hook pair into the project's
+ * `.claude/settings.json` (v0.4 exact Bash capture):
+ *
+ *   PreToolUse(Bash)  → meter capture pre
+ *   PostToolUse(Bash) → meter capture post
+ *
+ * Non-destructive: existing settings and hook entries are preserved;
+ * we only append our matcher groups if no hook command containing
+ * "meter capture" is already registered for that event. Idempotent by
+ * the same check.
+ */
 export async function installClaudeHooks(root: string): Promise<HooksInstallResult> {
   const dir = join(root, ".claude");
   const path = join(dir, "settings.json");

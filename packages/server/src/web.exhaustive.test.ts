@@ -389,7 +389,11 @@ test("probe: GET /api/probe/:run_id on unknown run returns 404", async () => {
 test("probe: full FSM via HTTP — pause → inject → resume → clear", async () => {
   const c = freshCtx();
   try {
-    const { runId } = scaffoldRun(c.store, { status: "in_progress" });
+    // Probe POSTs are gated to probe-capable runtimes (the SDKs).
+    const { runId } = scaffoldRun(c.store, {
+      status: "in_progress",
+      sourceRuntime: "sdk-ts",
+    });
     const app = buildApp(c.store);
 
     // Pause
@@ -433,7 +437,10 @@ test("probe: full FSM via HTTP — pause → inject → resume → clear", async
 test("probe: POST /api/probe/:run_id/inject with no message → 400", async () => {
   const c = freshCtx();
   try {
-    const { runId } = scaffoldRun(c.store, { status: "in_progress" });
+    const { runId } = scaffoldRun(c.store, {
+      status: "in_progress",
+      sourceRuntime: "sdk-ts",
+    });
     const app = buildApp(c.store);
     const res = await app.fetch(
       jsonReq(`http://x/api/runs/${runId}/probe/inject`, {}),
@@ -449,7 +456,10 @@ test("probe: POST /api/probe/:run_id/inject with no message → 400", async () =
 test("probe: POST /api/probe/:run_id/inject without force on existing inject → 409", async () => {
   const c = freshCtx();
   try {
-    const { runId } = scaffoldRun(c.store, { status: "in_progress" });
+    const { runId } = scaffoldRun(c.store, {
+      status: "in_progress",
+      sourceRuntime: "sdk-ts",
+    });
     const app = buildApp(c.store);
     // First inject succeeds
     const first = await app.fetch(
@@ -1422,6 +1432,110 @@ test("api: GET /api/blob/:hash serves binary blobs byte-exact (no UTF-8 mangling
     assert.equal(txt.status, 200);
     assert.match(txt.headers.get("content-type") ?? "", /text\/plain/);
     assert.equal(await txt.text(), "plain text blob\n");
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("api: POST /api/fork at a synthetic capture-plane step → 400", async () => {
+  const c = freshCtx();
+  try {
+    const { runId } = scaffoldRun(c.store, { stepCount: 1 });
+    // Plant a synthetic band step (hook plane at 100k).
+    const { insertStep } = await import("@meterbility/collector");
+    const bandStepId = "stp_band_fork_target";
+    insertStep(c.store, {
+      step_id: bandStepId,
+      run_id: runId,
+      sequence: 100_000,
+      timestamp: new Date().toISOString(),
+      model: "cursor",
+      context_snapshot_id: "snap_x",
+      decision_ref: "blob_dec",
+      action: { kind: "tool_call", tool_name: "afterFileEdit" },
+      outcome: { status: "ok" },
+      tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+      latency_ms: 0,
+      cost_cents: 0,
+      tags: ["cursor-hook"],
+      status: "ok",
+    });
+    const app = buildApp(c.store);
+
+    // By step id…
+    const byId = await app.fetch(
+      jsonReq("http://x/api/fork", {
+        origin_run_id: runId,
+        at: bandStepId,
+        edit_type: "inject_message",
+        edit_payload: "x",
+        fake: "ok",
+      }),
+    );
+    assert.equal(byId.status, 400);
+    const bodyId = (await byId.json()) as { error: string };
+    assert.match(bodyId.error, /synthetic capture-plane step/);
+
+    // …and by sequence number.
+    const bySeq = await app.fetch(
+      jsonReq("http://x/api/fork", {
+        origin_run_id: runId,
+        at: 100_000,
+        edit_type: "inject_message",
+        edit_payload: "x",
+        fake: "ok",
+      }),
+    );
+    assert.equal(bySeq.status, 400);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("settings: POST /api/settings with an unknown key → 400", async () => {
+  const c = freshCtx();
+  try {
+    const app = buildApp(c.store);
+    const res = await app.fetch(
+      jsonReq("http://x/api/settings", { key: "totally.made_up", value: "x" }),
+    );
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /unknown setting key/);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("settings: cursor.admin_api_base rejects plaintext non-loopback http, accepts https + localhost", async () => {
+  const c = freshCtx();
+  try {
+    const app = buildApp(c.store);
+    const bad = await app.fetch(
+      jsonReq("http://x/api/settings", {
+        key: "cursor.admin_api_base",
+        value: "http://evil.example.com",
+      }),
+    );
+    assert.equal(bad.status, 400);
+    const badBody = (await bad.json()) as { error: string };
+    assert.match(badBody.error, /https/);
+
+    const https = await app.fetch(
+      jsonReq("http://x/api/settings", {
+        key: "cursor.admin_api_base",
+        value: "https://gateway.corp.example",
+      }),
+    );
+    assert.equal(https.status, 200);
+
+    const loopback = await app.fetch(
+      jsonReq("http://x/api/settings", {
+        key: "cursor.admin_api_base",
+        value: "http://localhost:8080",
+      }),
+    );
+    assert.equal(loopback.status, 200);
   } finally {
     c.cleanup();
   }

@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import pc from "picocolors";
-import { pullCursorUsage } from "@meterbility/cursor-adapter";
+import { DAY_MS, pullCursorUsage } from "@meterbility/cursor-adapter";
 import { openStore } from "../util.ts";
 
 /**
@@ -29,7 +29,7 @@ export function registerCursorUsageCommand(program: Command): void {
       const store = openStore();
       try {
         const result = await pullCursorUsage(store, {
-          startDateMs: Date.now() - days * 24 * 60 * 60 * 1000,
+          startDateMs: Date.now() - days * DAY_MS,
         });
         if (opts.json) {
           process.stdout.write(JSON.stringify(result) + "\n");

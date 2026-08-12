@@ -1,5 +1,5 @@
 import type { FileChange, Run, Step } from "@meterbility/shared";
-import { hashJson } from "@meterbility/shared";
+import { hashJson, redactString } from "@meterbility/shared";
 import {
   getRunBySessionId,
   insertFileChange,
@@ -12,6 +12,7 @@ import {
   upsertProjectByCwd,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
+import { ADMIN_SEQUENCE_BASE, HOOK_SEQUENCE_BASE, nextSequenceInBand } from "./bands.ts";
 
 /**
  * Cursor Hooks capture (Cursor ≥1.7) — the durable file-attribution
@@ -59,13 +60,12 @@ export interface CursorHookResult {
   response?: Record<string, unknown>;
 }
 
-/**
- * Hook-plane steps occupy [HOOK_SEQUENCE_BASE, SEQUENCE_REBUILD_OFFSET)
- * — far above any real bubble walk, far below the DB adapter's rebuild
- * offset — so DB-side reconciliation (bounded trims/offsets in
- * ingest.ts) never touches them.
- */
-export const HOOK_SEQUENCE_BASE = 100_000;
+// Hook-plane steps occupy [HOOK_SEQUENCE_BASE, ADMIN_SEQUENCE_BASE) —
+// far above any real bubble walk, far below the DB adapter's rebuild
+// offset — so DB-side reconciliation (bounded trims/offsets in
+// ingest.ts) never touches them. Re-exported for back-compat (tests and
+// ingest.ts historically imported it from here).
+export { HOOK_SEQUENCE_BASE } from "./bands.ts";
 
 export async function handleCursorHookEvent(
   store: Store,
@@ -85,8 +85,9 @@ export async function handleCursorHookEvent(
       return handleAfterFileEdit(store, payload, conversationId, cwd);
     case "beforeShellExecution": {
       const res = await handleShell(store, payload, conversationId, cwd);
-      // NEVER block the agent — capture is an observer.
-      return { ...res, response: { continue: true, permission: "allow" } };
+      // NEVER block the agent — capture is an observer. No `permission`
+      // field: observers don't vote; Cursor's own approval flow decides.
+      return { ...res, response: { continue: true } };
     }
     case "stop": {
       const run = getRunBySessionId(store, conversationId);
@@ -133,17 +134,16 @@ function ensureRun(
     step_count: 0,
     tags: ["cursor", "cursor-hook"],
   };
-  insertRun(store, run);
+  try {
+    insertRun(store, run);
+  } catch (err) {
+    // Two hook processes racing to create the same run: the loser
+    // adopts the winner's row instead of failing the capture.
+    const winner = getRunBySessionId(store, conversationId);
+    if (winner) return winner;
+    throw err;
+  }
   return run;
-}
-
-function hookStepCount(store: Store, runId: string): number {
-  const row = store.db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM steps WHERE run_id = ? AND sequence >= ?`,
-    )
-    .get(runId, HOOK_SEQUENCE_BASE) as { n: number };
-  return row.n;
 }
 
 async function insertHookStep(
@@ -157,40 +157,53 @@ async function insertHookStep(
   },
 ): Promise<Step> {
   const stepId = `stp_${hashJson([run.run_id, "hook", args.anchor])}`;
-  const existing = store.db
-    .prepare(`SELECT sequence FROM steps WHERE step_id = ?`)
-    .get(stepId) as { sequence: number } | undefined;
-  const sequence = existing
-    ? existing.sequence
-    : HOOK_SEQUENCE_BASE + hookStepCount(store, run.run_id);
 
+  // Async blob writes FIRST (content-addressed — harmless if a crash
+  // strands them), so the sequence derivation + insert can run inside
+  // one synchronous transaction: concurrent hook processes can't
+  // compute the same band sequence.
   const snapshotId = hashJson(["cursor-hook-snapshot", stepId]);
   const snapshotRef = await store.blobs.putJson({ id: snapshotId, components: [] });
   recordContextSnapshot(store, snapshotId, snapshotRef, 0);
   const decisionRef = await store.blobs.putJson(args.toolInput);
 
-  const step: Step = {
-    step_id: stepId,
-    run_id: run.run_id,
-    sequence,
-    timestamp: new Date().toISOString(),
-    model: "cursor",
-    context_snapshot_id: snapshotId,
-    decision_ref: decisionRef,
-    action: {
-      kind: "tool_call",
-      tool_name: args.toolName,
-      tool_use_id: args.generationId,
-      tool_input: args.toolInput,
-    },
-    outcome: { status: "ok" },
-    tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
-    latency_ms: 0,
-    cost_cents: 0,
-    tags: ["cursor", "cursor-hook"],
-    status: "ok",
-  };
-  insertStep(store, step);
+  const step = store.db.transaction((): Step => {
+    const existing = store.db
+      .prepare(`SELECT sequence FROM steps WHERE step_id = ?`)
+      .get(stepId) as { sequence: number } | undefined;
+    const sequence = existing
+      ? existing.sequence
+      : nextSequenceInBand(
+          store,
+          run.run_id,
+          HOOK_SEQUENCE_BASE,
+          ADMIN_SEQUENCE_BASE,
+        );
+
+    const s: Step = {
+      step_id: stepId,
+      run_id: run.run_id,
+      sequence,
+      timestamp: new Date().toISOString(),
+      model: "cursor",
+      context_snapshot_id: snapshotId,
+      decision_ref: decisionRef,
+      action: {
+        kind: "tool_call",
+        tool_name: args.toolName,
+        tool_use_id: args.generationId,
+        tool_input: args.toolInput,
+      },
+      outcome: { status: "ok" },
+      tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+      latency_ms: 0,
+      cost_cents: 0,
+      tags: ["cursor", "cursor-hook"],
+      status: "ok",
+    };
+    insertStep(store, s);
+    return s;
+  })();
   updateRunTotals(store, run.run_id);
   return step;
 }
@@ -215,38 +228,45 @@ async function handleAfterFileEdit(
     anchor,
   });
 
-  let inserted = 0;
-  let seq = 0;
-  for (const edit of edits) {
+  // patch_text is computed synchronously, so every row can be prepared
+  // up front and inserted inside ONE transaction — concurrent hook
+  // processes never observe a half-written edit batch.
+  const rows: Array<Omit<FileChange, "created_at">> = edits.map((edit, seq) => {
     const oldStr = edit.old_string ?? "";
     const newStr = edit.new_string ?? "";
-    const fcId = `fc_${hashJson([run.run_id, anchor, seq])}`;
-    const exists = store.db
-      .prepare(`SELECT 1 FROM file_change WHERE file_change_id = ?`)
-      .get(fcId);
-    if (!exists) {
-      const fc: Omit<FileChange, "created_at"> = {
-        file_change_id: fcId,
-        run_id: run.run_id,
-        step_id: step.step_id,
-        sequence: seq,
-        tool_call_id: payload.generation_id,
-        derived_from: "tool_call",
-        path: relPath,
-        op: "modify",
-        partial_diff: true,
-        gitignored: false,
-        patch_text: editPatchText(oldStr, newStr),
-        patch_format: "unified",
-        lines_added: countLines(newStr),
-        lines_removed: countLines(oldStr),
-        source_tool_name: "afterFileEdit",
-      };
-      insertFileChange(store, fc);
-      inserted += 1;
+    return {
+      file_change_id: `fc_${hashJson([run.run_id, anchor, seq])}`,
+      run_id: run.run_id,
+      step_id: step.step_id,
+      sequence: seq,
+      tool_call_id: payload.generation_id,
+      derived_from: "tool_call",
+      path: relPath,
+      op: "modify",
+      partial_diff: true,
+      gitignored: false,
+      // Inline capture bypasses the blob pipeline's redaction — apply
+      // the same pass here before the text hits SQLite.
+      patch_text: redactString(editPatchText(oldStr, newStr)).text,
+      patch_format: "unified",
+      lines_added: countLines(newStr),
+      lines_removed: countLines(oldStr),
+      source_tool_name: "afterFileEdit",
+    };
+  });
+  const inserted = store.db.transaction((): number => {
+    let n = 0;
+    for (const fc of rows) {
+      const exists = store.db
+        .prepare(`SELECT 1 FROM file_change WHERE file_change_id = ?`)
+        .get(fc.file_change_id);
+      if (!exists) {
+        insertFileChange(store, fc);
+        n += 1;
+      }
     }
-    seq += 1;
-  }
+    return n;
+  })();
 
   return {
     handled: true,

@@ -472,3 +472,205 @@ test("parity: re-ingest duplicates neither steps nor file_change rows", async ()
   assert.equal(fcAfter, fcBefore);
   store.close();
 });
+
+test("parity: nonzero exit code marks the tool step as error", async () => {
+  const store = freshStore();
+  const session = paritySession().map((r) => {
+    const rec = r as { type: string; payload: { type?: string; call_id?: string; output?: string } };
+    if (
+      rec.type === "response_item" &&
+      rec.payload.type === "custom_tool_call_output" &&
+      rec.payload.call_id === "call_B"
+    ) {
+      return {
+        ...rec,
+        payload: {
+          ...rec.payload,
+          output: "Exit code: 1\nWall time: 0.1 seconds\nOutput:\npatch failed\n",
+        },
+      };
+    }
+    return r;
+  });
+  const path = writeSession(session);
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const steps = listSteps(store, runs[0]!.run_id);
+  const s1 = steps[1]!; // call_B
+  assert.equal(s1.outcome.status, "error");
+  assert.equal(s1.outcome.is_error, true);
+  assert.equal(s1.status, "error");
+  store.close();
+});
+
+test("parity: patch_apply_end delete and rename entries map to delete / rename ops", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    {
+      type: "session_meta",
+      timestamp: "2026-08-04T18:26:37Z",
+      payload: { id: "sess-ops", timestamp: "2026-08-04T18:26:37Z", cwd: "/tmp/proj" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:41Z",
+      payload: {
+        type: "custom_tool_call",
+        id: "ctc_1",
+        status: "completed",
+        call_id: "call_ops",
+        name: "apply_patch",
+        input: "*** Begin Patch\n*** Delete File: dead.txt\n*** End Patch\n",
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:42Z",
+      payload: {
+        type: "patch_apply_end",
+        call_id: "call_ops",
+        success: true,
+        changes: {
+          "/tmp/proj/dead.txt": { type: "delete" },
+          "/tmp/proj/probe.txt": {
+            type: "update",
+            unified_diff: "@@ -1 +1 @@\n-old\n+new\n",
+            move_path: "/tmp/proj/renamed.txt",
+          },
+        },
+      },
+    },
+  ]);
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const rows = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ? ORDER BY sequence`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(rows.length, 2);
+
+  const del = rows.find((r) => r.op === "delete")!;
+  assert.equal(del.path, "dead.txt");
+  assert.equal(del.partial_diff, 1);
+
+  const ren = rows.find((r) => r.op === "rename")!;
+  assert.equal(ren.path, "renamed.txt", "rename: path is the move target");
+  assert.equal(ren.old_path, "probe.txt", "rename: old_path is the original");
+  assert.ok(String(ren.patch_text).includes("+new"));
+  store.close();
+});
+
+test("parity: two unmatched-call_id patch events both attach to the last step without colliding", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    {
+      type: "session_meta",
+      timestamp: "2026-08-04T18:26:37Z",
+      payload: { id: "sess-orphan", timestamp: "2026-08-04T18:26:37Z", cwd: "/tmp/proj" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:40Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "patching" }],
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:41Z",
+      payload: {
+        type: "patch_apply_end",
+        call_id: "call_lost_1",
+        success: true,
+        changes: {
+          "/tmp/proj/one.txt": { type: "add", content: "one\n" },
+        },
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:42Z",
+      payload: {
+        type: "patch_apply_end",
+        call_id: "call_lost_2",
+        success: true,
+        changes: {
+          "/tmp/proj/two.txt": { type: "add", content: "two\n" },
+        },
+      },
+    },
+  ]);
+  // Regression for the UNIQUE(step_id, sequence) crash-loop: both
+  // fallback events land on the same (only) step and must take
+  // distinct sequences.
+  const r = await ingestCodexSession(store, path);
+  assert.equal(r.status, "ok");
+  const runs = listRuns(store);
+  const steps = listSteps(store, runs[0]!.run_id);
+  assert.equal(steps.length, 1);
+  const rows = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ? ORDER BY sequence`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(rows.length, 2, "both orphan patches inserted");
+  assert.equal(rows[0]!.step_id, steps[0]!.step_id);
+  assert.equal(rows[1]!.step_id, steps[0]!.step_id);
+  assert.deepEqual(
+    rows.map((x) => x.sequence),
+    [0, 1],
+    "distinct sequences on the shared fallback step",
+  );
+  store.close();
+});
+
+test("idle tail (chatter-only append) skips the rebuild; a real append still ingests", async () => {
+  const { appendFileSync } = await import("node:fs");
+  const store = freshStore();
+  const path = writeSession(paritySession());
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const runId = runs[0]!.run_id;
+  const stepsBefore = listSteps(store, runId).length;
+
+  // Chatter-only append: an agent_message event carries no step
+  // material — the idle-tail gate must advance the offset and skip.
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-08-04T18:27:00Z",
+      payload: { type: "agent_message", message: "just narrating" },
+    }) + "\n",
+  );
+  const r1 = await ingestCodexSession(store, path);
+  assert.equal(r1.status, "ok");
+  assert.equal(r1.steps_added, 0);
+  assert.equal(r1.run_id, runId);
+  assert.equal(listSteps(store, runId).length, stepsBefore, "no new steps");
+
+  // Offset advanced: the same call again is a clean empty.
+  const r2 = await ingestCodexSession(store, path);
+  assert.equal(r2.status, "empty");
+
+  // A real append (assistant response_item) still ingests normally.
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "response_item",
+      timestamp: "2026-08-04T18:27:05Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "one more thing" }],
+      },
+    }) + "\n",
+  );
+  const r3 = await ingestCodexSession(store, path);
+  assert.equal(r3.status, "ok");
+  assert.equal(
+    listSteps(store, runId).length,
+    stepsBefore + 1,
+    "real append added a step",
+  );
+  store.close();
+});

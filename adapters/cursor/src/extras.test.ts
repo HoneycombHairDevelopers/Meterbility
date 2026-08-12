@@ -188,3 +188,133 @@ test("missing ItemTable degrades silently (no annotation, no throw)", async () =
   assert.equal(annN, 0);
   store.close();
 });
+
+test("checkpoint fallback row is superseded (deleted) once a tool channel covers the path", async () => {
+  freshHome();
+  const store = Store.open();
+
+  // Pass 1: composer has only a user bubble; the checkpoint is the sole
+  // evidence for src/late.ts → fallback row inserted.
+  const dir = mkdtempSync(join(tmpdir(), "cursor-supersede-"));
+  const dbPath = join(dir, "state.vscdb");
+  const db = new Database(dbPath);
+  db.exec("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+  const ins = db.prepare("INSERT INTO cursorDiskKV(key, value) VALUES (?, ?)");
+  const composerData = {
+    _v: 10,
+    composerId: "comp-s",
+    name: "supersede test",
+    status: "completed",
+    createdAt: Date.now(),
+    lastUpdatedAt: Date.now(),
+    fullConversationHeadersOnly: [{ bubbleId: "u1", type: 1 }],
+    text: "supersede test",
+    unifiedMode: "agent",
+  };
+  ins.run("composerData:comp-s", JSON.stringify(composerData));
+  ins.run(
+    "bubbleId:comp-s:u1",
+    JSON.stringify({
+      _v: 3,
+      bubbleId: "u1",
+      type: 1,
+      text: "hi",
+      createdAt: new Date().toISOString(),
+    }),
+  );
+  ins.run(
+    "checkpointId:comp-s:ckpt-uuid-9",
+    JSON.stringify({
+      files: [
+        {
+          uri: { path: "/tmp/supersede-proj/src/late.ts" },
+          isNewlyCreated: false,
+          originalModelDiffWrtV0: [
+            { original: { startLineNumber: 1, endLineNumberExclusive: 2 }, modified: ["x"] },
+          ],
+        },
+      ],
+    }),
+  );
+  db.close();
+
+  await ingestCursorGlobal(store, { dbPath, cwd: "/tmp/supersede-proj" });
+  const runId = listRuns(store)[0]!.run_id;
+  const before = store.db
+    .prepare(`SELECT source_tool_name FROM file_change WHERE run_id = ? AND path = 'src/late.ts'`)
+    .all(runId) as Array<{ source_tool_name: string }>;
+  assert.equal(before.length, 1);
+  assert.equal(before[0]!.source_tool_name, "cursor-checkpoint");
+
+  // Pass 2: the tool row for the same path shows up (retention un-lag /
+  // late toolFormerData flush) — the checkpoint fallback must yield.
+  const db2 = new Database(dbPath);
+  const ins2 = db2.prepare(
+    "INSERT OR REPLACE INTO cursorDiskKV(key, value) VALUES (?, ?)",
+  );
+  ins2.run(
+    "composerData:comp-s",
+    JSON.stringify({
+      ...composerData,
+      fullConversationHeadersOnly: [
+        { bubbleId: "u1", type: 1 },
+        { bubbleId: "a1", type: 2 },
+      ],
+    }),
+  );
+  ins2.run(
+    "bubbleId:comp-s:a1",
+    JSON.stringify({
+      _v: 3,
+      bubbleId: "a1",
+      type: 2,
+      text: "",
+      createdAt: new Date().toISOString(),
+      toolFormerData: {
+        name: "search_replace",
+        tool: 0,
+        status: "completed",
+        params: JSON.stringify({ relativeWorkspacePath: "src/late.ts" }),
+        result: JSON.stringify({
+          diff: { chunks: [{ diffString: "@@ -1 +1 @@\n-x\n+y", linesAdded: 1, linesRemoved: 1 }] },
+        }),
+      },
+    }),
+  );
+  db2.close();
+
+  await ingestCursorGlobal(store, { dbPath, cwd: "/tmp/supersede-proj" });
+  const after = store.db
+    .prepare(`SELECT source_tool_name FROM file_change WHERE run_id = ? AND path = 'src/late.ts'`)
+    .all(runId) as Array<{ source_tool_name: string }>;
+  assert.equal(after.length, 1, "exactly one row for the path — no double-count");
+  assert.equal(
+    after[0]!.source_tool_name,
+    "search_replace",
+    "tool-attributed row superseded the checkpoint fallback",
+  );
+  store.close();
+});
+
+test("checkpoint ingestion is skipped entirely for '(cursor)' placeholder cwd", async () => {
+  freshHome();
+  const store = Store.open();
+  // No cwd option and no composerHeaders → run.cwd = "(cursor)". Path
+  // canonicalization against absolute checkpoint URIs is impossible, so
+  // checkpoints must not double-count.
+  const dbPath = buildDb();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  assert.equal(runs[0]!.cwd, "(cursor)");
+  const ckptRows = store.db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM file_change WHERE run_id = ? AND source_tool_name = 'cursor-checkpoint'`,
+    )
+    .get(runs[0]!.run_id) as { n: number };
+  assert.equal(ckptRows.n, 0, "no checkpoint rows for placeholder cwd");
+  const ckptSteps = listSteps(store, runs[0]!.run_id).filter((s) =>
+    s.tags.includes("cursor-checkpoint"),
+  );
+  assert.equal(ckptSteps.length, 0);
+  store.close();
+});

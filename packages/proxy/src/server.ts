@@ -259,7 +259,10 @@ async function persistCapture(args: PersistArgs): Promise<void> {
       // same as the other x-meterbility-* annotations).
       cwd: args.headers.get("x-meterbility-cwd") ?? undefined,
       git_branch: args.headers.get("x-meterbility-git-branch") ?? undefined,
-      source_session_id: explicitRunId,
+      // Namespaced: getRunBySessionId is a shared join surface across
+      // adapters (codex session ids, cursor composerIds) — a raw
+      // caller-chosen id could collide with another vendor's session.
+      source_session_id: explicitRunId ? `proxy:${explicitRunId}` : undefined,
     });
     args.seenRuns.add(runResolution.run_id);
   }

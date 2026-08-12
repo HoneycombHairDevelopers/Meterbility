@@ -82,15 +82,81 @@ cursor (only rows past last-seen id) and adaptive interval backoff when
 eventing is healthy. Blocked by: eventing landing and proving out —
 do not touch the live path during the demo window.
 
+## Server (live / web) — cont.
+
+### Live step append protocol assumes contiguous sequences
+**Priority:** P2
+`html.ts:1743` (`appendStepsUpTo`) walks `seq = step_count` upward and
+fetches step-card fragments one sequence at a time — it wedges when
+reserved-band steps exist (hooks 100k / admin 200k / checkpoints 300k)
+because `step_count` counts them but the walk never reaches their
+sequences. Latent until Cursor joins eventing. Fix: fetch by explicit
+sequence list or an `after=<cursor>` param instead of assuming
+contiguity.
+
+### Incremental Codex ingest state
+**Priority:** P2
+Every live tick on a growing Codex rollout still rebuilds the full
+session (O(n) buildSteps + O(n²)-ish snapshot hashing as history
+grows). This ship landed parse-once (single file read) and the
+idle-tail gate (chatter-only appends skip the rebuild) as mitigation;
+the real fix is persisted incremental state: carry (history refs,
+sequence, prevStepId, model) across ticks keyed on the ingest offset.
+
+### Local-vs-admin usage double-count policy
+**Priority:** P2
+Theoretical until Cursor persists local `usageData`: if the bubble walk
+ever starts carrying real token counts AND the Admin API puller is
+configured, the same request would be counted in both the walk step and
+the admin band step, doubling run totals. Define precedence (admin wins;
+zero out walk-step tokens? tag one plane `usage:shadow`?) before
+enabling both.
+
+### Hook hot-path updateRunTotals
+**Priority:** P3
+Every Cursor hook event runs `updateRunTotals` — a full-run aggregation
+over all steps — on the hot path of the user's editor. Skip it for
+zero-token hook steps or switch to increment-only updates.
+
+### Prepared-statement caching
+**Priority:** P3
+Adapters call `store.db.prepare()` inside per-row loops (file_change
+existence guards, band sequence counts). better-sqlite3 caches by
+source string but a per-Store statement cache (prepare once, reuse)
+would make the hot loops allocation-free.
+
+### Proxy cwd header is advisory
+**Priority:** P3
+`x-meterbility-cwd` is caller-supplied and used for project identity —
+a header can attach runs to an existing project the caller doesn't own.
+Acceptable for the loopback-bind default; revisit (allowlist or
+project-scoped tokens) before the team server binds non-loopback.
+
 ## Refactors (DRY)
 
 ### Shared helpers for the two capture paths
 **Priority:** P3
-`countLines` (3 copies), the recursive walk skeleton, and the test
-scaffold (hook_capture.test.ts / file_sentinel.test.ts) are duplicated.
-The dedup predicate + sequence seeding are now shared via
-`insertWatchRow`; finish the job with a shared `walkTree` and a
-capture-test-utils module.
+Cross-adapter duplication has grown past the original capture-path pair:
+- `toRepoRelative` — 5 copies (claude-code/file_changes.ts,
+  codex-cli/ingest.ts, cursor/hooks.ts, cursor/extras.ts, plus the
+  collector/baseline.ts variant).
+- `countLines` — 5 copies (claude-code/file_changes.ts,
+  codex-cli/ingest.ts, cursor/file_changes.ts, cursor/hooks.ts,
+  collector capture path).
+- `parseMaybeJson` — duplicated in cursor/file_changes.ts and
+  cursor/ingest.ts.
+- `diffLines` — cursor imports it from `@meterbility/claude-code-adapter`,
+  a cross-adapter dependency that belongs in shared.
+- The synthetic-step scaffold (blob snapshot + decision ref +
+  nextSequenceInBand + insertStep + tags) is triplicated across cursor
+  hooks.ts / admin_api.ts / extras.ts.
+- Raw SQL in adapters that wants collector helpers: run-tag rewrite
+  (`replaceRunTag`), step/file_change existence guards (`stepExists`,
+  `fileChangeExists`).
+Also still open from capture: the recursive walk skeleton and the test
+scaffold (hook_capture.test.ts / file_sentinel.test.ts); dedup predicate
++ sequence seeding are shared via `insertWatchRow` — finish with a
+shared `walkTree` and a capture-test-utils module.
 
 ## Tests (nice-to-have gaps from ship review)
 
