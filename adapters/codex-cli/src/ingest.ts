@@ -349,21 +349,18 @@ async function buildSteps(
     }
   }
 
-  // patch_apply_end events, joined later to their tool step via call_id.
-  const patchEvents: CodexPatchApplyEndPayload[] = [];
-  for (const r of records) {
-    if (r.record.type !== "event_msg") continue;
-    if (r.record.payload.type === "patch_apply_end") {
-      patchEvents.push(r.record.payload as CodexPatchApplyEndPayload);
-    }
-  }
-
   // ---- Main walk. ----
   const history: ConversationMessage[] = [];
   const steps: Step[] = [];
   const fileChanges: BuiltSteps["fileChanges"] = [];
   const stepIdByCallId = new Map<string, string>();
   const rawPatchInputByCallId = new Map<string, string>();
+  const cwd = meta.cwd ?? "";
+  // Per-step sequence counter spanning ALL patch events: two events
+  // falling back onto the same step (e.g. both with unmatched call_ids)
+  // must not both start at 0 — that collided on UNIQUE(step_id,
+  // sequence) and crash-looped the ingest before setIngestOffset.
+  const fcSeqByStep = new Map<string, number>();
   let sequence = 0;
   let prevStepId: string | undefined;
   // Real model id from turn_context; older CLIs never emit it. The
@@ -435,6 +432,102 @@ async function buildSteps(
     if (isTurnContext(r.record)) {
       if (typeof r.record.payload.model === "string") {
         currentModel = r.record.payload.model;
+      }
+      continue;
+    }
+
+    // ---- File changes from patch_apply_end (shape pinned 2026-08-04),
+    // handled inline in the walk: stepIdByCallId already holds every
+    // PRIOR call at this point, and prevStepId is the nearest prior
+    // step — so an orphan event (unmatched call_id) attaches to the
+    // step it followed, not the last step of the whole session.
+    if (
+      r.record.type === "event_msg" &&
+      r.record.payload.type === "patch_apply_end"
+    ) {
+      const patch = r.record.payload as CodexPatchApplyEndPayload;
+      const stepId = patch.call_id
+        ? stepIdByCallId.get(patch.call_id)
+        : undefined;
+      // Without a joinable step there is nothing to attribute to; the
+      // fallback step is the nearest prior one (patch events follow
+      // their call).
+      const targetStepId = stepId ?? prevStepId;
+      if (!targetStepId || !patch.changes) continue;
+      const rawInput = patch.call_id
+        ? rawPatchInputByCallId.get(patch.call_id)
+        : undefined;
+      // Inline capture bypasses the blob pipeline's redaction — apply the
+      // same pass to the raw V4A patch text and unified diffs.
+      const redactedInput =
+        rawInput !== undefined ? redactString(rawInput).text : undefined;
+
+      for (const [absPath, change] of Object.entries(patch.changes)) {
+        const seq = fcSeqByStep.get(targetStepId) ?? 0;
+        fcSeqByStep.set(targetStepId, seq + 1);
+        const relPath = toRepoRelative(absPath, cwd);
+        const isAdd = change.type === "add";
+        const isDelete = change.type === "delete";
+        const movePath = change.move_path ?? undefined;
+        const op: FileChange["op"] = isAdd
+          ? "create"
+          : isDelete
+            ? "delete"
+            : movePath
+              ? "rename"
+              : "modify";
+        const diffCounts = change.unified_diff
+          ? countDiffLines(change.unified_diff)
+          : undefined;
+
+        const fcId = `fc_${hashJson([targetStepId, relPath, seq])}`;
+        if (isAdd && typeof change.content === "string") {
+          const afterRef = await store.blobs.putString(change.content);
+          fileChanges.push({
+            file_change_id: fcId,
+            run_id: runId,
+            step_id: targetStepId,
+            sequence: seq,
+            tool_call_id: patch.call_id,
+            derived_from: "tool_call",
+            path: relPath,
+            op: "create",
+            after_blob_ref: afterRef,
+            partial_diff: false,
+            gitignored: false,
+            size_after: Buffer.byteLength(change.content, "utf-8"),
+            line_count_after: countLines(change.content),
+            lines_added: countLines(change.content),
+            lines_removed: 0,
+            source_tool_name: "apply_patch",
+            source_tool_input: redactedInput,
+          });
+        } else {
+          // Updates/deletes/renames carry no before-content in the rollout —
+          // record the FACT of the change as a partial_diff row with the
+          // unified diff cached as patch_text.
+          fileChanges.push({
+            file_change_id: fcId,
+            run_id: runId,
+            step_id: targetStepId,
+            sequence: seq,
+            tool_call_id: patch.call_id,
+            derived_from: "tool_call",
+            path: movePath ? toRepoRelative(movePath, cwd) : relPath,
+            old_path: movePath ? relPath : undefined,
+            op,
+            partial_diff: true,
+            gitignored: false,
+            patch_text: change.unified_diff
+              ? redactString(change.unified_diff).text
+              : undefined,
+            patch_format: change.unified_diff ? "unified" : undefined,
+            lines_added: diffCounts?.added ?? 0,
+            lines_removed: diffCounts?.removed ?? 0,
+            source_tool_name: "apply_patch",
+            source_tool_input: redactedInput,
+          });
+        }
       }
       continue;
     }
@@ -550,98 +643,6 @@ async function buildSteps(
       sequence += 1;
       prevStepId = stepId;
       continue;
-    }
-  }
-
-  // ---- File changes from patch_apply_end (shape pinned 2026-08-04). ----
-  const cwd = meta.cwd ?? "";
-  // Per-step sequence counter spanning ALL patch events: two events
-  // falling back onto the same step (e.g. both with unmatched call_ids)
-  // must not both start at 0 — that collided on UNIQUE(step_id,
-  // sequence) and crash-looped the ingest before setIngestOffset.
-  const fcSeqByStep = new Map<string, number>();
-  for (const patch of patchEvents) {
-    const stepId = patch.call_id
-      ? stepIdByCallId.get(patch.call_id)
-      : undefined;
-    // Without a joinable step there is nothing to attribute to; the
-    // fallback step is the last one (patch events follow their call).
-    const targetStepId = stepId ?? steps[steps.length - 1]?.step_id;
-    if (!targetStepId || !patch.changes) continue;
-    const rawInput = patch.call_id
-      ? rawPatchInputByCallId.get(patch.call_id)
-      : undefined;
-    // Inline capture bypasses the blob pipeline's redaction — apply the
-    // same pass to the raw V4A patch text and unified diffs.
-    const redactedInput =
-      rawInput !== undefined ? redactString(rawInput).text : undefined;
-
-    for (const [absPath, change] of Object.entries(patch.changes)) {
-      const seq = fcSeqByStep.get(targetStepId) ?? 0;
-      fcSeqByStep.set(targetStepId, seq + 1);
-      const relPath = toRepoRelative(absPath, cwd);
-      const isAdd = change.type === "add";
-      const isDelete = change.type === "delete";
-      const movePath = change.move_path ?? undefined;
-      const op: FileChange["op"] = isAdd
-        ? "create"
-        : isDelete
-          ? "delete"
-          : movePath
-            ? "rename"
-            : "modify";
-      const diffCounts = change.unified_diff
-        ? countDiffLines(change.unified_diff)
-        : undefined;
-
-      const fcId = `fc_${hashJson([targetStepId, relPath, seq])}`;
-      if (isAdd && typeof change.content === "string") {
-        const afterRef = await store.blobs.putString(change.content);
-        fileChanges.push({
-          file_change_id: fcId,
-          run_id: runId,
-          step_id: targetStepId,
-          sequence: seq,
-          tool_call_id: patch.call_id,
-          derived_from: "tool_call",
-          path: relPath,
-          op: "create",
-          after_blob_ref: afterRef,
-          partial_diff: false,
-          gitignored: false,
-          size_after: Buffer.byteLength(change.content, "utf-8"),
-          line_count_after: countLines(change.content),
-          lines_added: countLines(change.content),
-          lines_removed: 0,
-          source_tool_name: "apply_patch",
-          source_tool_input: redactedInput,
-        });
-      } else {
-        // Updates/deletes/renames carry no before-content in the rollout —
-        // record the FACT of the change as a partial_diff row with the
-        // unified diff cached as patch_text.
-        fileChanges.push({
-          file_change_id: fcId,
-          run_id: runId,
-          step_id: targetStepId,
-          sequence: seq,
-          tool_call_id: patch.call_id,
-          derived_from: "tool_call",
-          path: movePath ? toRepoRelative(movePath, cwd) : relPath,
-          old_path: movePath ? relPath : undefined,
-          op,
-          partial_diff: true,
-          gitignored: false,
-          patch_text: change.unified_diff
-            ? redactString(change.unified_diff).text
-            : undefined,
-          patch_format: change.unified_diff ? "unified" : undefined,
-          lines_added: diffCounts?.added ?? 0,
-          lines_removed: diffCounts?.removed ?? 0,
-          source_tool_name: "apply_patch",
-          source_tool_input: redactedInput,
-        });
-      }
     }
   }
 

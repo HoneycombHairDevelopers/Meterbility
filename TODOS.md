@@ -125,6 +125,28 @@ existence guards, band sequence counts). better-sqlite3 caches by
 source string but a per-Store statement cache (prepare once, reuse)
 would make the hot loops allocation-free.
 
+### INVESTIGATE: Terminal-status authority between capture planes
+**Priority:** P3
+A hook-sealed terminal status (`stop` → error/abandoned) can be
+overwritten to `ok` by a later composer-DB read claiming `completed` —
+the reconciliation guard only prevents terminal→in_progress downgrades,
+not terminal-vs-terminal disagreements. Define which plane wins when
+both claim a (different) terminal status: the hook plane observed the
+stop in real time, the composer row is Cursor's own retrospective
+verdict. Likely answer: hook wins for error/abandoned; needs a decision
+plus a guard in setRunStatus's call sites.
+
+### INVESTIGATE: Codex offset-based step identity assumes append-only rollouts
+**Priority:** P3
+Codex step ids hash (run_id, record byte offset). An upstream rollout
+rewrite/compaction shifts every offset, so re-ingest would mint new
+step ids at already-occupied sequences and crash-loop that session's
+ingest on UNIQUE(run_id, sequence). Not yet observed in real rollouts
+(they are append-as-you-go), but if it ever fires in practice, add a
+catch-and-rebuild guard like the Cursor adapter's reconciliation
+(vacate via offset, upsert, trim tail) instead of letting the tick
+loop error forever.
+
 ### Proxy cwd header is advisory
 **Priority:** P3
 `x-meterbility-cwd` is caller-supplied and used for project identity —

@@ -1501,3 +1501,54 @@ test("parity: write tool flows through the diff-chunks path", async () => {
   assert.equal(fc[0]!.lines_removed, 0);
   store.close();
 });
+
+test("parity: source_tool_input stores redacted params, never the raw secret", async () => {
+  freshMeterbilityHome();
+  const key =
+    "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-sti-redact",
+        name: "leaky edit",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "search_replace",
+              params: JSON.stringify({
+                relativeWorkspacePath: ".env",
+                old_string: "ANTHROPIC_API_KEY=",
+                new_string: `ANTHROPIC_API_KEY=${key}`,
+              }),
+              result: JSON.stringify({
+                diff: {
+                  chunks: [
+                    { diffString: "@@ -1 +1 @@\n-x\n+y", linesAdded: 1, linesRemoved: 1 },
+                  ],
+                },
+              }),
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT source_tool_input FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<{ source_tool_input: string | null }>;
+  assert.equal(fc.length, 1);
+  const stored = String(fc[0]!.source_tool_input);
+  assert.ok(!stored.includes("sk-ant-"), "raw secret absent from stored input");
+  assert.ok(
+    stored.includes("«meter:redacted:"),
+    "redaction placeholder present in stored input",
+  );
+  store.close();
+});

@@ -138,11 +138,7 @@ export async function pullCursorUsage(
   ).replace(/\/+$/, "");
   // The API key rides in an Authorization header — refuse to send it
   // over plaintext HTTP to anything that isn't loopback.
-  if (
-    base !== PROD_BASE &&
-    !base.startsWith("https://") &&
-    !isLocalhostBase(base)
-  ) {
+  if (base !== PROD_BASE && !isSecureAdminBase(base)) {
     return {
       status: "http_error",
       ...empty,
@@ -174,64 +170,84 @@ export async function pullCursorUsage(
       body: JSON.stringify({ startDate, endDate, page: p, pageSize }),
     });
 
-  for (;;) {
-    let res = await fetchPage(page);
-    for (
-      let attempt = 0;
-      res.status === 429 && attempt < MAX_429_RETRIES;
-      attempt += 1
-    ) {
-      await sleep(retryAfterMs(res));
-      res = await fetchPage(page);
+  // Runs whose events applied so far get their totals recomputed and
+  // cost tag swapped no matter how the pull ends — clean completion,
+  // mid-pagination http_error, or an unexpected throw. Applied steps
+  // are already in the store, so skipping the flush would leave run
+  // totals silently stale.
+  const flushRunTotals = (): void => {
+    for (const [runId, anyBilled] of updatedRuns) {
+      updateRunTotals(store, runId);
+      markRunCostActual(store, runId, anyBilled);
     }
-    if (!res.ok) {
-      return {
-        status: "http_error",
-        events_seen: seen,
-        events_applied: applied,
-        events_unmatched: unmatched,
-        events_skipped: skipped,
-        events_duplicate: duplicate,
-        runs_updated: updatedRuns.size,
-        reason: `Admin API ${res.status} on page ${page}`,
-      };
-    }
-    const body = (await res.json()) as {
-      usageEvents?: CursorUsageEvent[];
-      events?: CursorUsageEvent[];
-    };
-    const events = body.usageEvents ?? body.events ?? [];
-    seen += events.length;
+  };
 
-    for (const ev of events) {
-      const { outcome, runId } = await applyUsageEvent(store, ev);
-      if (outcome === "applied") {
-        applied += 1;
-        if (runId) {
-          const billed =
-            typeof ev.chargedCents === "number" && ev.chargedCents > 0;
-          updatedRuns.set(runId, (updatedRuns.get(runId) ?? false) || billed);
-        }
-      } else if (outcome === "unmatched") {
-        unmatched += 1;
-      } else if (outcome === "skipped") {
-        skipped += 1;
-      } else {
-        duplicate += 1;
+  try {
+    for (;;) {
+      let res = await fetchPage(page);
+      for (
+        let attempt = 0;
+        res.status === 429 && attempt < MAX_429_RETRIES;
+        attempt += 1
+      ) {
+        await sleep(retryAfterMs(res));
+        res = await fetchPage(page);
       }
-    }
+      if (!res.ok) {
+        return {
+          status: "http_error",
+          events_seen: seen,
+          events_applied: applied,
+          events_unmatched: unmatched,
+          events_skipped: skipped,
+          events_duplicate: duplicate,
+          runs_updated: updatedRuns.size,
+          reason: `Admin API ${res.status} on page ${page}`,
+        };
+      }
+      const body = (await res.json()) as {
+        usageEvents?: CursorUsageEvent[];
+        events?: CursorUsageEvent[];
+      };
+      const events = body.usageEvents ?? body.events ?? [];
+      seen += events.length;
 
-    if (events.length === 0 || events.length < pageSize) break;
-    if (page >= MAX_PAGES) {
-      capReason = `page cap reached (${MAX_PAGES})`;
-      break;
-    }
-    page += 1;
-  }
+      for (const ev of events) {
+        try {
+          const { outcome, runId } = await applyUsageEvent(store, ev);
+          if (outcome === "applied") {
+            applied += 1;
+            if (runId) {
+              const billed =
+                typeof ev.chargedCents === "number" && ev.chargedCents > 0;
+              updatedRuns.set(runId, (updatedRuns.get(runId) ?? false) || billed);
+            }
+          } else if (outcome === "unmatched") {
+            unmatched += 1;
+          } else if (outcome === "skipped") {
+            skipped += 1;
+          } else {
+            duplicate += 1;
+          }
+        } catch (err) {
+          // One malformed event must not sink the whole pull. Counting
+          // it as skipped preserves the counter invariant
+          // (seen = applied + unmatched + skipped + duplicate).
+          // eslint-disable-next-line no-console
+          console.error("[meter/cursor-admin] usage event failed:", err);
+          skipped += 1;
+        }
+      }
 
-  for (const [runId, anyBilled] of updatedRuns) {
-    updateRunTotals(store, runId);
-    markRunCostActual(store, runId, anyBilled);
+      if (events.length === 0 || events.length < pageSize) break;
+      if (page >= MAX_PAGES) {
+        capReason = `page cap reached (${MAX_PAGES})`;
+        break;
+      }
+      page += 1;
+    }
+  } finally {
+    flushRunTotals();
   }
 
   return {
@@ -260,35 +276,22 @@ async function applyUsageEvent(
   const run: Run | undefined = getRunBySessionId(store, conversationId);
   if (!run) return { outcome: "unmatched" };
 
-  // Stable identity: the API exposes no event id, so hash the fields
-  // that uniquely describe one request. Timestamp is normalized (raw
-  // arrives as string OR number for the same instant) and token counts
-  // Number()-coerced so representation drift can't fork the identity.
+  // Stable identity: the API exposes no event id, so hash the FULL
+  // event object. Deterministic across re-pulls — the server returns
+  // the same JSON, so key insertion order (and therefore the hash) is
+  // stable — while ANY differing field (chargedCents, requestsCosts,
+  // maxMode, fields we don't model yet) keeps distinct events distinct.
   // Re-pulls of overlapping windows become no-ops.
-  const stepId = `stp_${hashJson([
-    run.run_id,
-    "cursor-admin",
-    normalizeTimestamp(ev.timestamp),
-    ev.model ?? null,
-    ev.userEmail ?? null,
-    ev.kind ?? null,
-    Number(usage.inputTokens ?? 0),
-    Number(usage.outputTokens ?? 0),
-    Number(usage.cacheReadTokens ?? 0),
-    Number(usage.cacheWriteTokens ?? 0),
-  ])}`;
+  const stepId = `stp_${hashJson([run.run_id, "cursor-admin", ev])}`;
   const exists = store.db
     .prepare(`SELECT 1 FROM steps WHERE step_id = ?`)
     .get(stepId);
   if (exists) return { outcome: "duplicate", runId: run.run_id };
 
-  const sequence = nextSequenceInBand(
-    store,
-    run.run_id,
-    ADMIN_SEQUENCE_BASE,
-    CHECKPOINT_SEQUENCE_BASE,
-  );
-
+  // Async blob writes FIRST (content-addressed — harmless if a crash
+  // strands them), so the band-sequence derivation + insert can run
+  // inside one synchronous transaction below (mirrors insertHookStep):
+  // concurrent pulls can't compute the same band sequence.
   const snapshotId = hashJson(["cursor-admin-snapshot", stepId]);
   const snapshotRef = await store.blobs.putJson({ id: snapshotId, components: [] });
   recordContextSnapshot(store, snapshotId, snapshotRef, 0);
@@ -309,31 +312,43 @@ async function applyUsageEvent(
   const tags = ["cursor", "cursor-admin", billed ? "cost:actual" : "cost:value"];
   if (!billed && costCents > 0) tags.push("billing:included");
 
-  const step: Step = {
-    step_id: stepId,
-    run_id: run.run_id,
-    sequence,
-    timestamp: normalizeTimestamp(ev.timestamp),
-    model: ev.model ?? "cursor-unknown",
-    context_snapshot_id: snapshotId,
-    decision_ref: decisionRef,
-    action: {
-      kind: "none",
-      text: `[cursor usage] ${ev.kind ?? "request"} by ${ev.userEmail ?? "unknown"}`,
-    },
-    outcome: { status: "ok" },
-    tokens: {
-      input: usage.inputTokens ?? 0,
-      output: usage.outputTokens ?? 0,
-      cached_read: usage.cacheReadTokens ?? 0,
-      cache_creation: usage.cacheWriteTokens ?? 0,
-    },
-    latency_ms: 0,
-    cost_cents: costCents,
-    tags,
-    status: "ok",
-  };
-  insertStep(store, step);
+  store.db.transaction((): void => {
+    const existing = store.db
+      .prepare(`SELECT 1 FROM steps WHERE step_id = ?`)
+      .get(stepId);
+    if (existing) return;
+    const sequence = nextSequenceInBand(
+      store,
+      run.run_id,
+      ADMIN_SEQUENCE_BASE,
+      CHECKPOINT_SEQUENCE_BASE,
+    );
+    const step: Step = {
+      step_id: stepId,
+      run_id: run.run_id,
+      sequence,
+      timestamp: normalizeTimestamp(ev.timestamp),
+      model: ev.model ?? "cursor-unknown",
+      context_snapshot_id: snapshotId,
+      decision_ref: decisionRef,
+      action: {
+        kind: "none",
+        text: `[cursor usage] ${ev.kind ?? "request"} by ${ev.userEmail ?? "unknown"}`,
+      },
+      outcome: { status: "ok" },
+      tokens: {
+        input: usage.inputTokens ?? 0,
+        output: usage.outputTokens ?? 0,
+        cached_read: usage.cacheReadTokens ?? 0,
+        cache_creation: usage.cacheWriteTokens ?? 0,
+      },
+      latency_ms: 0,
+      cost_cents: costCents,
+      tags,
+      status: "ok",
+    };
+    insertStep(store, step);
+  })();
   return { outcome: "applied", runId: run.run_id };
 }
 
@@ -372,17 +387,32 @@ function markRunCostActual(
   }
 }
 
+/**
+ * Display-only timestamp normalization (no longer part of event
+ * identity): epoch ms arrives as a number OR a numeric string; some
+ * gateways return ISO strings. Anything unparseable degrades to now().
+ */
 function normalizeTimestamp(ts: string | number | undefined): string {
   if (ts === undefined) return new Date().toISOString();
   const n = typeof ts === "string" ? Number(ts) : ts;
   if (Number.isFinite(n) && n > 0) return new Date(n).toISOString();
+  if (typeof ts === "string") {
+    const parsed = Date.parse(ts);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
   return new Date().toISOString();
 }
 
-function isLocalhostBase(base: string): boolean {
+/** https anywhere, or plaintext http to loopback only. Scheme compare is
+ *  case-insensitive (URL protocols are); `[::1]` counts as loopback. */
+function isSecureAdminBase(base: string): boolean {
   try {
-    const host = new URL(base).hostname;
-    return host === "localhost" || host === "127.0.0.1";
+    const url = new URL(base);
+    const proto = url.protocol.toLowerCase();
+    if (proto === "https:") return true;
+    if (proto !== "http:") return false;
+    const host = url.hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
   } catch {
     return false;
   }

@@ -488,3 +488,118 @@ test("fleet entries ignore synthetic band steps when deriving last activity", as
   );
   store.close();
 });
+
+test("rewound transcript resets the append cursor; later steps still emit run:updated", async () => {
+  // Regression (G5): lastMaxSeq never rewound. After adapter
+  // reconciliation of a rewritten-shorter source trimmed a run's tail,
+  // the cached floor stayed at the old max — every step appended after
+  // the rewind sat below it and run:updated went silently dead.
+  const { claude } = freshHome();
+  const store = Store.open();
+  const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+  await live.start(); // silent backfill, nothing on disk
+
+  const events: LiveEvent[] = [];
+  live.on("data", (e: LiveEvent) => events.push(e));
+
+  const u1 = {
+    type: "user",
+    uuid: "u1",
+    parentUuid: null,
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:00.000Z",
+    cwd: "/tmp/rewind",
+    message: { role: "user", content: "hi" },
+  };
+  const a1 = {
+    type: "assistant",
+    uuid: "a1",
+    parentUuid: "u1",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:01.000Z",
+    message: {
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "text", text: "step one" }],
+      usage: { input_tokens: 10, output_tokens: 2 },
+    },
+  };
+  const a2 = {
+    type: "assistant",
+    uuid: "a2",
+    parentUuid: "a1",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:02.000Z",
+    message: {
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "text", text: "step two" }],
+      usage: { input_tokens: 11, output_tokens: 3 },
+    },
+  };
+  const path = writeFakeSession(claude, "rewind-proj", "sess-rewind", [u1, a1, a2]);
+  await live.tick(); // run:created; append cursor floor = 1
+
+  const { getRunBySessionId, deleteStepsFromSequence, listSteps } = await import(
+    "@meterbility/collector"
+  );
+  const run = getRunBySessionId(store, "sess-rewind")!;
+  assert.equal(listSteps(store, run.run_id).length, 2, "precondition: two steps");
+
+  // REWOUND source: the transcript is rewritten shorter (fewer records,
+  // same session id) and reconciliation trims the stale tail step (the
+  // Cursor adapter does exactly this; the CC adapter absorbs rewinds
+  // via its sequence upsert). Filler user records keep the rewritten
+  // file LARGER than the original — the tail poll is size-growth-gated
+  // — and give the stale ingest offset a parseable record to land on.
+  deleteStepsFromSequence(store, run.run_id, 1);
+  const filler = {
+    type: "user",
+    uuid: "u2",
+    parentUuid: "a1",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:03.000Z",
+    cwd: "/tmp/rewind",
+    message: { role: "user", content: "pad ".repeat(1000) },
+  };
+  const tailMarker = {
+    type: "user",
+    uuid: "u3",
+    parentUuid: "u2",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:04.000Z",
+    cwd: "/tmp/rewind",
+    message: { role: "user", content: "resume" },
+  };
+  writeFakeSession(claude, "rewind-proj", "sess-rewind", [u1, a1, filler, tailMarker]);
+  events.length = 0;
+  await live.tick(); // rewind observed → cursor resets; no assertions here
+
+  // A step appended AFTER the rewind must still reach subscribers.
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "assistant",
+      uuid: "a3",
+      parentUuid: "u3",
+      sessionId: "sess-rewind",
+      timestamp: "2026-05-12T00:00:05.000Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "fresh step after rewind" }],
+        usage: { input_tokens: 12, output_tokens: 4 },
+      },
+    }) + "\n",
+  );
+  events.length = 0;
+  await live.tick();
+  const updated = events.filter((e) => e.type === "run:updated");
+  assert.equal(updated.length, 1, "run:updated fires for the post-rewind step");
+  assert.ok(
+    updated[0]!.type === "run:updated" && updated[0]!.new_steps.length >= 1,
+    "the fresh step rides the event",
+  );
+  live.stop();
+  store.close();
+});

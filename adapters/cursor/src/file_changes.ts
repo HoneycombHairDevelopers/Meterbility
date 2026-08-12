@@ -82,7 +82,11 @@ export async function extractCursorFileChanges(
     derived_from: "tool_call" as const,
     gitignored: false,
     source_tool_name: tf.name,
-    source_tool_input: params,
+    // Params carry raw edit content (old_string/new_string) which
+    // bypasses the blob pipeline's redaction — store the redacted JSON
+    // string, matching the codex adapter's raw V4A input handling.
+    source_tool_input:
+      params !== undefined ? redactString(JSON.stringify(params)).text : undefined,
     normalizer_notes: notes,
   };
 

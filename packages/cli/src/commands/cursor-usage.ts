@@ -26,40 +26,52 @@ export function registerCursorUsageCommand(program: Command): void {
         process.exitCode = 2;
         return;
       }
-      const store = openStore();
+      // Guard the whole pull: an unexpected throw (store open failure,
+      // network-layer TypeError from fetch, ...) must surface as a
+      // red error + exit code 1, never an unhandled rejection.
       try {
-        const result = await pullCursorUsage(store, {
-          startDateMs: Date.now() - days * DAY_MS,
-        });
-        if (opts.json) {
-          process.stdout.write(JSON.stringify(result) + "\n");
-          if (result.status !== "ok") process.exitCode = 1;
-          return;
-        }
-        if (result.status === "no_api_key") {
-          console.error(pc.yellow(result.reason!));
-          process.exitCode = 1;
-          return;
-        }
-        if (result.status === "http_error") {
-          console.error(pc.red(`meter cursor-usage: ${result.reason}`));
-          process.exitCode = 1;
-          return;
-        }
-        console.log(
-          `${pc.green("✓")} ${result.events_seen} events → ${result.events_applied} applied, ` +
-            `${result.events_unmatched} unmatched, ${result.events_skipped} skipped · ` +
-            `${result.runs_updated} run(s) now carry ${pc.cyan("cost:actual")}`,
-        );
-        if (result.events_unmatched > 0) {
+        const store = openStore();
+        try {
+          const result = await pullCursorUsage(store, {
+            startDateMs: Date.now() - days * DAY_MS,
+          });
+          if (opts.json) {
+            process.stdout.write(JSON.stringify(result) + "\n");
+            if (result.status !== "ok") process.exitCode = 1;
+            return;
+          }
+          if (result.status === "no_api_key") {
+            console.error(pc.yellow(result.reason!));
+            process.exitCode = 1;
+            return;
+          }
+          if (result.status === "http_error") {
+            console.error(pc.red(`meter cursor-usage: ${result.reason}`));
+            process.exitCode = 1;
+            return;
+          }
           console.log(
-            pc.dim(
-              "  unmatched events belong to conversations not yet ingested — run `meter ingest cursor` first for full joins",
-            ),
+            `${pc.green("✓")} ${result.events_seen} events → ${result.events_applied} applied, ` +
+              `${result.events_unmatched} unmatched, ${result.events_skipped} skipped · ` +
+              `${result.runs_updated} run(s) now carry ${pc.cyan("cost:actual")}`,
           );
+          if (result.events_unmatched > 0) {
+            console.log(
+              pc.dim(
+                "  unmatched events belong to conversations not yet ingested — run `meter ingest cursor` first for full joins",
+              ),
+            );
+          }
+        } finally {
+          store.close();
         }
-      } finally {
-        store.close();
+      } catch (err) {
+        console.error(
+          pc.red(
+            `meter cursor-usage: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+        process.exitCode = 1;
       }
     });
 }

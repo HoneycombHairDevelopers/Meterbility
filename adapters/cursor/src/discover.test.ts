@@ -59,3 +59,24 @@ test("workspaceCwdById decodes file:// URIs and passes through non-URI folders",
     delete process.env.CURSOR_USER_DIR;
   }
 });
+
+test("workspaceCwdById rejects non-local folder schemes (vscode-remote://)", async () => {
+  const userDir = freshUserDir();
+  try {
+    const remote = join(userDir, "workspaceStorage", "ws-remote");
+    mkdirSync(remote, { recursive: true });
+    writeFileSync(
+      join(remote, "workspace.json"),
+      JSON.stringify({
+        folder: "vscode-remote://ssh-remote%2Bdevbox/home/dev/project",
+      }),
+    );
+    assert.equal(
+      await workspaceCwdById("ws-remote"),
+      undefined,
+      "remote scheme is not a usable local cwd",
+    );
+  } finally {
+    delete process.env.CURSOR_USER_DIR;
+  }
+});

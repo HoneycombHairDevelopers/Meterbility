@@ -318,3 +318,75 @@ test("checkpoint ingestion is skipped entirely for '(cursor)' placeholder cwd", 
   assert.equal(ckptSteps.length, 0);
   store.close();
 });
+
+test("checkpoint fallback patch_text is redacted before it hits SQLite", async () => {
+  freshHome();
+  const store = Store.open();
+  const key =
+    "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+  const dir = mkdtempSync(join(tmpdir(), "cursor-ckpt-redact-"));
+  const dbPath = join(dir, "state.vscdb");
+  const db = new Database(dbPath);
+  db.exec("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+  const ins = db.prepare("INSERT INTO cursorDiskKV(key, value) VALUES (?, ?)");
+  ins.run(
+    "composerData:comp-r",
+    JSON.stringify({
+      _v: 10,
+      composerId: "comp-r",
+      name: "redact test",
+      status: "completed",
+      createdAt: Date.now(),
+      lastUpdatedAt: Date.now(),
+      fullConversationHeadersOnly: [{ bubbleId: "u1", type: 1 }],
+      text: "redact test",
+      unifiedMode: "agent",
+    }),
+  );
+  ins.run(
+    "bubbleId:comp-r:u1",
+    JSON.stringify({
+      _v: 3,
+      bubbleId: "u1",
+      type: 1,
+      text: "hi",
+      createdAt: new Date().toISOString(),
+    }),
+  );
+  // Checkpoint is the ONLY evidence for .env — its edit script carries
+  // the secret in the modified lines.
+  ins.run(
+    "checkpointId:comp-r:ckpt-uuid-r",
+    JSON.stringify({
+      files: [
+        {
+          uri: { path: "/tmp/redact-proj/.env" },
+          isNewlyCreated: true,
+          originalModelDiffWrtV0: [
+            {
+              original: { startLineNumber: 0, endLineNumberExclusive: 0 },
+              modified: [`ANTHROPIC_API_KEY=${key}`],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  db.close();
+
+  await ingestCursorGlobal(store, { dbPath, cwd: "/tmp/redact-proj" });
+  const runId = listRuns(store)[0]!.run_id;
+  const fc = store.db
+    .prepare(
+      `SELECT patch_text FROM file_change WHERE run_id = ? AND source_tool_name = 'cursor-checkpoint'`,
+    )
+    .get(runId) as { patch_text: string };
+  assert.ok(fc, "checkpoint fallback row exists");
+  assert.ok(!fc.patch_text.includes("sk-ant-"), "raw secret absent");
+  assert.ok(
+    fc.patch_text.includes("«meter:redacted:"),
+    "redaction placeholder present",
+  );
+  store.close();
+});

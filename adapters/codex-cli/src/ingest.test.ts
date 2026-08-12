@@ -808,3 +808,72 @@ test("token_count with info:null (rate-limit refresh) attributes no usage and ke
   assert.ok(run.tags.includes("cost:approx"), "no usage → still approx");
   store.close();
 });
+
+test("parity: orphan patch event between two tool steps attaches to the EARLIER step", async () => {
+  // Regression (G6): the fallback for an unmatched call_id used to be
+  // the last step of the WHOLE session — an orphan patch sitting
+  // between two tool steps was attributed to work that happened after
+  // it. The fallback is now the nearest PRIOR step.
+  const store = freshStore();
+  const path = writeSession([
+    {
+      type: "session_meta",
+      timestamp: "2026-08-04T18:26:37Z",
+      payload: { id: "sess-orphan-mid", timestamp: "2026-08-04T18:26:37Z", cwd: "/tmp/proj" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:40Z",
+      payload: {
+        type: "custom_tool_call",
+        id: "ctc_1",
+        status: "completed",
+        call_id: "call_first",
+        name: "apply_patch",
+        input: "*** Begin Patch\n*** Add File: one.txt\n+one\n*** End Patch\n",
+      },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-04T18:26:41Z",
+      payload: {
+        type: "patch_apply_end",
+        call_id: "call_lost",
+        success: true,
+        changes: {
+          "/tmp/proj/one.txt": { type: "add", content: "one\n" },
+        },
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T18:26:45Z",
+      payload: {
+        type: "custom_tool_call",
+        id: "ctc_2",
+        status: "completed",
+        call_id: "call_second",
+        name: "apply_patch",
+        input: "*** Begin Patch\n*** Add File: two.txt\n+two\n*** End Patch\n",
+      },
+    },
+  ]);
+  const r = await ingestCodexSession(store, path);
+  assert.equal(r.status, "ok");
+  const runs = listRuns(store);
+  const steps = listSteps(store, runs[0]!.run_id);
+  assert.equal(steps.length, 2);
+  const first = steps.find((s) => s.sequence === 0)!;
+  const last = steps.find((s) => s.sequence === 1)!;
+  const rows = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(rows.length, 1);
+  assert.equal(
+    rows[0]!.step_id,
+    first.step_id,
+    "orphan attaches to the nearest prior step",
+  );
+  assert.notEqual(rows[0]!.step_id, last.step_id, "not the session's final step");
+  store.close();
+});

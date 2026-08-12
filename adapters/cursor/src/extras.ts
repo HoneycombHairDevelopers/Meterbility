@@ -1,5 +1,5 @@
 import type { FileChange, Run, Step } from "@meterbility/shared";
-import { hashJson } from "@meterbility/shared";
+import { hashJson, redactString } from "@meterbility/shared";
 import {
   getRunBySessionId,
   insertAnnotation,
@@ -209,7 +209,10 @@ async function ingestCheckpoints(
       stepId ??= await ensureCheckpointStep(store, run, checkpointUuid);
 
       const script = f.originalModelDiffWrtV0 ?? [];
-      const patchText = renderEditScript(script);
+      // Inline patch text bypasses the blob pipeline's redaction —
+      // apply the same pass as the other inline writers before it hits
+      // SQLite.
+      const patchText = redactString(renderEditScript(script)).text;
       const linesAdded = script.reduce(
         (n, s) => n + (s.modified?.length ?? 0),
         0,

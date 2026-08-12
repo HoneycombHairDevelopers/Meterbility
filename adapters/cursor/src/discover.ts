@@ -124,7 +124,11 @@ export function defaultGlobalDbPath(): string {
 /**
  * Resolve a workspaceId (from composerHeaders) to its folder path via
  * workspaceStorage/<id>/workspace.json. Epoch-ms ids and empty windows
- * have no workspace.json and resolve to undefined.
+ * have no workspace.json and resolve to undefined. Only local folders
+ * are usable as a cwd: `file://` URIs (decoded) and absolute paths.
+ * Any other scheme (vscode-remote://, vscode-vfs://, ...) points at a
+ * filesystem this process cannot see — resolve to undefined rather
+ * than hand path canonicalization a bogus cwd.
  */
 export async function workspaceCwdById(
   workspaceId: string,
@@ -136,7 +140,11 @@ export async function workspaceCwdById(
     const buf = await readFile(wsJson, "utf-8");
     const obj = JSON.parse(buf) as { folder?: string };
     if (typeof obj.folder === "string") {
-      return decodeURIComponent(obj.folder.replace(/^file:\/\//, ""));
+      if (obj.folder.startsWith("file://")) {
+        return decodeURIComponent(obj.folder.replace(/^file:\/\//, ""));
+      }
+      if (obj.folder.startsWith("/")) return obj.folder;
+      return undefined;
     }
   } catch {
     // ignore

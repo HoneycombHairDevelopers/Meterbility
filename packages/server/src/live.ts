@@ -798,6 +798,23 @@ function collectNewSteps(
   // counts. Only walk-range steps past the high-water mark are "new".
   const floor = lastMaxSeq.get(run.run_id) ?? -1;
   const all = listSteps(store, run.run_id);
+  // Rewind detection: adapter reconciliation of a rewritten-shorter
+  // source (fewer records, same session id) can trim the run's tail,
+  // dropping the walk-range max BELOW the cached floor. Without a
+  // reset the floor never rewinds, so every step appended after the
+  // rewind stayed below it and run:updated went silently dead for the
+  // rest of the process lifetime. Treat the current state as the new
+  // baseline and emit nothing for this tick.
+  let currentMax = -1;
+  for (const s of all) {
+    if (s.sequence < RESERVED_SEQUENCE_BASE && s.sequence > currentMax) {
+      currentMax = s.sequence;
+    }
+  }
+  if (currentMax < floor) {
+    lastMaxSeq.set(run.run_id, currentMax);
+    return [];
+  }
   return all.filter(
     (s) => s.sequence > floor && s.sequence < RESERVED_SEQUENCE_BASE,
   );

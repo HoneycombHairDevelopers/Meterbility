@@ -355,3 +355,123 @@ test("admin steps survive DB-ingest reconciliation (above the hook range)", asyn
   assert.equal(steps.filter((s) => s.sequence < 100_000).length, 1);
   store.close();
 });
+
+test("distinct same-second events differing only in chargedCents both apply", async () => {
+  freshHome();
+  const store = Store.open();
+  const run = cursorRun(store, "comp-a");
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    fetchImpl: stubFetch([
+      { usageEvents: [EVENT, { ...EVENT, chargedCents: 7 }] },
+    ]),
+  });
+  assert.equal(r.events_applied, 2, "full-event identity keeps them distinct");
+  assert.equal(r.events_duplicate, 0);
+  const steps = listSteps(store, run.run_id);
+  assert.equal(steps.length, 2);
+  assert.notEqual(steps[0]!.sequence, steps[1]!.sequence);
+  store.close();
+});
+
+test("ISO-string timestamp event has stable identity across re-pulls", async () => {
+  freshHome();
+  const store = Store.open();
+  const run = cursorRun(store, "comp-a");
+  const isoEvent = { ...EVENT, timestamp: "2026-08-04T12:00:00.000Z" };
+  const r1 = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    fetchImpl: stubFetch([{ usageEvents: [isoEvent] }]),
+  });
+  assert.equal(r1.events_applied, 1);
+  const steps = listSteps(store, run.run_id);
+  assert.equal(steps.length, 1);
+  assert.equal(
+    new Date(steps[0]!.timestamp).getTime(),
+    Date.parse("2026-08-04T12:00:00.000Z"),
+    "ISO timestamp parsed for display, not degraded to now()",
+  );
+
+  const r2 = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    fetchImpl: stubFetch([{ usageEvents: [isoEvent] }]),
+  });
+  assert.equal(r2.events_applied, 0);
+  assert.equal(r2.events_duplicate, 1, "same event re-pulled → duplicate");
+  assert.equal(listSteps(store, run.run_id).length, 1);
+  store.close();
+});
+
+test("page-2 http_error still flushes page-1 run totals and cost tag", async () => {
+  freshHome();
+  const store = Store.open();
+  const run = cursorRun(store, "comp-a");
+  let call = 0;
+  const flakyFetch = (async () => {
+    call += 1;
+    if (call === 1) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ usageEvents: [{ ...EVENT, chargedCents: 3 }] }),
+      } as Response;
+    }
+    return { ok: false, status: 500, json: async () => ({}) } as Response;
+  }) as typeof fetch;
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    pageSize: 1,
+    fetchImpl: flakyFetch,
+  });
+  assert.equal(r.status, "http_error");
+  assert.equal(r.events_applied, 1);
+  assert.equal(r.runs_updated, 1);
+
+  const updated = listRuns(store).find((x) => x.run_id === run.run_id)!;
+  assert.ok(updated.cost_cents > 0, "run totals flushed despite the http_error");
+  assert.ok(updated.tags.includes("cost:actual"), "cost tag applied despite the http_error");
+  assert.ok(!updated.tags.includes("cost:approx"));
+  store.close();
+});
+
+test("http base with [::1] and uppercase-scheme https are accepted", async () => {
+  freshHome();
+  const store = Store.open();
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    baseUrl: "http://[::1]:9999",
+    fetchImpl: stubFetch([{ usageEvents: [] }]),
+  });
+  assert.equal(r.status, "ok", "IPv6 loopback http is allowed");
+  const r2 = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    baseUrl: "HTTPS://gateway.example.com",
+    fetchImpl: stubFetch([{ usageEvents: [] }]),
+  });
+  assert.equal(r2.status, "ok", "scheme compare is case-insensitive");
+  store.close();
+});
+
+test("a throwing event is counted as skipped; the pull and invariant survive", async () => {
+  freshHome();
+  const store = Store.open();
+  const run = cursorRun(store, "comp-a");
+  // tokenUsage present but poisoned: getter-free but conversationId of
+  // an object breaks getRunBySessionId's binding → SQLite throws.
+  const poisoned = { ...EVENT, conversationId: { evil: true } };
+  const r = await pullCursorUsage(store, {
+    apiKey: "key_test",
+    fetchImpl: stubFetch([{ usageEvents: [poisoned, EVENT] }]),
+  });
+  assert.equal(r.status, "ok", "pull completes despite the throwing event");
+  assert.equal(r.events_seen, 2);
+  assert.equal(r.events_applied, 1, "healthy event still applied");
+  assert.equal(r.events_skipped, 1, "throwing event counted as skipped");
+  assert.equal(
+    r.events_seen,
+    r.events_applied + r.events_unmatched + r.events_skipped + r.events_duplicate,
+    "counter invariant holds with a throwing event",
+  );
+  assert.equal(listSteps(store, run.run_id).length, 1);
+  store.close();
+});
