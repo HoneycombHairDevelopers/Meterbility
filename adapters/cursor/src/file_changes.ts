@@ -75,18 +75,21 @@ export async function extractCursorFileChanges(
   const fcId = `fc_${hashJson([runId, anchor, relPath, FIRST_CHANGE_SEQ])}`;
   const notes = fateNotes(cursor, composerId, tf);
 
+  // Params carry raw edit content (old_string/new_string) which
+  // bypasses the blob pipeline's redaction — store the redacted JSON
+  // string, matching the codex adapter's raw V4A input handling.
+  const inputRedaction =
+    params !== undefined ? redactString(JSON.stringify(params)) : undefined;
   const base = {
     run_id: runId,
     step_id: stepId,
     tool_call_id: tf.toolCallId ?? tf.modelCallId,
     derived_from: "tool_call" as const,
     gitignored: false,
+    bom: false,
+    redacted: (inputRedaction?.redactions.length ?? 0) > 0,
     source_tool_name: tf.name,
-    // Params carry raw edit content (old_string/new_string) which
-    // bypasses the blob pipeline's redaction — store the redacted JSON
-    // string, matching the codex adapter's raw V4A input handling.
-    source_tool_input:
-      params !== undefined ? redactString(JSON.stringify(params)).text : undefined,
+    source_tool_input: inputRedaction?.text,
     normalizer_notes: notes,
   };
 
@@ -187,12 +190,13 @@ export async function extractCursorFileChanges(
       : [];
   // Inline patch text bypasses the blob pipeline's redaction — apply
   // the same pass before it hits SQLite.
-  const patchText = redactString(
+  const patchRedaction = redactString(
     chunks
       .map((c) => c.diffString)
       .filter((s): s is string => typeof s === "string" && s.length > 0)
       .join("\n"),
-  ).text;
+  );
+  const patchText = patchRedaction.text;
   const linesAdded = chunks.reduce((n, c) => n + (c.linesAdded ?? 0), 0);
   const linesRemoved = chunks.reduce((n, c) => n + (c.linesRemoved ?? 0), 0);
 
@@ -205,6 +209,7 @@ export async function extractCursorFileChanges(
     partial_diff: true,
     patch_text: patchText.length > 0 ? patchText : undefined,
     patch_format: patchText.length > 0 ? "unified" : undefined,
+    redacted: base.redacted || patchRedaction.redactions.length > 0,
     lines_added: linesAdded,
     lines_removed: linesRemoved,
   });
