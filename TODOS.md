@@ -156,7 +156,55 @@ a header can attach runs to an existing project the caller doesn't own.
 Acceptable for the loopback-bind default; revisit (allowlist or
 project-scoped tokens) before the team server binds non-loopback.
 
-## Refactors (DRY)
+## Live Probe (cross-runtime pause)
+
+Today only the SDKs acknowledge the probe protocol, so Pause is gated
+to sdk-ts/sdk-py runs (v0.5.1). Hook systems make a real pause feasible
+for the IDE runtimes: the pre-tool hook polls the probe file and holds
+before answering, yielding pause-between-tool-calls (the closest analog
+to the SDK's pause-between-model-calls). Shared prerequisites for all
+three: a probe reader in the hook path (shared/src/probe.ts already
+exports readState/confirmPaused), a hold loop with a hard cap well
+under the host's hook timeout, `run:paused`/`run:resumed` emission via
+the existing live poller, and probe-panel gating extended per-runtime
+as each lands. Injection is explicitly out of scope for hook-based
+pause v1 (no way to add a message to the host's context; only delay).
+
+### Claude Code pause via PreToolUse hook
+**Priority:** P3
+`meter capture pre` already runs as the PreToolUse hook
+(packages/server/src/hook_capture.ts, installed by `meter init
+--hooks`). Extend it (or a sibling `meter probe-hold` command chained
+in settings.json) to check `probeFilePath(runId)` and hold while state
+is pause_requested/paused. CRITICAL constraint: never exit 2 (that
+BLOCKS the tool call — same footgun documented in capture.ts) and
+never exceed Claude Code's hook timeout — cap the hold and re-arm on
+the next tool call so a long pause degrades to "crawl" rather than a
+hook kill. Attribution via session_id → getRunBySessionId is already
+solved by hook_capture.
+
+### Cursor pause via beforeShellExecution / beforeMCPExecution hooks
+**Priority:** P3
+`meter cursor-hook` already receives blocking permission events
+(beforeShellExecution, beforeMCPExecution, beforeReadFile). A pause
+mode would poll the probe file before answering `{continue: true}`.
+Two design conflicts to resolve first: (1) v0.5.1 deliberately answers
+BEFORE persistence and fails open so capture never stalls the editor —
+pause mode inverts that, so it must be opt-in (e.g. only hold when a
+probe file exists for the joined run) and keep the no-permission-vote
+contract when releasing; (2) hook timeout budget is undocumented —
+measure before shipping. Only tool-shaped work pauses (pure text
+generation has no before* hook).
+
+### Codex pause via [hooks] — verify blocking semantics first
+**Priority:** P3
+Codex config exposes `[hooks]` tables and `notify`. UNVERIFIED whether
+its hooks can block/delay tool execution or are fire-and-forget
+notifications — if fire-and-forget, pause is not possible and this
+entry converts to "document as vendor-withheld" (probe panel stays
+hidden for codex-cli). Verify against a current CLI before any design:
+capture a session with a slow hook installed and observe whether tool
+execution waits.
 
 ### Shared helpers for the two capture paths
 **Priority:** P3
