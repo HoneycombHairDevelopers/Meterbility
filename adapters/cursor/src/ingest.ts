@@ -9,6 +9,7 @@ import type {
   Step,
   TokenUsage,
 } from "@meterbility/shared";
+import { costCents } from "@meterbility/spec";
 import {
   DETERMINISTIC_STEP_ID_RE,
   deterministicStepId,
@@ -29,6 +30,9 @@ import {
   upsertProjectByCwd,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
+import { HOOK_SEQUENCE_BASE, SEQUENCE_REBUILD_OFFSET } from "./bands.ts";
+import { extractCursorFileChanges } from "./file_changes.ts";
+import { ingestCursorExtras, readAiTrackingSummary } from "./extras.ts";
 import { CursorDb, isMeaningfulComposer } from "./parser.ts";
 import {
   bubbleText,
@@ -39,11 +43,6 @@ import {
 } from "./types.ts";
 
 const SOURCE_RUNTIME = "cursor" as const;
-
-/** Rebuilds vacate stored sequences by at least this offset — far above
- *  any real conversation length, so offset rows can never collide with
- *  the walk. */
-const SEQUENCE_REBUILD_OFFSET = 1_000_000;
 
 export interface CursorIngestResult {
   workspace_id?: string;
@@ -65,7 +64,11 @@ export interface IngestCursorOptions {
   sinceMs?: number;
   /** Only ingest the N newest composers. */
   limit?: number;
-  /** Project cwd to attribute the run to (defaults to "(cursor)"). */
+  /**
+   * Override per-composer workspace resolution; when unset, each
+   * composer's cwd is resolved via composerHeaders/workspace.json,
+   * falling back to "(cursor)" for ephemeral windows.
+   */
   cwd?: string;
 }
 
@@ -80,8 +83,19 @@ export interface IngestCursorOptions {
  *     non-empty).
  *
  * Cursor doesn't expose system prompts in the SQLite (they're injected
- * server-side), and per-step token usage is sparse. We capture what we
- * can and tag steps with `cost:approx` where cost is a wild estimate.
+ * server-side), and per-step token usage is sparse. Steps with local
+ * token data are priced via costCents and tagged `cost:approx`; the
+ * Admin API usage puller supersedes those estimates with `cost:actual`
+ * (billed) or `cost:value` (subscription-included) when configured.
+ *
+ * Each composer's run attributes to its workspace: cwd resolves per
+ * composer via composerHeaders → workspace.json (memoized per pull),
+ * falling back to "(cursor)" only for ephemeral windows.
+ *
+ * This is one of three capture planes (bubble walk here, hooks, Admin
+ * API) plus the extras pass (checkpoint fallback + AI-lines ledger).
+ * Walk reconciliation (shift rebuilds, tail trims) is bounded below
+ * RESERVED_SEQUENCE_BASE, so synthetic band steps always survive it.
  */
 export async function ingestCursorGlobal(
   store: Store,
@@ -141,22 +155,67 @@ export async function ingestCursorGlobal(
       };
     }
 
-    const cwd = opts.cwd ?? "(cursor)";
-    const project = upsertProjectByCwd(store, cwd, "cursor");
-    const agent = upsertAgent(store, project.project_id, "cursor");
+    // Per-composer cwd: composerHeaders.workspaceId → workspace.json
+    // folder. Falls back to the "(cursor)" placeholder only for
+    // ephemeral windows with no workspace — this is what lets the file
+    // sentinel and project grouping work for Cursor runs.
+    const { workspaceCwdById } = await import("./discover.ts");
+    // Memoized per pull: each workspace's cwd resolution hits disk
+    // (workspace.json), and many composers share a workspace.
+    const wsCwdCache = new Map<string, string | undefined>();
+    const resolveWorkspaceCwd = async (
+      wsId: string,
+    ): Promise<string | undefined> => {
+      if (wsCwdCache.has(wsId)) return wsCwdCache.get(wsId);
+      const cwd = await workspaceCwdById(wsId);
+      wsCwdCache.set(wsId, cwd);
+      return cwd;
+    };
+    const projectCache = new Map<
+      string,
+      { projectId: string; agentId: string }
+    >();
+    const resolveProject = (cwd: string) => {
+      let hit = projectCache.get(cwd);
+      if (!hit) {
+        const project = upsertProjectByCwd(store, cwd, "cursor");
+        const agent = upsertAgent(store, project.project_id, "cursor");
+        hit = { projectId: project.project_id, agentId: agent.agent_id };
+        projectCache.set(cwd, hit);
+      }
+      return hit;
+    };
+
+    // Cursor's own per-line AI-authorship ledger — parsed once per pull
+    // (it's one large ItemTable row), summarized per composer below.
+    const aiSummary = readAiTrackingSummary(cursor);
 
     let composersIngested = 0;
     let composersFailed = 0;
     let stepsAdded = 0;
     for (const comp of composers) {
       try {
+        let cwd = opts.cwd;
+        if (!cwd) {
+          const wsId = cursor.workspaceIdForComposer(comp.composerId);
+          cwd = wsId ? await resolveWorkspaceCwd(wsId) : undefined;
+        }
+        cwd ??= "(cursor)";
+        const { projectId, agentId } = resolveProject(cwd);
         const result = await ingestOneComposer(store, cursor, comp, {
-          projectId: project.project_id,
-          agentId: agent.agent_id,
+          projectId,
+          agentId,
           cwd,
         });
         composersIngested += 1;
         stepsAdded += result.steps_added;
+        // Supplementary evidence (checkpoint fallback rows + AI-lines
+        // annotation). Best-effort: extras must never fail an ingest.
+        try {
+          await ingestCursorExtras(store, cursor, comp.composerId, aiSummary);
+        } catch {
+          // ignore — extras are additive
+        }
       } catch {
         // One poisoned composer (schema drift, torn concurrent write)
         // must not starve every other conversation on every tick — the
@@ -267,9 +326,16 @@ async function ingestOneComposer(
   // order shifted (checkpoint restore, edited turn), relocating rows
   // would collide inside the upsert — detect that here and vacate the
   // sequence range in the commit phase below.
-  const existingIdBySeq = existing
-    ? listStepIdsBySequence(store, runId)
-    : new Map<number, string>();
+  // Reconciliation only concerns the bubble-walk range — hook-plane
+  // steps (sequence >= HOOK_SEQUENCE_BASE, written by meter cursor-hook)
+  // are a separate capture channel and must be invisible to shift
+  // detection, migration, counting, and trims.
+  const existingIdBySeq = new Map<number, string>();
+  if (existing) {
+    for (const [seq, id] of listStepIdsBySequence(store, runId)) {
+      if (seq < HOOK_SEQUENCE_BASE) existingIdBySeq.set(seq, id);
+    }
+  }
   const preIds = new Set(existingIdBySeq.values());
   let shifted = false;
   if (existingIdBySeq.size > 0) {
@@ -335,6 +401,8 @@ async function ingestOneComposer(
   // sees all prior user/assistant bubbles in its context snapshot.
   const history: ConversationMessage[] = [];
   const steps: Step[] = [];
+  const pendingFileChanges: Array<{ bubble: CursorBubble; stepId: string }> =
+    [];
   let sequence = 0;
   let prevStepId: string | undefined;
   let stepsAdded = 0;
@@ -412,6 +480,21 @@ async function ingestOneComposer(
         cached_read: 0,
         cache_creation: 0,
       };
+      const model = modelFromComposer(comp) ?? "cursor";
+      // Price whatever local token data exists. The model is usually the
+      // literal "default" (Cursor never persists the served model
+      // locally), so this stays cost:approx — but a real dollar estimate
+      // beats a hardcoded zero, and Admin API data supersedes it when
+      // the usage puller is configured.
+      const priced =
+        tokens.input + tokens.output > 0
+          ? costCents(model, {
+              input: tokens.input,
+              output: tokens.output,
+              cached_read: 0,
+              cache_creation: 0,
+            })
+          : undefined;
 
       const stepId = deterministicStepId(runId, bubble.bubbleId);
       const step: Step = {
@@ -420,14 +503,14 @@ async function ingestOneComposer(
         parent_step_id: prevStepId,
         sequence,
         timestamp: bubble.createdAt ?? new Date().toISOString(),
-        model: modelFromComposer(comp) ?? "cursor",
+        model,
         context_snapshot_id: snapshot.id,
         decision_ref: decisionRef,
         action,
         outcome,
         tokens,
         latency_ms: 0,
-        cost_cents: 0,
+        cost_cents: priced?.cost_cents ?? 0,
         tags: ["cost:approx", "cursor"],
         status:
           outcome.status === "error"
@@ -439,6 +522,11 @@ async function ingestOneComposer(
       steps.push(step);
       prevStepId = survivingIdAt(sequence, stepId);
       if (!preIds.has(prevStepId)) stepsAdded += 1;
+      // File-change extraction runs AFTER the commit phase (needs the
+      // step rows to exist for the FK) against whichever id survives.
+      if (bubble.toolFormerData) {
+        pendingFileChanges.push({ bubble, stepId: prevStepId });
+      }
       sequence += 1;
 
       // Append a synthetic assistant entry to history so subsequent
@@ -490,17 +578,51 @@ async function ingestOneComposer(
       // into place, so file_change children stay attached. Offset rows
       // left unmatched are bubbles that vanished from the source; the
       // trim below removes them.
-      offsetStepSequences(store, runId, SEQUENCE_REBUILD_OFFSET);
+      offsetStepSequences(store, runId, SEQUENCE_REBUILD_OFFSET, HOOK_SEQUENCE_BASE);
     }
     for (const step of steps) insertStep(store, step);
     // A rewound composer (checkpoint restore) has fewer bubbles than the
     // run has steps — trim the stale tail (and any unmatched offset
-    // rows) so totals mirror the source.
-    deleteStepsFromSequence(store, runId, sequence);
-    setRunStatus(store, runId, composerStatus(comp), epochMsToIso(comp.lastUpdatedAt));
+    // rows) so totals mirror the source. Bounded below HOOK_SEQUENCE_BASE
+    // so hook-captured steps (the real-time plane, sequence 100000+)
+    // survive DB-side reconciliation; offset strays are trimmed by the
+    // second, unbounded-from-the-rebuild-offset call.
+    deleteStepsFromSequence(store, runId, sequence, HOOK_SEQUENCE_BASE);
+    deleteStepsFromSequence(store, runId, SEQUENCE_REBUILD_OFFSET);
+    // Status ping-pong guard: the hook plane seals runs in real time
+    // (stop → ok/error/abandoned) while the composer row often still
+    // looks in_progress. Never let a DB re-ingest reopen a sealed run —
+    // only apply "in_progress" when the run is new or already open —
+    // and never null-out an ended_at that a prior pass set.
+    const newStatus = composerStatus(comp);
+    if (
+      newStatus !== "in_progress" ||
+      !existing ||
+      existing.status === "in_progress"
+    ) {
+      setRunStatus(
+        store,
+        runId,
+        newStatus,
+        epochMsToIso(comp.lastUpdatedAt) ?? existing?.ended_at,
+      );
+    }
     updateRunTotals(store, runId);
   });
   commit();
+
+  // File-change extraction (blob writes are async, and the rows FK onto
+  // the just-committed steps). Idempotent per (run, bubble, path).
+  for (const p of pendingFileChanges) {
+    await extractCursorFileChanges(
+      store,
+      cursor,
+      comp.composerId,
+      p.bubble,
+      runId,
+      p.stepId,
+    );
+  }
   return { steps_added: stepsAdded };
 }
 

@@ -88,10 +88,11 @@ export class BlobStore {
 
   async putBuffer(buf: Buffer, opts?: { skipRedact?: boolean }): Promise<string> {
     // Skip the redaction round-trip if (a) the caller already knows the
-    // bytes are binary or pre-redacted, or (b) our heuristic flags the
-    // first 8 KB as binary. Otherwise PNG / .woff2 / lockfile / .pyc
-    // bytes get destroyed by `Buffer.toString("utf-8")` replacing
-    // invalid sequences with U+FFFD (3 bytes encoded, not the originals).
+    // bytes are binary or pre-redacted, or (b) the full-buffer heuristic
+    // (NUL scan + UTF-8 round-trip check in isProbablyText) flags them
+    // as binary. Otherwise PNG / .woff2 / lockfile / .pyc bytes get
+    // destroyed by `Buffer.toString("utf-8")` replacing invalid
+    // sequences with U+FFFD (3 bytes encoded, not the originals).
     const shouldSkip = opts?.skipRedact === true || !isProbablyText(buf);
     const { buffer: scrubbed, redactions } = shouldSkip
       ? { buffer: buf, redactions: [] as Array<{ rule: string; count: number }> }

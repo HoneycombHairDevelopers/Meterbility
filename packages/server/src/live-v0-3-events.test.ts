@@ -29,6 +29,8 @@ function freshHomes(): { meter: string; claude: string } {
   const claude = mkdtempSync(join(tmpdir(), "claude-v03-events-"));
   process.env.METERBILITY_HOME = meter;
   process.env.CLAUDE_HOME = claude;
+  // Keep Codex discovery out of these tests (see live-events.test.ts).
+  process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), "codex-v03-events-"));
   return { meter, claude };
 }
 

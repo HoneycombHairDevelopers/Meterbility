@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "@meterbility/collector";
@@ -16,12 +16,28 @@ import { LiveInspector, type LiveEvent } from "./live.ts";
  * fresh CLAUDE_HOME and inspecting the events the inspector emits.
  */
 
-function freshHome(): { meter: string; claude: string } {
+function freshHome(): { meter: string; claude: string; codex: string } {
   const meter = mkdtempSync(join(tmpdir(), "meter-live-events-"));
   const claude = mkdtempSync(join(tmpdir(), "claude-fake-"));
+  const codex = mkdtempSync(join(tmpdir(), "codex-fake-"));
   process.env.METERBILITY_HOME = meter;
   process.env.CLAUDE_HOME = claude;
-  return { meter, claude };
+  // Isolate Codex discovery too — without this, the inspector would
+  // ingest the developer's real ~/.codex rollouts into the test store.
+  process.env.CODEX_HOME = codex;
+  return { meter, claude, codex };
+}
+
+function writeFakeCodexRollout(
+  codexHome: string,
+  sessionId: string,
+  records: object[],
+): string {
+  const dir = join(codexHome, "sessions", "2026", "08", "04");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `rollout-2026-08-04T10-00-00-${sessionId}.jsonl`);
+  writeFileSync(path, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  return path;
 }
 
 function writeFakeSession(claudeHome: string, projectName: string, sessionId: string, records: object[]): string {
@@ -282,6 +298,308 @@ test("fleet entries carry descriptive alert messages, not dedup keys", async () 
   assert.ok(alert, "tool_called alert present with a real kind, not a key");
   assert.match(alert!.message, /watched tool Bash called at step #/);
   assert.match(alert!.message, /rm -rf node_modules/, "message includes the command");
+  live.stop();
+  store.close();
+});
+
+// ---------------------------------------------------------------------------
+// Cross-vendor live discovery (2026-08-04): Codex rollouts are tail-polled
+// exactly like Claude Code transcripts.
+// ---------------------------------------------------------------------------
+
+function codexRecords(sessionId: string): object[] {
+  return [
+    {
+      type: "session_meta",
+      timestamp: "2026-08-04T10:00:00Z",
+      payload: { id: sessionId, timestamp: "2026-08-04T10:00:00Z", cwd: "/tmp/codex-proj" },
+    },
+    {
+      type: "turn_context",
+      timestamp: "2026-08-04T10:00:01Z",
+      payload: { model: "gpt-5.5" },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T10:00:02Z",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "do the thing" }],
+      },
+    },
+    {
+      type: "response_item",
+      timestamp: "2026-08-04T10:00:03Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "working on it" }],
+      },
+    },
+  ];
+}
+
+test("codex rollout appearing post-boot fires run:created; append fires run:updated", async () => {
+  const { codex } = freshHome();
+  const store = Store.open();
+  const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+  await live.start(); // silent backfill, nothing on disk
+
+  const events: LiveEvent[] = [];
+  live.on("data", (e: LiveEvent) => events.push(e));
+
+  const path = writeFakeCodexRollout(codex, "0199-codex-live", codexRecords("codex-live-1"));
+  await live.tick();
+
+  const created = events.filter((e) => e.type === "run:created");
+  assert.equal(created.length, 1, "codex run:created fired once");
+  const createdRun = (created[0] as Extract<LiveEvent, { type: "run:created" }>).run;
+  assert.equal(createdRun.source_runtime, "codex-cli");
+
+  // Append another assistant turn → run:updated with new steps.
+  events.length = 0;
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "response_item",
+      timestamp: "2026-08-04T10:00:10Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "done" }],
+      },
+    }) + "\n",
+  );
+  await live.tick();
+  const updated = events.filter((e) => e.type === "run:updated");
+  assert.equal(updated.length, 1, "append triggers run:updated");
+
+  // Idle tick → silence.
+  events.length = 0;
+  await live.tick();
+  assert.equal(
+    events.filter((e) => e.type === "run:created" || e.type === "run:updated").length,
+    0,
+  );
+  live.stop();
+  store.close();
+});
+
+test("nonexistent CODEX_HOME: Claude run:created still fires, no throw", async () => {
+  const { claude } = freshHome();
+  // Point Codex discovery at a directory that does not exist — the
+  // inspector must skip Codex silently and keep the Claude plane alive.
+  process.env.CODEX_HOME = join(tmpdir(), `codex-definitely-missing-${Date.now()}`);
+  try {
+    const store = Store.open();
+    const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+    await live.start(); // silent backfill
+
+    const events: LiveEvent[] = [];
+    live.on("data", (e: LiveEvent) => events.push(e));
+
+    writeFakeSession(
+      claude,
+      "codexless-proj",
+      "sess-codexless",
+      basicSession("sess-codexless", "/tmp/codexless"),
+    );
+    await live.tick();
+
+    const created = events.filter((e) => e.type === "run:created");
+    assert.equal(created.length, 1, "Claude discovery unaffected by missing CODEX_HOME");
+    live.stop();
+    store.close();
+  } finally {
+    delete process.env.CODEX_HOME;
+  }
+});
+
+test("fleet entries ignore synthetic band steps when deriving last activity", async () => {
+  freshHome();
+  const { upsertProjectByCwd, upsertAgent, insertRun, insertStep } = await import(
+    "@meterbility/collector"
+  );
+  const { buildFleetEntries } = await import("./live.ts");
+  const store = Store.open();
+  const project = upsertProjectByCwd(store, "/tmp/band-proj", "cursor");
+  const agent = upsertAgent(store, project.project_id, "cursor");
+  insertRun(store, {
+    run_id: "run_band",
+    agent_id: agent.agent_id,
+    project_id: project.project_id,
+    source_session_id: "comp-band",
+    source_runtime: "cursor",
+    status: "in_progress",
+    started_at: "2026-08-04T10:00:00.000Z",
+    tokens_total_input: 0,
+    tokens_total_output: 0,
+    tokens_total_cached: 0,
+    cost_cents: 0,
+    step_count: 0,
+    tags: ["cursor"],
+  });
+  const mkStep = (partial: Record<string, unknown>) =>
+    ({
+      run_id: "run_band",
+      timestamp: "2026-08-04T10:00:01.000Z",
+      model: "cursor",
+      context_snapshot_id: "ctx",
+      decision_ref: "dec",
+      action: { kind: "message", text: "hi" },
+      outcome: { status: "ok" },
+      tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+      latency_ms: 0,
+      cost_cents: 0,
+      tags: [],
+      status: "ok",
+      ...partial,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+  // Transcript step (walk range) at T1...
+  insertStep(
+    store,
+    mkStep({ step_id: "stp_walk", sequence: 0, timestamp: "2026-08-04T10:00:01.000Z" }),
+  );
+  // ...and a synthetic hook step at 100k with a MUCH later timestamp and
+  // a tool_call action that must not leak into recent_tools.
+  insertStep(
+    store,
+    mkStep({
+      step_id: "stp_hook",
+      sequence: 100_000,
+      timestamp: "2026-08-04T11:30:00.000Z",
+      action: { kind: "tool_call", tool_name: "afterFileEdit", tool_input: {} },
+      tags: ["cursor-hook"],
+    }),
+  );
+
+  const entries = buildFleetEntries(store, { limit: 10 });
+  const entry = entries.find((e) => e.run.run_id === "run_band")!;
+  assert.equal(
+    entry.last_step_at,
+    "2026-08-04T10:00:01.000Z",
+    "last activity derives from the transcript step, not the 100k band step",
+  );
+  assert.ok(
+    !entry.recent_tools.includes("afterFileEdit"),
+    "synthetic hook tool not in recent_tools",
+  );
+  store.close();
+});
+
+test("rewound transcript resets the append cursor; later steps still emit run:updated", async () => {
+  // Regression (G5): lastMaxSeq never rewound. After adapter
+  // reconciliation of a rewritten-shorter source trimmed a run's tail,
+  // the cached floor stayed at the old max — every step appended after
+  // the rewind sat below it and run:updated went silently dead.
+  const { claude } = freshHome();
+  const store = Store.open();
+  const live = new LiveInspector(store, { scanIntervalMs: 999_999 });
+  await live.start(); // silent backfill, nothing on disk
+
+  const events: LiveEvent[] = [];
+  live.on("data", (e: LiveEvent) => events.push(e));
+
+  const u1 = {
+    type: "user",
+    uuid: "u1",
+    parentUuid: null,
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:00.000Z",
+    cwd: "/tmp/rewind",
+    message: { role: "user", content: "hi" },
+  };
+  const a1 = {
+    type: "assistant",
+    uuid: "a1",
+    parentUuid: "u1",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:01.000Z",
+    message: {
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "text", text: "step one" }],
+      usage: { input_tokens: 10, output_tokens: 2 },
+    },
+  };
+  const a2 = {
+    type: "assistant",
+    uuid: "a2",
+    parentUuid: "a1",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:02.000Z",
+    message: {
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "text", text: "step two" }],
+      usage: { input_tokens: 11, output_tokens: 3 },
+    },
+  };
+  const path = writeFakeSession(claude, "rewind-proj", "sess-rewind", [u1, a1, a2]);
+  await live.tick(); // run:created; append cursor floor = 1
+
+  const { getRunBySessionId, deleteStepsFromSequence, listSteps } = await import(
+    "@meterbility/collector"
+  );
+  const run = getRunBySessionId(store, "sess-rewind")!;
+  assert.equal(listSteps(store, run.run_id).length, 2, "precondition: two steps");
+
+  // REWOUND source: the transcript is rewritten shorter (fewer records,
+  // same session id) and reconciliation trims the stale tail step (the
+  // Cursor adapter does exactly this; the CC adapter absorbs rewinds
+  // via its sequence upsert). Filler user records keep the rewritten
+  // file LARGER than the original — the tail poll is size-growth-gated
+  // — and give the stale ingest offset a parseable record to land on.
+  deleteStepsFromSequence(store, run.run_id, 1);
+  const filler = {
+    type: "user",
+    uuid: "u2",
+    parentUuid: "a1",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:03.000Z",
+    cwd: "/tmp/rewind",
+    message: { role: "user", content: "pad ".repeat(1000) },
+  };
+  const tailMarker = {
+    type: "user",
+    uuid: "u3",
+    parentUuid: "u2",
+    sessionId: "sess-rewind",
+    timestamp: "2026-05-12T00:00:04.000Z",
+    cwd: "/tmp/rewind",
+    message: { role: "user", content: "resume" },
+  };
+  writeFakeSession(claude, "rewind-proj", "sess-rewind", [u1, a1, filler, tailMarker]);
+  events.length = 0;
+  await live.tick(); // rewind observed → cursor resets; no assertions here
+
+  // A step appended AFTER the rewind must still reach subscribers.
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "assistant",
+      uuid: "a3",
+      parentUuid: "u3",
+      sessionId: "sess-rewind",
+      timestamp: "2026-05-12T00:00:05.000Z",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "fresh step after rewind" }],
+        usage: { input_tokens: 12, output_tokens: 4 },
+      },
+    }) + "\n",
+  );
+  events.length = 0;
+  await live.tick();
+  const updated = events.filter((e) => e.type === "run:updated");
+  assert.equal(updated.length, 1, "run:updated fires for the post-rewind step");
+  assert.ok(
+    updated[0]!.type === "run:updated" && updated[0]!.new_steps.length >= 1,
+    "the fresh step rides the event",
+  );
   live.stop();
   store.close();
 });

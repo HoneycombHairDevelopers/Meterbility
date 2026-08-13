@@ -410,3 +410,113 @@ test("operator round-trip via /api/probe: pause → inject → resume → state"
     store.close();
   }
 });
+
+// ─── Probe UI gating (cross-vendor parity, 2026-08) ─────────────────
+// Only the SDKs implement the pause/ack protocol; transcript-derived
+// runs (claude-code / codex-cli / cursor / proxy) must NOT be offered
+// the panel — Pause would wedge them in pause_requested forever.
+
+test("probe panel partial is gated on probe-capable runtimes", async () => {
+  freshStore();
+  const store = Store.open();
+  try {
+    const sdkRunId = scaffold(store); // source_runtime: "sdk-ts"
+    const project = upsertProjectByCwd(store, "/tmp/probe-gate", "probe-gate");
+    const agent = upsertAgent(store, project.project_id, "claude-code");
+    const transcriptRunId = `run_${randomUUID()}`;
+    insertRun(store, {
+      run_id: transcriptRunId,
+      agent_id: agent.agent_id,
+      project_id: project.project_id,
+      source_runtime: "claude-code",
+      title: "transcript fixture",
+      status: "in_progress",
+      started_at: new Date().toISOString(),
+      tokens_total_input: 0,
+      tokens_total_output: 0,
+      tokens_total_cached: 0,
+      cost_cents: 0,
+      step_count: 0,
+      tags: [],
+    });
+
+    const app = buildApp(store);
+
+    // SDK run: panel renders.
+    const okRes = await app.fetch(
+      new Request(`http://x/api/runs/${sdkRunId}/probe/panel`),
+    );
+    assert.equal(okRes.status, 200, "sdk-ts run still gets the panel");
+
+    // Transcript run: 404 despite being in_progress.
+    const gatedRes = await app.fetch(
+      new Request(`http://x/api/runs/${transcriptRunId}/probe/panel`),
+    );
+    assert.equal(gatedRes.status, 404, "transcript run is gated");
+    const body = (await gatedRes.json()) as { error: string };
+    assert.match(body.error, /does not support probe/);
+  } finally {
+    store.close();
+  }
+});
+
+// ─── Probe POST gating: transcript runtimes can't be paused ──────────
+
+test("POST pause/resume/inject on a transcript-runtime run → 404; clear stays open", async () => {
+  freshStore();
+  const store = Store.open();
+  try {
+    // claude-code transcripts have nothing on the other end to ack a
+    // pause — offering the POSTs would wedge the run in
+    // pause_requested forever.
+    const project = upsertProjectByCwd(store, "/tmp/probe-web", "probe-web");
+    const agent = upsertAgent(store, project.project_id, "claude-code");
+    const runId = `run_${randomUUID()}`;
+    insertRun(store, {
+      run_id: runId,
+      agent_id: agent.agent_id,
+      project_id: project.project_id,
+      source_runtime: "claude-code",
+      title: "transcript run",
+      status: "in_progress",
+      started_at: new Date().toISOString(),
+      tokens_total_input: 0,
+      tokens_total_output: 0,
+      tokens_total_cached: 0,
+      cost_cents: 0,
+      step_count: 0,
+      tags: [],
+    } as Run);
+    const app = buildApp(store);
+
+    const pause = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/pause`, { method: "POST" }),
+    );
+    assert.equal(pause.status, 404);
+    const pauseBody = (await pause.json()) as { error: string };
+    assert.match(pauseBody.error, /does not support probe/);
+    assert.equal(readState(runId).state, "running", "no probe file mutation");
+
+    const resume = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/resume`, { method: "POST" }),
+    );
+    assert.equal(resume.status, 404);
+
+    const inject = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/inject`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "hi" }),
+      }),
+    );
+    assert.equal(inject.status, 404);
+
+    // CLEAR stays ungated — it exists to recover stale probe files.
+    const clear = await app.fetch(
+      new Request(`http://x/api/runs/${runId}/probe/clear`, { method: "POST" }),
+    );
+    assert.equal(clear.status, 200);
+  } finally {
+    store.close();
+  }
+});

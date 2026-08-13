@@ -151,3 +151,54 @@ test("init --hooks: refuses unexpected shapes (valid JSON, wrong structure)", as
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Cursor hooks installer (cross-vendor parity, 2026-08-04)
+// ---------------------------------------------------------------------------
+
+test("installCursorHooks writes a fresh hooks.json with all three events", async () => {
+  const root = mkdtempSync(join(tmpdir(), "meter-init-cursor-"));
+  const { installCursorHooks } = await import("./init.ts");
+  const result = await installCursorHooks(root);
+  assert.equal(result, "installed");
+  const config = JSON.parse(
+    readFileSync(join(root, ".cursor", "hooks.json"), "utf-8"),
+  );
+  assert.equal(config.version, 1);
+  for (const ev of ["afterFileEdit", "beforeShellExecution", "stop"]) {
+    assert.ok(
+      config.hooks[ev].some((e: { command: string }) =>
+        e.command.includes("meter cursor-hook"),
+      ),
+      `${ev} registered`,
+    );
+  }
+  // Idempotent.
+  assert.equal(await installCursorHooks(root), "already-present");
+});
+
+test("installCursorHooks preserves existing entries and refuses bad shapes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "meter-init-cursor2-"));
+  const dir = join(root, ".cursor");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "hooks.json"),
+    JSON.stringify({
+      version: 1,
+      hooks: { afterFileEdit: [{ command: "my-formatter" }] },
+    }),
+  );
+  const { installCursorHooks } = await import("./init.ts");
+  assert.equal(await installCursorHooks(root), "installed");
+  const config = JSON.parse(
+    readFileSync(join(dir, "hooks.json"), "utf-8"),
+  );
+  assert.equal(config.hooks.afterFileEdit.length, 2, "existing entry preserved");
+  assert.equal(config.hooks.afterFileEdit[0].command, "my-formatter");
+
+  // Bad shape refusal.
+  const root2 = mkdtempSync(join(tmpdir(), "meter-init-cursor3-"));
+  mkdirSync(join(root2, ".cursor"), { recursive: true });
+  writeFileSync(join(root2, ".cursor", "hooks.json"), JSON.stringify([1, 2]));
+  assert.equal(await installCursorHooks(root2), "already-present");
+});

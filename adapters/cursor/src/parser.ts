@@ -98,6 +98,51 @@ export class CursorDb {
     }
   }
 
+  /** Raw KV read — used for content blobs, fate ledgers, checkpoints. */
+  getRawKV(key: string): string | undefined {
+    const row = this.db
+      .prepare("SELECT value FROM cursorDiskKV WHERE key = ?")
+      .get(key) as { value: string | null } | undefined;
+    return row?.value ?? undefined;
+  }
+
+  /**
+   * Full before/after file bodies for edit_file_v2, stored content-
+   * addressed under `composer.content.<id>`. Values are the raw file
+   * text (occasionally JSON-quoted — unwrap when it round-trips).
+   */
+  getContentBlob(contentId: string): string | undefined {
+    const raw = this.getRawKV(`composer.content.${contentId}`);
+    if (raw === undefined) return undefined;
+    if (raw.startsWith('"')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === "string") return parsed;
+      } catch {
+        // fall through — treat as plain text
+      }
+    }
+    return raw;
+  }
+
+  /**
+   * composer → workspace link from the `composerHeaders` relational
+   * table (the authoritative mapping; epoch-ms ids belong to ephemeral
+   * windows with no folder and return undefined downstream).
+   */
+  workspaceIdForComposer(composerId: string): string | undefined {
+    const hasTable = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='composerHeaders'",
+      )
+      .get();
+    if (!hasTable) return undefined;
+    const row = this.db
+      .prepare("SELECT workspaceId FROM composerHeaders WHERE composerId = ?")
+      .get(composerId) as { workspaceId: string | null } | undefined;
+    return row?.workspaceId ?? undefined;
+  }
+
   /**
    * Materialize one composer's conversation — envelope plus bubbles —
    * inside a single read transaction, so the result is one consistent
@@ -130,6 +175,33 @@ export class CursorDb {
       },
     );
     return read(composer);
+  }
+
+  /** List cursorDiskKV keys under a prefix (checkpoints, fates, ...). */
+  listKeysByPrefix(prefix: string): string[] {
+    const rows = this.db
+      .prepare("SELECT key FROM cursorDiskKV WHERE key LIKE ? ORDER BY key")
+      .all(prefix + "%") as Array<{ key: string }>;
+    return rows.map((r) => r.key);
+  }
+
+  /**
+   * Read a value from the ItemTable (VS Code-style key/value store —
+   * home of aiCodeTrackingLines). Guarded: fixtures and future Cursor
+   * versions may not have the table.
+   */
+  getItemTable(key: string): string | undefined {
+    const hasTable = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='ItemTable'",
+      )
+      .get();
+    if (!hasTable) return undefined;
+    const row = this.db
+      .prepare("SELECT value FROM ItemTable WHERE key = ?")
+      .get(key) as { value: string | Buffer | null } | undefined;
+    if (!row || row.value == null) return undefined;
+    return typeof row.value === "string" ? row.value : row.value.toString("utf-8");
   }
 
   /** Schema sanity check — used by doctor and tests. */

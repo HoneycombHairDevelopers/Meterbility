@@ -424,7 +424,19 @@ export function deleteStepsFromSequence(
   store: Store,
   runId: string,
   fromSequence: number,
+  belowSequence?: number,
 ): void {
+  // Optional upper bound lets adapters that mix capture planes in one
+  // run (e.g. Cursor's bubble walk below 100k + hook-captured steps
+  // above it) trim only their own sequence range.
+  if (belowSequence !== undefined) {
+    store.db
+      .prepare(
+        "DELETE FROM steps WHERE run_id = ? AND sequence >= ? AND sequence < ?",
+      )
+      .run(runId, fromSequence, belowSequence);
+    return;
+  }
   store.db
     .prepare("DELETE FROM steps WHERE run_id = ? AND sequence >= ?")
     .run(runId, fromSequence);
@@ -440,15 +452,28 @@ export function offsetStepSequences(
   store: Store,
   runId: string,
   minOffset: number,
+  belowSequence?: number,
 ): void {
   // The offset must clear the run's current maximum so no row's target
   // sequence collides with a not-yet-moved row under the immediate
   // UNIQUE(run_id, sequence) constraint — even for corrupt or huge
-  // stored sequences.
+  // stored sequences. The MAX stays global (not range-bounded) so
+  // relocated rows can't collide with rows outside the bounded range
+  // either.
   const row = store.db
     .prepare("SELECT MAX(sequence) AS m FROM steps WHERE run_id = ?")
     .get(runId) as { m: number | null };
   const offset = Math.max(minOffset, (row.m ?? -1) + 1);
+  if (belowSequence !== undefined) {
+    // Bounded: adapters mixing capture planes offset only their own
+    // range (see deleteStepsFromSequence's bound).
+    store.db
+      .prepare(
+        "UPDATE steps SET sequence = sequence + ? WHERE run_id = ? AND sequence < ?",
+      )
+      .run(offset, runId, belowSequence);
+    return;
+  }
   store.db
     .prepare("UPDATE steps SET sequence = sequence + ? WHERE run_id = ?")
     .run(offset, runId);

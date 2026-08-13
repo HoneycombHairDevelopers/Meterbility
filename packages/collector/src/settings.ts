@@ -32,7 +32,35 @@ export type SettingKey =
   // the two byte thresholds tune the size policy.
   | "capture.files.enabled"
   | "capture.files.max_partial_bytes"
-  | "capture.files.max_skip_bytes";
+  | "capture.files.max_skip_bytes"
+  // Cross-vendor parity — Cursor Admin API usage puller (Teams/Business).
+  // The api_key is team-scoped (Basic auth); base override is for tests
+  // and self-hosted gateways. isSecret() masks the key via `api_key`.
+  | "cursor.admin_api_key"
+  | "cursor.admin_api_base";
+
+/**
+ * Runtime enumeration of every SettingKey — keep in sync with the union
+ * above. Lets API surfaces (the web settings endpoint) reject unknown
+ * keys instead of silently storing garbage.
+ */
+export const SETTING_KEYS: readonly SettingKey[] = [
+  "slack.webhook",
+  "slack.default_events",
+  "live.watch_tools",
+  "live.stall_seconds",
+  "fork.default_model",
+  "fork.default_max_iterations",
+  "anthropic.api_key",
+  "postgres.url",
+  "export.include_file_blobs",
+  "web.bind_token",
+  "capture.files.enabled",
+  "capture.files.max_partial_bytes",
+  "capture.files.max_skip_bytes",
+  "cursor.admin_api_key",
+  "cursor.admin_api_base",
+];
 
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db
