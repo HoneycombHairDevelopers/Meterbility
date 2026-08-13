@@ -459,8 +459,10 @@ async function buildSteps(
         : undefined;
       // Inline capture bypasses the blob pipeline's redaction — apply the
       // same pass to the raw V4A patch text and unified diffs.
-      const redactedInput =
-        rawInput !== undefined ? redactString(rawInput).text : undefined;
+      const inputRedaction =
+        rawInput !== undefined ? redactString(rawInput) : undefined;
+      const redactedInput = inputRedaction?.text;
+      const inputWasRedacted = (inputRedaction?.redactions.length ?? 0) > 0;
 
       for (const [absPath, change] of Object.entries(patch.changes)) {
         const seq = fcSeqByStep.get(targetStepId) ?? 0;
@@ -499,6 +501,8 @@ async function buildSteps(
             line_count_after: countLines(change.content),
             lines_added: countLines(change.content),
             lines_removed: 0,
+            bom: false,
+            redacted: inputWasRedacted,
             source_tool_name: "apply_patch",
             source_tool_input: redactedInput,
           });
@@ -506,6 +510,9 @@ async function buildSteps(
           // Updates/deletes/renames carry no before-content in the rollout —
           // record the FACT of the change as a partial_diff row with the
           // unified diff cached as patch_text.
+          const patchRedaction = change.unified_diff
+            ? redactString(change.unified_diff)
+            : undefined;
           fileChanges.push({
             file_change_id: fcId,
             run_id: runId,
@@ -518,12 +525,14 @@ async function buildSteps(
             op,
             partial_diff: true,
             gitignored: false,
-            patch_text: change.unified_diff
-              ? redactString(change.unified_diff).text
-              : undefined,
+            patch_text: patchRedaction?.text,
             patch_format: change.unified_diff ? "unified" : undefined,
             lines_added: diffCounts?.added ?? 0,
             lines_removed: diffCounts?.removed ?? 0,
+            bom: false,
+            redacted:
+              inputWasRedacted ||
+              (patchRedaction?.redactions.length ?? 0) > 0,
             source_tool_name: "apply_patch",
             source_tool_input: redactedInput,
           });

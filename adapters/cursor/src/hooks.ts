@@ -234,6 +234,9 @@ async function handleAfterFileEdit(
   const rows: Array<Omit<FileChange, "created_at">> = edits.map((edit, seq) => {
     const oldStr = edit.old_string ?? "";
     const newStr = edit.new_string ?? "";
+    // Inline capture bypasses the blob pipeline's redaction — apply
+    // the same pass here before the text hits SQLite.
+    const patchRedaction = redactString(editPatchText(oldStr, newStr));
     return {
       file_change_id: `fc_${hashJson([run.run_id, anchor, seq])}`,
       run_id: run.run_id,
@@ -245,12 +248,12 @@ async function handleAfterFileEdit(
       op: "modify",
       partial_diff: true,
       gitignored: false,
-      // Inline capture bypasses the blob pipeline's redaction — apply
-      // the same pass here before the text hits SQLite.
-      patch_text: redactString(editPatchText(oldStr, newStr)).text,
+      patch_text: patchRedaction.text,
       patch_format: "unified",
       lines_added: countLines(newStr),
       lines_removed: countLines(oldStr),
+      bom: false,
+      redacted: patchRedaction.redactions.length > 0,
       source_tool_name: "afterFileEdit",
     };
   });

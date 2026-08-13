@@ -212,7 +212,8 @@ async function ingestCheckpoints(
       // Inline patch text bypasses the blob pipeline's redaction —
       // apply the same pass as the other inline writers before it hits
       // SQLite.
-      const patchText = redactString(renderEditScript(script)).text;
+      const patchRedaction = redactString(renderEditScript(script));
+      const patchText = patchRedaction.text;
       const linesAdded = script.reduce(
         (n, s) => n + (s.modified?.length ?? 0),
         0,
@@ -235,6 +236,8 @@ async function ingestCheckpoints(
         gitignored: false,
         patch_text: patchText.length > 0 ? patchText : undefined,
         patch_format: patchText.length > 0 ? "unified" : undefined,
+        bom: false,
+        redacted: patchRedaction.redactions.length > 0,
         lines_added: linesAdded,
         lines_removed: linesRemoved,
         source_tool_name: "cursor-checkpoint",
