@@ -84,6 +84,34 @@ cursor (only rows past last-seen id) and adaptive interval backoff when
 eventing is healthy. Blocked by: eventing landing and proving out —
 do not touch the live path during the demo window.
 
+## Diff / Alignment (semantic trajectory diff, eng-reviewed 2026-08-13)
+
+### Post-ship calibration milestone: 20 real hand-marked pairs
+**Priority:** P2
+The semantic-diff ship gate evaluates ≤15% misalignment on synthetic
+fixtures + 2 hand-marked real pairs; the Codex falsifier needs 20 real
+pairs to be meaningful. Accumulate dogfood run pairs, hand-mark expected
+`step_id_a ↔ step_id_b` alignments (format in the design doc's
+Dependencies: JSON per pair; one-to-many edits marked `unalignable` and
+excluded from the denominator), re-run the calibration harness at 20.
+Target ≤10%, hard gate ≤15%. Depends on: shipped aligner.
+
+### Context-snapshot similarity tiering (first fuzzy plugin)
+**Priority:** P3
+`classify()` compares `context_snapshot_id` by identity — near-identical
+contexts diff the same as unrelated ones (parked by design premise 1).
+Implement as the first ScoringFn plugin over the aligner's pluggable
+scoring interface: graded context similarity feeding `context_diff`
+tiering. Depends on: shipped aligner + plugin interface.
+
+### Cost/token-weighted alignment_score
+**Priority:** P3
+v1 scores `(matched + 0.5·changed) / max(|A|,|B|)` with uniform step
+weights; an expensive divergent step should move the parity score more
+than a trivial one. Weight by per-step cost/token share once the
+eval-harness `trajectory_alignment` assertion consumes the score
+(epic child #5). Depends on: shipped v2 score.
+
 ## Server (live / web) — cont.
 
 ### Live step append protocol assumes contiguous sequences
