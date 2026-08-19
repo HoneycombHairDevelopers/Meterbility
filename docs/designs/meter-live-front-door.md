@@ -99,7 +99,7 @@ Existing @meterbility/cli npm package and OIDC publish pipeline; no new channel.
 
 ## Dependencies
 
-- Separate investigation (filed as background task): "only additions" symptom — reproduce on this host, confirm fseventsd coalescing, and land the degraded-capture detection that the capture-health line consumes. The health line ships with conservative heuristics even if the investigation lags.
+- ~~Separate investigation: "only additions" symptom~~ **RESOLVED (2026-08-19, see docs/designs/sentinel-only-additions-investigation.md on branch worktree-agent-ad84a739acd0b00f5):** the symptom is a design property (quiet-period net snapshot diffing — create+edit bursts inside one debounce window net to a single all-additions create), amplified to whole-run scale by fseventsd starvation. No capture-semantics bug; no mislabeling of true modifies. Health-line spec refined accordingly: instrument pre-debounce AND pre-ignore (ignored-path events still prove the OS stream is alive); startup grace until first raw event; count `no-recent-step` unattributed events as loss evidence; thresholds >5s warn / >15s degraded (healthy regime measured ≤0.7s on this host). Known limitation: the health line cannot see design-property coalescing — additive complement: record `coalesced_events: n` in `normalizer_notes` when >1 raw event per path preceded a flush, so views can badge "net diff of n events."
 - TODOS.md items that touch this surface but are NOT blockers: live step append contiguity (P2), LiveInspector poll cost (P3, explicitly frozen during demo window).
 - Approach C (hook-ensured auto-capture) depends on B's viewer surface and the nudge seam; sequence after the sell-track window.
 
