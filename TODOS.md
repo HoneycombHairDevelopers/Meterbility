@@ -184,6 +184,30 @@ a header can attach runs to an existing project the caller doesn't own.
 Acceptable for the loopback-bind default; revisit (allowlist or
 project-scoped tokens) before the team server binds non-loopback.
 
+## Live capture front door (meter live — design doc docs/designs/meter-live-front-door.md)
+
+### Approach C: hook-ensured auto-capture
+**Priority:** P2
+Eliminate the forgetting failure entirely: the already-installed hook plane
+auto-spawns a detached ingest+sentinel process on the first tool call of a
+session; `meter live` becomes a pure viewer attaching to capture that is
+already happening. Deferred twice (office-hours D9, eng review D1) to stay
+out of the sell-track demo window. Consent posture settled: explicit consent
+at `meter init --hooks` time, automation at run-time — no silent always-on
+daemon. The `live.heartbeat` settings row + viewer-guard shipped with
+`meter live` is the designed insertion point (auto-spawned capture holds the
+heartbeat; viewers attach). Constraints to solve before building: hook
+timeout budget (never block the agent's tool call), orphan-process cleanup,
+multi-project contention. Depends on: `meter live` shipped and dogfooded.
+
+### Nudge-query covering index (conditional)
+**Priority:** P3
+The hook-nudge existence check filters `file_change` by
+`derived_from` + `created_at` (`LIMIT 1`) on every human CLI invocation with
+no covering index. Deliberately deferred: cheap at current scale. Trigger:
+add the index if the check exceeds ~10ms in CLI startup profiling at scale.
+Depends on: nudge shipped.
+
 ## Live Probe (cross-runtime pause)
 
 Today only the SDKs acknowledge the probe protocol, so Pause is gated
@@ -257,6 +281,34 @@ Also still open from capture: the recursive walk skeleton and the test
 scaffold (hook_capture.test.ts / file_sentinel.test.ts); dedup predicate
 + sequence seeding are shared via `insertWatchRow` — finish with a
 shared `walkTree` and a capture-test-utils module.
+
+## Adapters (GitHub Copilot + fleet lineage — design doc docs/designs/copilot-squad-adapter.md, eng-reviewed 2026-08-19)
+
+### Claude Code Task-subagent carving retrofit
+**Priority:** P2
+Retrofit the v6 lineage (`parent_run_id`/`parent_run_step_id`) + carve
+pattern onto the Claude Code adapter so `Task` sub-agents become child
+runs. `adapters/claude-code/src/file_changes.ts:40` already punts
+sub-agent attribution "to v0.5+ when sub-agents become first-class" —
+the Copilot adapter makes them first-class; this closes the same gap
+for the largest existing data source and unifies the fleet view across
+vendors. Reuses the v6 columns and carve/aggregation policy verbatim.
+Care: touches the most battle-tested adapter; needs its own regression
+pass (byte-identical re-ingest of existing transcripts).
+**Depends on:** copilot-squad-adapter M1-M2 shipping first.
+
+### Copilot adapter phase-2 follow-ons (deliberate deferrals)
+**Priority:** P3
+Umbrella for the channels explicitly deferred by the design doc — see
+its "Phased follow-ons" + "NOT in scope" sections for rationale:
+- VS Code chatSessions ingest (whole-doc JSON, no usage data)
+- Org/enterprise billing puller + day-level reconciliation annotations
+- Replay/fork over carved child runs (lineage-only in v6; fork.ts
+  rejects via derived rule)
+- Squad sidecar annotations + watch-mode wave grouping — gated on the
+  Brady falsifier checkpoint outcome (premise 5 of the design doc)
+These are intentional deferrals, not omissions; split into own entries
+when picked up.
 
 ## Tests (nice-to-have gaps from ship review)
 
