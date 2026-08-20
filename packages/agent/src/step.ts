@@ -177,14 +177,18 @@ export class MeterbilityStep {
         ? this.explicitLatency
         : Date.now() - this.startedAtMs;
 
-    const { cost_cents, approx } = costCents(this.model, {
+    const { cost_cents, approx, unpriced } = costCents(this.model, {
       input: this.tokens.input,
       output: this.tokens.output,
       cached_read: this.tokens.cached_read,
       cache_creation: this.tokens.cache_creation,
       cache_creation_1h: this.tokens.cache_creation_1h,
     });
-    if (approx && !this.tags.includes("cost:approx")) {
+    // Unpriced beats approx — cost is 0 by construction and must render
+    // as "unpriced", never $0.00 (same rule as the proxy store-bridge).
+    if (unpriced && !this.tags.includes("cost:unpriced")) {
+      this.tags.push("cost:unpriced");
+    } else if (approx && !unpriced && !this.tags.includes("cost:approx")) {
       this.tags.push("cost:approx");
     }
 

@@ -310,6 +310,36 @@ its "Phased follow-ons" + "NOT in scope" sections for rationale:
 These are intentional deferrals, not omissions; split into own entries
 when picked up.
 
+## Cost / pricing (multi-upstream `cost:unpriced` semantics — design doc docs/designs/proxy-multi-upstream.md)
+
+### Budget gates must not silently pass unpriced runs
+**Priority:** P1
+`regression.ts`'s `max_cost_cents` assertion compares against the stored
+`cost_cents`, and an unpriced run stores 0 by construction — so a budget
+gate of "fail over $5" PASSES a run of arbitrary open-model spend. That
+inverts the gate's purpose exactly when cost is least known. Decide the
+semantic (recommended: an unpriced run FAILS any `max_cost_cents`
+assertion with a distinct "cost unknown" verdict, so operators must
+either price the model or drop the gate), then implement in the
+assertion evaluator + a regression-suite test. The run-level signal is
+the `cost:unpriced` tag (and per-step tags). Deliberately deferred from
+the multi-upstream ship (eng review D4, 2026-08-20): changing verdict
+semantics deserves its own reviewed change, not a mid-ship patch.
+
+### Mixed priced+unpriced runs display only "unpriced"
+**Priority:** P1
+A run mixing priced Claude steps with even one unpriced open-model step
+carries `cost:unpriced` on the run row, so every cost surface (web run
+rows, fleet cards, run header, `meter list`, `meter inspect`) renders
+"unpriced" — hiding real accumulated Anthropic/OpenAI spend the store
+has already computed. Decide the display grammar (candidate: "≥ $X +
+unpriced" where $X sums the priced steps; the run total already equals
+that sum since unpriced steps contribute 0), then update `costEl`/
+`runSummaryLine`/`printRunHeader` together so the surfaces can't drift.
+Needs a small design pass first — the "≥" framing changes what the
+number claims. Deferred from the multi-upstream ship (eng review D4,
+2026-08-20) as a product decision, not a correctness fix.
+
 ## Tests (nice-to-have gaps from ship review)
 
 ### Remaining specialist-flagged test gaps

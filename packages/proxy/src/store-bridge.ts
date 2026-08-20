@@ -51,6 +51,11 @@ export function ensureRun(
     cwd?: string;
     git_branch?: string;
     source_session_id?: string;
+    /** Upstream provider identity (registry name, e.g. "nvidia"). */
+    provider?: string;
+    /** Upstream host:port at run creation (provenance — disambiguates a
+     *  provider name reused against different URLs across sessions). */
+    upstream_host?: string;
   } = {},
 ): void {
   const project = upsertProjectByCwd(store, opts.cwd ?? spec.project, spec.project);
@@ -72,6 +77,8 @@ export function ensureRun(
     cost_cents: 0,
     step_count: 0,
     tags: ["source:proxy"],
+    provider: opts.provider,
+    upstream_host: opts.upstream_host,
   };
   insertRun(store, run);
 }
@@ -80,6 +87,12 @@ export interface AppendStepArgs {
   run_id: string;
   sequence: number;
   parent_step_id?: string;
+  /** Upstream provider identity (registry name, e.g. "nvidia"). */
+  provider?: string;
+  /** Extra tags appended to the step's tag list (e.g. "usage:missing"
+   *  when an ok exchange parsed with zero token usage — a persistent
+   *  marker that survives --quiet, unlike the log warning). */
+  extraTags?: string[];
   model: string;
   systemPrompt?: string;
   toolDefinitions?: unknown;
@@ -133,7 +146,7 @@ export async function appendStep(
 
   const decisionRef = await store.blobs.putString(args.decisionJson);
 
-  const { cost_cents, approx } = costCents(args.model, {
+  const { cost_cents, approx, unpriced } = costCents(args.model, {
     input: args.tokens.input,
     output: args.tokens.output,
     cached_read: args.tokens.cached_read,
@@ -141,8 +154,15 @@ export async function appendStep(
     cache_creation_1h: args.tokens.cache_creation_1h,
   });
 
-  const tags = ["source:proxy"];
-  if (approx) tags.push("cost:approx");
+  const tags = ["source:proxy", ...(args.extraTags ?? [])];
+  // Unpriced beats approx: the model is deliberately not priced (cost
+  // stored as 0) and the display layer renders "unpriced", never $0.00.
+  if (unpriced) {
+    tags.push("cost:unpriced");
+    markRunCostUnpriced(store, args.run_id);
+  } else if (approx) {
+    tags.push("cost:approx");
+  }
 
   const step: Step = {
     step_id: `stp_${randomUUID()}`,
@@ -160,6 +180,7 @@ export async function appendStep(
     cost_cents,
     tags,
     status: args.outcome.status === "error" ? "error" : "ok",
+    provider: args.provider,
   };
   insertStep(store, step);
   updateRunTotals(store, args.run_id);
@@ -197,4 +218,22 @@ export async function attachToolResult(
 export function sealRun(store: Store, run_id: string, status: Run["status"]): void {
   setRunStatus(store, run_id, status, new Date().toISOString());
   updateRunTotals(store, run_id);
+}
+
+/**
+ * Propagate `cost:unpriced` to the Run row so list/fleet views (which
+ * never load steps) can render the run's cost honestly. Idempotent —
+ * one SELECT per step at LLM-call cadence, not a hot path.
+ */
+function markRunCostUnpriced(store: Store, run_id: string): void {
+  const row = store.db
+    .prepare("SELECT tags FROM runs WHERE run_id = ?")
+    .get(run_id) as { tags: string } | undefined;
+  if (!row) return;
+  const tags = JSON.parse(row.tags) as string[];
+  if (tags.includes("cost:unpriced")) return;
+  tags.push("cost:unpriced");
+  store.db
+    .prepare("UPDATE runs SET tags = ? WHERE run_id = ?")
+    .run(JSON.stringify(tags), run_id);
 }

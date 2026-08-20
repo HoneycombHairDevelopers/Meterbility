@@ -75,3 +75,29 @@ test("Sonnet 4.6 1h cache rate is exactly 2× input rate", () => {
     pricing.input_per_million_cents * 2,
   );
 });
+
+test("vendor-namespaced model is UNPRICED: cost 0, unpriced flag set", () => {
+  // Open models via named upstreams (meta/…, nvidia/…, mistralai/…):
+  // the Opus-rate fallback would overstate cost ~100×, so we refuse to
+  // guess. Display layers render "unpriced", never $0.00.
+  const r = costCents("meta/llama-3.1-8b-instruct", {
+    input: 1_000_000, output: 1_000_000, cached_read: 0, cache_creation: 0,
+  });
+  assert.equal(r.unpriced, true);
+  assert.equal(r.approx, true, "unpriced implies approx");
+  assert.equal(r.cost_cents, 0);
+});
+
+test("un-namespaced unknown model keeps the frontier fallback (NOT unpriced)", () => {
+  const r = costCents("imaginary-model-9000", {
+    input: 1_000_000, output: 0, cached_read: 0, cache_creation: 0,
+  });
+  assert.equal(r.unpriced, false);
+  assert.equal(r.approx, true);
+  assert.ok(r.cost_cents > 0, "fallback still yields a magnitude");
+});
+
+test("known models are never unpriced", () => {
+  assert.equal(pricingFor("claude-opus-4-7").unpriced, false);
+  assert.equal(pricingFor("gpt-4o").unpriced, false);
+});

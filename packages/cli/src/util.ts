@@ -45,7 +45,12 @@ export function shortId(id: string, len = 12): string {
 
 export function runSummaryLine(r: Run): string {
   const status = statusColor(r.status)(r.status.padEnd(11));
-  const cost = fmtCents(r.cost_cents).padStart(8);
+  // cost:unpriced — no pricing-table entry for the run's model(s);
+  // showing $0.00 would read as "free", so show the truth.
+  const cost = (r.tags.includes("cost:unpriced")
+    ? "unpriced"
+    : fmtCents(r.cost_cents)
+  ).padStart(8);
   return `${pc.dim(shortId(r.run_id))}  ${status}  ${String(r.step_count).padStart(4)} steps  ${cost}  ${pc.cyan(
     shortId(r.git_branch ?? "", 16).padEnd(16),
   )}  ${r.title ?? ""}`;

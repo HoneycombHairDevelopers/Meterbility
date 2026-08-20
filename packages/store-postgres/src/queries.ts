@@ -29,6 +29,8 @@ interface RunRow {
   cost_cents: number;
   step_count: number;
   tags: string[];
+  provider: string | null;
+  upstream_host: string | null;
 }
 
 function rowToRun(r: RunRow): Run {
@@ -52,6 +54,8 @@ function rowToRun(r: RunRow): Run {
     cost_cents: Number(r.cost_cents),
     step_count: r.step_count,
     tags: Array.isArray(r.tags) ? r.tags : [],
+    provider: r.provider ?? undefined,
+    upstream_host: r.upstream_host ?? undefined,
   };
 }
 
@@ -77,6 +81,7 @@ interface StepRow {
   cost_cents: number;
   status: string;
   tags: string[];
+  provider: string | null;
 }
 
 function rowToStep(r: StepRow): Step {
@@ -104,6 +109,7 @@ function rowToStep(r: StepRow): Step {
     cost_cents: Number(r.cost_cents),
     tags: Array.isArray(r.tags) ? r.tags : [],
     status: r.status as Step["status"],
+    provider: r.provider ?? undefined,
   };
 }
 
@@ -156,8 +162,8 @@ export async function pgInsertRun(store: PostgresStore, run: Run): Promise<void>
        title, status, started_at, ended_at, git_branch, cwd,
        fork_origin_run_id, fork_origin_step_id,
        tokens_total_input, tokens_total_output, tokens_total_cached,
-       cost_cents, step_count, tags
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+       cost_cents, step_count, tags, provider, upstream_host
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21)
      ON CONFLICT (run_id) DO UPDATE SET
        status = EXCLUDED.status,
        ended_at = EXCLUDED.ended_at,
@@ -166,7 +172,9 @@ export async function pgInsertRun(store: PostgresStore, run: Run): Promise<void>
        tokens_total_cached = EXCLUDED.tokens_total_cached,
        cost_cents = EXCLUDED.cost_cents,
        step_count = EXCLUDED.step_count,
-       tags = EXCLUDED.tags`,
+       tags = EXCLUDED.tags,
+       provider = COALESCE(EXCLUDED.provider, runs.provider),
+       upstream_host = COALESCE(EXCLUDED.upstream_host, runs.upstream_host)`,
     [
       run.run_id,
       run.agent_id,
@@ -187,6 +195,8 @@ export async function pgInsertRun(store: PostgresStore, run: Run): Promise<void>
       run.cost_cents,
       run.step_count,
       JSON.stringify(run.tags ?? []),
+      run.provider ?? null,
+      run.upstream_host ?? null,
     ],
   );
 }
@@ -198,8 +208,8 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
        model, context_snapshot_id, decision_ref, action, outcome,
        tokens_input, tokens_output, tokens_cached_read, tokens_cache_creation,
        tokens_cache_creation_1h, tokens_reasoning, latency_ms, cost_cents,
-       status, tags
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb)
+       status, tags, provider
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)
      ON CONFLICT (step_id) DO UPDATE SET
        action = EXCLUDED.action,
        outcome = EXCLUDED.outcome,
@@ -212,7 +222,8 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
        latency_ms = EXCLUDED.latency_ms,
        cost_cents = EXCLUDED.cost_cents,
        status = EXCLUDED.status,
-       tags = EXCLUDED.tags`,
+       tags = EXCLUDED.tags,
+       provider = COALESCE(EXCLUDED.provider, steps.provider)`,
     [
       step.step_id,
       step.run_id,
@@ -235,6 +246,7 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
       step.cost_cents,
       step.status,
       JSON.stringify(step.tags ?? []),
+      step.provider ?? null,
     ],
   );
 }

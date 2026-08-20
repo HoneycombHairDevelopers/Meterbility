@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { Command } from "commander";
 import pc from "picocolors";
-import { startProxy } from "@meterbility/proxy";
+import { startProxy, type ProviderInput } from "@meterbility/proxy";
+import { makeUpstreamCollector } from "../upstream-option.ts";
 
 /**
  * `meter run -- <command...>` — one-command zero-instrumentation capture.
@@ -46,11 +47,17 @@ export function registerRunCommand(program: Command): void {
     )
     .option(
       "--anthropic-target <url>",
-      "Override the Anthropic upstream (default: https://api.anthropic.com)",
+      "Re-point the anthropic provider (default: https://api.anthropic.com)",
     )
     .option(
       "--openai-target <url>",
-      "Override the OpenAI upstream (default: https://api.openai.com)",
+      "Re-point the openai provider (default: https://api.openai.com)",
+    )
+    .option(
+      "--upstream <name[:dialect]=url>",
+      "Register a named provider and wire its env var (repeatable; at most one per dialect here — env vars are singular). Example: --upstream nvidia=https://integrate.api.nvidia.com",
+      makeUpstreamCollector("meter run"),
+      [] as ProviderInput[],
     )
     .action(async (
       opts: {
@@ -62,6 +69,7 @@ export function registerRunCommand(program: Command): void {
         anthropic: boolean;
         anthropicTarget?: string;
         openaiTarget?: string;
+        upstream: ProviderInput[];
       },
       cmd: Command,
     ) => {
@@ -76,28 +84,64 @@ export function registerRunCommand(program: Command): void {
         process.exit(2);
       }
 
+      // Env vars are singular per dialect (one OPENAI_BASE_URL), so
+      // `meter run` can wire at most one named upstream per dialect.
+      // Concurrent same-dialect providers still work via `meter proxy`
+      // with hand-set client env — this wrapper just can't express it.
+      for (const dialect of ["openai", "anthropic"] as const) {
+        const sameDialect = opts.upstream.filter((u) => u.dialect === dialect);
+        if (sameDialect.length > 1) {
+          console.error(
+            pc.red(
+              `meter run: ${sameDialect.length} ${dialect}-dialect upstreams (${sameDialect
+                .map((u) => u.name)
+                .join(", ")}) but ${
+                dialect === "openai" ? "OPENAI_BASE_URL" : "ANTHROPIC_BASE_URL"
+              } can only point at one. Use \`meter proxy --upstream ...\` and set client env vars yourself for concurrent same-dialect capture.`,
+            ),
+          );
+          process.exit(2);
+        }
+      }
+
       const port = opts.port ?? (await pickFreePort());
-      const handle = await startProxy({
-        port,
-        spec: {
-          project: opts.project ?? process.cwd(),
-          agent: opts.agent ?? "proxy",
-        },
-        upstreams: {
-          ...(opts.anthropicTarget ? { anthropic: opts.anthropicTarget } : {}),
-          ...(opts.openaiTarget ? { openai: opts.openaiTarget } : {}),
-        },
-        logger: opts.quiet ? () => {} : (line) => process.stderr.write(pc.dim(`[meter] ${line}\n`)),
-      });
+      let handle;
+      try {
+        handle = await startProxy({
+          port,
+          spec: {
+            project: opts.project ?? process.cwd(),
+            agent: opts.agent ?? "proxy",
+          },
+          upstreams: {
+            ...(opts.anthropicTarget ? { anthropic: opts.anthropicTarget } : {}),
+            ...(opts.openaiTarget ? { openai: opts.openaiTarget } : {}),
+          },
+          providers: opts.upstream,
+          logger: opts.quiet ? () => {} : (line) => process.stderr.write(pc.dim(`[meter] ${line}\n`)),
+        });
+      } catch (err) {
+        console.error(pc.red(`meter run: ${(err as Error).message}`));
+        process.exit(2);
+      }
 
       const childEnv = { ...process.env };
-      if (opts.anthropic !== false) {
+      // Named upstreams win their dialect's env var over the bare
+      // default; --no-openai/--no-anthropic suppress default-provider
+      // wiring only, never a named upstream the user asked for.
+      const namedAnthropic = opts.upstream.find((u) => u.dialect === "anthropic");
+      const namedOpenai = opts.upstream.find((u) => u.dialect === "openai");
+      if (namedAnthropic) {
+        // Anthropic's SDK appends /v1 itself — base stays bare.
+        childEnv.ANTHROPIC_BASE_URL = `${handle.url}/${namedAnthropic.name}`;
+      } else if (opts.anthropic !== false) {
         childEnv.ANTHROPIC_BASE_URL = handle.url;
       }
-      if (opts.openai !== false) {
+      if (namedOpenai) {
         // OpenAI's SDK convention includes /v1 in the base URL (the SDK
-        // doesn't append it). Anthropic's SDK does append /v1 itself,
-        // so we leave the base bare.
+        // doesn't append it).
+        childEnv.OPENAI_BASE_URL = `${handle.url}/${namedOpenai.name}/v1`;
+      } else if (opts.openai !== false) {
         childEnv.OPENAI_BASE_URL = handle.url + "/v1";
       }
 
