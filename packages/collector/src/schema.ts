@@ -23,8 +23,10 @@ import type Database from "better-sqlite3";
  *   v5 → v6 — runs.provider + steps.provider + runs.upstream_host
  *             (proxy multi-upstream: first-class upstream provider
  *             identity + host provenance)
+ *   v6 → v7 — steps.ttft_ms + steps.ttft_visible_ms (streamed-capture
+ *             time-to-first-token; the gap is reasoning burn)
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export function ensureSchema(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
@@ -106,6 +108,8 @@ export function ensureSchema(db: Database.Database): void {
       status TEXT NOT NULL,
       tags TEXT NOT NULL DEFAULT '[]',
       provider TEXT,
+      ttft_ms INTEGER,
+      ttft_visible_ms INTEGER,
       UNIQUE(run_id, sequence)
     );
 
@@ -368,6 +372,13 @@ export function ensureSchema(db: Database.Database): void {
   // v6 — upstream host:port at run creation (proxy provenance; host
   // only, never path/query/credentials). Nullable like provider.
   ensureColumn(db, "runs", "upstream_host", "TEXT");
+
+  // v7 — streamed-capture timing, recovered from the proxy tee's
+  // chunk-arrival marks and anchored to request start. NULL for
+  // non-streamed steps and every capture that predates the column.
+  // ttft_visible_ms - ttft_ms = the invisible reasoning burn.
+  ensureColumn(db, "steps", "ttft_ms", "INTEGER");
+  ensureColumn(db, "steps", "ttft_visible_ms", "INTEGER");
 
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }

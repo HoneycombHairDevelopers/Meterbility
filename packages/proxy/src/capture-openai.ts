@@ -1,6 +1,6 @@
 import type { Action } from "@meterbility/shared";
-import { parseSseStream, type SseEvent } from "./sse.ts";
-import type { CapturedExchange, ProviderCapture } from "./types.ts";
+import { parseSseStream, timeAtOffset, type ChunkMark, type SseEvent } from "./sse.ts";
+import type { CapturedExchange, ProviderCapture, StreamTiming } from "./types.ts";
 
 /**
  * OpenAI /v1/chat/completions capture.
@@ -50,6 +50,9 @@ interface OpenAIResponse {
     message?: {
       role: string;
       content?: string | null;
+      /** Nonstandard but common on reasoning-capable OpenAI-compatible
+       *  hosts (NVIDIA NIM et al.) — the model's thinking text. */
+      reasoning_content?: string | null;
       tool_calls?: Array<{
         id: string;
         type: "function";
@@ -143,11 +146,24 @@ function parseResponse(rawBody: string): CapturedExchange | undefined {
   return shapeFromResponse(r, rawBody);
 }
 
-function reassembleStream(text: string): CapturedExchange | undefined {
+function reassembleStream(text: string, marks?: ChunkMark[]): CapturedExchange | undefined {
   const events = parseSseStream(text);
   const r = reassembleOpenAIResponse(events);
   if (!r) return undefined;
-  return shapeFromResponse(r, JSON.stringify(r));
+  const exchange = shapeFromResponse(r.response, JSON.stringify(r.response));
+  if (marks && marks.length > 0) {
+    const timing: StreamTiming = {};
+    if (r.firstDeltaOffset !== undefined) {
+      timing.first_delta_ms = timeAtOffset(marks, r.firstDeltaOffset);
+    }
+    if (r.firstVisibleOffset !== undefined) {
+      timing.first_visible_ms = timeAtOffset(marks, r.firstVisibleOffset);
+    }
+    if (timing.first_delta_ms !== undefined || timing.first_visible_ms !== undefined) {
+      exchange.timing = timing;
+    }
+  }
+  return exchange;
 }
 
 function shapeFromResponse(
@@ -183,16 +199,35 @@ function shapeFromResponse(
       cache_creation_1h: 0,
       reasoning: r.usage?.completion_tokens_details?.reasoning_tokens,
     },
+    // "cached_read: 0" above can mean two different things: the host said
+    // 0, or the host said nothing. Only meaningful when usage exists at
+    // all (a missing usage block is the usage:missing case, not this one).
+    cacheReported: r.usage
+      ? r.usage.prompt_tokens_details != null
+      : undefined,
   };
 }
 
 /**
  * Walk OpenAI streaming chunks and rebuild the final response shape.
- * Each chunk has `choices[i].delta` with content/tool_calls fragments.
- * Final chunk (when include_usage is on) carries `usage`.
+ * Each chunk has `choices[i].delta` with content/reasoning_content/
+ * tool_calls fragments. Final chunk (when the host sends usage — some,
+ * like NVIDIA, do so by default) carries `usage`.
+ *
+ * Also records the text offsets of the first delta of any kind and the
+ * first VISIBLE delta (content or tool-call fragment) — joined against
+ * the tee's arrival marks, the gap between them is the invisible
+ * reasoning burn a client experiences before the first real token.
  */
-function reassembleOpenAIResponse(events: SseEvent[]): OpenAIResponse | undefined {
+function reassembleOpenAIResponse(events: SseEvent[]):
+  | {
+      response: OpenAIResponse;
+      firstDeltaOffset?: number;
+      firstVisibleOffset?: number;
+    }
+  | undefined {
   const text: string[] = [];
+  const reasoning: string[] = [];
   const toolCalls = new Map<
     number,
     { id?: string; type?: string; name?: string; arguments: string }
@@ -200,6 +235,8 @@ function reassembleOpenAIResponse(events: SseEvent[]): OpenAIResponse | undefine
   let model: string | undefined;
   let usage: OpenAIResponse["usage"] | undefined;
   let finishReason: string | undefined;
+  let firstDeltaOffset: number | undefined;
+  let firstVisibleOffset: number | undefined;
 
   for (const e of events) {
     if (e.data === "[DONE]" || typeof e.data !== "object" || e.data === null) {
@@ -211,6 +248,7 @@ function reassembleOpenAIResponse(events: SseEvent[]): OpenAIResponse | undefine
       | Array<{
           delta?: {
             content?: string;
+            reasoning_content?: string;
             tool_calls?: Array<{
               index?: number;
               id?: string;
@@ -222,6 +260,11 @@ function reassembleOpenAIResponse(events: SseEvent[]): OpenAIResponse | undefine
         }>
       | undefined;
     const ch = choices?.[0];
+    const hasVisible = Boolean(ch?.delta?.content || ch?.delta?.tool_calls?.length);
+    const hasAny = hasVisible || Boolean(ch?.delta?.reasoning_content);
+    if (hasAny && firstDeltaOffset === undefined) firstDeltaOffset = e.offset;
+    if (hasVisible && firstVisibleOffset === undefined) firstVisibleOffset = e.offset;
+    if (ch?.delta?.reasoning_content) reasoning.push(ch.delta.reasoning_content);
     if (ch?.delta?.content) text.push(ch.delta.content);
     if (ch?.delta?.tool_calls) {
       for (const tc of ch.delta.tool_calls) {
@@ -238,10 +281,15 @@ function reassembleOpenAIResponse(events: SseEvent[]): OpenAIResponse | undefine
     if (chunk.usage) usage = chunk.usage as OpenAIResponse["usage"];
   }
 
-  if (!model && text.length === 0 && toolCalls.size === 0) return undefined;
+  if (!model && text.length === 0 && toolCalls.size === 0 && reasoning.length === 0) {
+    return undefined;
+  }
   const message: NonNullable<OpenAIResponse["choices"]>[number]["message"] = {
     role: "assistant",
     content: text.join(""),
+    // Reassembled decision-blob parity with non-streamed responses: the
+    // thinking text a stream-only capture would otherwise lose forever.
+    reasoning_content: reasoning.length > 0 ? reasoning.join("") : undefined,
     tool_calls:
       toolCalls.size > 0
         ? [...toolCalls.entries()]
@@ -254,9 +302,13 @@ function reassembleOpenAIResponse(events: SseEvent[]): OpenAIResponse | undefine
         : undefined,
   };
   return {
-    model: model ?? "unknown",
-    choices: [{ message, finish_reason: finishReason }],
-    usage,
+    response: {
+      model: model ?? "unknown",
+      choices: [{ message, finish_reason: finishReason }],
+      usage,
+    },
+    firstDeltaOffset,
+    firstVisibleOffset,
   };
 }
 

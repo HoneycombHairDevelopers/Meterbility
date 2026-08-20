@@ -1,6 +1,6 @@
 import type { Action, ContextComponent } from "@meterbility/shared";
-import { parseSseStream, type SseEvent } from "./sse.ts";
-import type { CapturedExchange, ProviderCapture } from "./types.ts";
+import { parseSseStream, timeAtOffset, type ChunkMark, type SseEvent } from "./sse.ts";
+import type { CapturedExchange, ProviderCapture, StreamTiming } from "./types.ts";
 
 /**
  * Anthropic /v1/messages capture.
@@ -153,11 +153,24 @@ function parseResponse(rawBody: string): CapturedExchange | undefined {
   return shapeFromMessage(msg, rawBody);
 }
 
-function reassembleStream(text: string): CapturedExchange | undefined {
+function reassembleStream(text: string, marks?: ChunkMark[]): CapturedExchange | undefined {
   const events = parseSseStream(text);
-  const msg = reassembleAnthropicMessage(events);
-  if (!msg) return undefined;
-  return shapeFromMessage(msg, JSON.stringify(msg));
+  const r = reassembleAnthropicMessage(events);
+  if (!r) return undefined;
+  const exchange = shapeFromMessage(r.message, JSON.stringify(r.message));
+  if (marks && marks.length > 0) {
+    const timing: StreamTiming = {};
+    if (r.firstDeltaOffset !== undefined) {
+      timing.first_delta_ms = timeAtOffset(marks, r.firstDeltaOffset);
+    }
+    if (r.firstVisibleOffset !== undefined) {
+      timing.first_visible_ms = timeAtOffset(marks, r.firstVisibleOffset);
+    }
+    if (timing.first_delta_ms !== undefined || timing.first_visible_ms !== undefined) {
+      exchange.timing = timing;
+    }
+  }
+  return exchange;
 }
 
 function shapeFromMessage(
@@ -213,9 +226,21 @@ function shapeFromMessage(
  *   content_block_stop  → finalize that block (parse partial JSON if tool_use)
  *   message_delta    → patch usage.output_tokens, stop_reason
  *   message_stop     → done
+ *
+ * Records the offsets of the first content_block_delta of ANY kind
+ * (thinking included) and the first VISIBLE one (text / tool args) so
+ * StreamTiming can be recovered from the tee's arrival marks.
  */
-function reassembleAnthropicMessage(events: SseEvent[]): AnthropicMessage | undefined {
+function reassembleAnthropicMessage(events: SseEvent[]):
+  | {
+      message: AnthropicMessage;
+      firstDeltaOffset?: number;
+      firstVisibleOffset?: number;
+    }
+  | undefined {
   let message: AnthropicMessage | undefined;
+  let firstDeltaOffset: number | undefined;
+  let firstVisibleOffset: number | undefined;
   const partialJsonByIndex = new Map<number, string>();
   for (const e of events) {
     if (e.data === "[DONE]" || typeof e.data !== "object" || e.data === null) {
@@ -239,6 +264,13 @@ function reassembleAnthropicMessage(events: SseEvent[]): AnthropicMessage | unde
     } else if (type === "content_block_delta" && message) {
       const idx = (data.index as number) ?? 0;
       const delta = data.delta as Record<string, unknown>;
+      if (firstDeltaOffset === undefined) firstDeltaOffset = e.offset;
+      if (
+        firstVisibleOffset === undefined &&
+        (delta.type === "text_delta" || delta.type === "input_json_delta")
+      ) {
+        firstVisibleOffset = e.offset;
+      }
       const block = message.content![idx] as Record<string, unknown> | undefined;
       if (!block) continue;
       if (delta.type === "text_delta") {
@@ -271,7 +303,8 @@ function reassembleAnthropicMessage(events: SseEvent[]): AnthropicMessage | unde
       }
     }
   }
-  return message;
+  if (!message) return undefined;
+  return { message, firstDeltaOffset, firstVisibleOffset };
 }
 
 function flattenAnthropicSystem(

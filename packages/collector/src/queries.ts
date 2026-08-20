@@ -74,6 +74,9 @@ interface StepRow {
   tags: string;
   // v6 — nullable: only proxy multi-upstream capture sets it.
   provider: string | null;
+  // v7 — nullable: only streamed proxy captures set them.
+  ttft_ms: number | null;
+  ttft_visible_ms: number | null;
 }
 
 function rowToRun(row: RunRow): Run {
@@ -133,6 +136,8 @@ function rowToStep(row: StepRow): Step {
     tags: JSON.parse(row.tags) as string[],
     status: row.status as StepStatus,
     provider: row.provider ?? undefined,
+    ttft_ms: row.ttft_ms ?? undefined,
+    ttft_visible_ms: row.ttft_visible_ms ?? undefined,
   };
 }
 
@@ -285,7 +290,9 @@ export function insertStep(store: Store, step: Step): void {
         cost_cents=excluded.cost_cents,
         status=excluded.status,
         tags=excluded.tags,
-        provider=excluded.provider`;
+        provider=excluded.provider,
+        ttft_ms=excluded.ttft_ms,
+        ttft_visible_ms=excluded.ttft_visible_ms`;
   store.db
     .prepare(
       `INSERT INTO steps(
@@ -293,8 +300,8 @@ export function insertStep(store: Store, step: Step): void {
         model, context_snapshot_id, decision_ref, action_json, outcome_json,
         tokens_input, tokens_output, tokens_cached_read, tokens_cache_creation,
         tokens_cache_creation_1h, tokens_reasoning, latency_ms, cost_cents,
-        status, tags, provider
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        status, tags, provider, ttft_ms, ttft_visible_ms
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(step_id) DO UPDATE SET
         run_id=excluded.run_id,
         sequence=excluded.sequence,${updates}
@@ -323,6 +330,8 @@ export function insertStep(store: Store, step: Step): void {
       step.status,
       JSON.stringify(step.tags ?? []),
       step.provider ?? null,
+      step.ttft_ms ?? null,
+      step.ttft_visible_ms ?? null,
     );
 }
 

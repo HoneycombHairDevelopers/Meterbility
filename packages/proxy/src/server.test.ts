@@ -854,9 +854,12 @@ test("NVIDIA-shaped SSE stream through a prefixed route tees and reassembles", a
   //   - usage is present by default (no stream_options.include_usage)
   //   - prompt_tokens_details.cached_tokens is populated
   //   - an nvext vendor-extension blob rides on every chunk
+  //   - reasoning models stream reasoning_content deltas BEFORE the
+  //     first visible content delta (the invisible reasoning burn)
   const upstream = await startFakeUpstream((_req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
     const chunks = [
+      'data: {"id":"chatcmpl-fixture","choices":[{"index":0,"delta":{"reasoning_content":"User wants a greeting. Easy.","role":"assistant"}}],"created":1787192456,"model":"meta/llama-3.1-8b-instruct","object":"chat.completion.chunk","nvext":{"worker_id":{"prefill_worker_id":1,"prefill_dp_rank":0,"decode_worker_id":1,"decode_dp_rank":0}}}\n\n',
       'data: {"id":"chatcmpl-fixture","choices":[{"index":0,"delta":{"content":"Hel","role":"assistant"}}],"created":1787192456,"model":"meta/llama-3.1-8b-instruct","object":"chat.completion.chunk","nvext":{"worker_id":{"prefill_worker_id":1,"prefill_dp_rank":0,"decode_worker_id":1,"decode_dp_rank":0}}}\n\n',
       'data: {"id":"chatcmpl-fixture","choices":[{"index":0,"delta":{"content":"lo","role":"assistant"}}],"created":1787192456,"model":"meta/llama-3.1-8b-instruct","object":"chat.completion.chunk","nvext":{"worker_id":{"prefill_worker_id":1,"prefill_dp_rank":0,"decode_worker_id":1,"decode_dp_rank":0}}}\n\n',
       'data: {"id":"chatcmpl-fixture","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":"stop"}],"created":1787192456,"model":"meta/llama-3.1-8b-instruct","object":"chat.completion.chunk","nvext":{"worker_id":{"prefill_worker_id":1,"prefill_dp_rank":0,"decode_worker_id":1,"decode_dp_rank":0},"timing":{"request_received_ms":1787192456979,"ttft_ms":19.66,"total_time_ms":35.87,"kv_hit_rate":0.33,"router_queue_depth":0}}}\n\n',
@@ -909,6 +912,102 @@ test("NVIDIA-shaped SSE stream through a prefixed route tees and reassembles", a
         steps[0]!.tokens.cached_read,
         4,
         "prompt_tokens_details.cached_tokens must map to cached_read",
+      );
+      // v0.7 timing: reasoning chunk arrives one 5ms tick before the
+      // first content chunk, so first-delta strictly precedes
+      // first-visible and both are anchored past request start.
+      const s = steps[0]!;
+      assert.ok(s.ttft_ms !== undefined, "streamed step must record ttft_ms");
+      assert.ok(
+        s.ttft_visible_ms !== undefined,
+        "streamed step must record ttft_visible_ms",
+      );
+      assert.ok(
+        s.ttft_visible_ms! > s.ttft_ms!,
+        `reasoning burn must be visible: ttft ${s.ttft_ms} vs visible ${s.ttft_visible_ms}`,
+      );
+      assert.ok(s.latency_ms >= s.ttft_visible_ms!, "stream end after first visible");
+      // v0.7 reasoning parity: the thinking text survives into the
+      // stored decision blob.
+      const decisionBlob = await store.blobs.getString(s.decision_ref);
+      const decision = JSON.parse(decisionBlob) as {
+        choices: Array<{ message: { reasoning_content?: string } }>;
+      };
+      assert.equal(
+        decision.choices[0]!.message.reasoning_content,
+        "User wants a greeting. Easy.",
+      );
+    } finally {
+      store.close();
+    }
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("cache-unreported hosts get the usage:cache-unreported tag; explicit zero doesn't", async () => {
+  freshHome();
+  let call = 0;
+  const upstream = await startFakeUpstream((_req, res) => {
+    call += 1;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify(
+        call === 1
+          ? {
+              // nemotron-shaped: usage with NO prompt_tokens_details.
+              id: "cmpl_unrep",
+              model: "nvidia/nemotron-3-ultra-550b-a55b",
+              choices: [{ message: { role: "assistant", content: "a" }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 25, completion_tokens: 72, total_tokens: 97 },
+            }
+          : {
+              // muse-shaped: explicit cached_tokens: 0.
+              id: "cmpl_zero",
+              model: "meta/muse-glimmer-30b",
+              choices: [{ message: { role: "assistant", content: "b" }, finish_reason: "stop" }],
+              usage: {
+                prompt_tokens: 65,
+                completion_tokens: 239,
+                prompt_tokens_details: { audio_tokens: null, cached_tokens: 0 },
+              },
+            },
+      ),
+    );
+  });
+  const proxy = await startProxy({
+    port: 0,
+    providers: [{ name: "nvidia", dialect: "openai", url: upstream.url }],
+    spec: { project: "/tmp/proxy-cacherep", agent: "smoke" },
+    logger: () => {},
+  });
+  try {
+    for (const prompt of ["first", "second"]) {
+      await fetch(proxy.url + "/nvidia/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "x",
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      await settled();
+    }
+    const store = Store.open();
+    try {
+      const runs = listRuns(store);
+      assert.equal(runs.length, 2);
+      const allSteps = runs.flatMap((r) => listSteps(store, r.run_id));
+      const unrep = allSteps.find((s) => s.model.includes("nemotron"))!;
+      const zero = allSteps.find((s) => s.model.includes("muse"))!;
+      assert.ok(
+        unrep.tags.includes("usage:cache-unreported"),
+        "absent prompt_tokens_details must be tagged",
+      );
+      assert.ok(
+        !zero.tags.includes("usage:cache-unreported"),
+        "an explicit cached_tokens: 0 is a report, not an absence",
       );
     } finally {
       store.close();

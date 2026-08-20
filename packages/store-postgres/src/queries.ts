@@ -82,6 +82,8 @@ interface StepRow {
   status: string;
   tags: string[];
   provider: string | null;
+  ttft_ms: number | null;
+  ttft_visible_ms: number | null;
 }
 
 function rowToStep(r: StepRow): Step {
@@ -110,6 +112,8 @@ function rowToStep(r: StepRow): Step {
     tags: Array.isArray(r.tags) ? r.tags : [],
     status: r.status as Step["status"],
     provider: r.provider ?? undefined,
+    ttft_ms: r.ttft_ms ?? undefined,
+    ttft_visible_ms: r.ttft_visible_ms ?? undefined,
   };
 }
 
@@ -208,8 +212,8 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
        model, context_snapshot_id, decision_ref, action, outcome,
        tokens_input, tokens_output, tokens_cached_read, tokens_cache_creation,
        tokens_cache_creation_1h, tokens_reasoning, latency_ms, cost_cents,
-       status, tags, provider
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)
+       status, tags, provider, ttft_ms, ttft_visible_ms
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24)
      ON CONFLICT (step_id) DO UPDATE SET
        action = EXCLUDED.action,
        outcome = EXCLUDED.outcome,
@@ -223,7 +227,9 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
        cost_cents = EXCLUDED.cost_cents,
        status = EXCLUDED.status,
        tags = EXCLUDED.tags,
-       provider = COALESCE(EXCLUDED.provider, steps.provider)`,
+       provider = COALESCE(EXCLUDED.provider, steps.provider),
+       ttft_ms = COALESCE(EXCLUDED.ttft_ms, steps.ttft_ms),
+       ttft_visible_ms = COALESCE(EXCLUDED.ttft_visible_ms, steps.ttft_visible_ms)`,
     [
       step.step_id,
       step.run_id,
@@ -247,6 +253,8 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
       step.status,
       JSON.stringify(step.tags ?? []),
       step.provider ?? null,
+      step.ttft_ms ?? null,
+      step.ttft_visible_ms ?? null,
     ],
   );
 }

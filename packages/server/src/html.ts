@@ -3013,11 +3013,26 @@ function renderStepCard(
       ? `/api/blob/${s.outcome.tool_result_ref}`
       : undefined,
   });
+  // v0.7 — streamed-capture timing rides the Cost tab next to latency.
+  // Only present on streamed proxy steps; the reasoning burn (visible -
+  // first delta) is derived here so operators don't do the subtraction.
+  const timing =
+    s.ttft_ms !== undefined || s.ttft_visible_ms !== undefined
+      ? {
+          ttft_ms: s.ttft_ms,
+          ttft_visible_ms: s.ttft_visible_ms,
+          reasoning_burn_ms:
+            s.ttft_ms !== undefined && s.ttft_visible_ms !== undefined
+              ? s.ttft_visible_ms - s.ttft_ms
+              : undefined,
+        }
+      : undefined;
   const prettyCost = prettyTab(
     "cost",
     {
       tokens: s.tokens,
       latency_ms: s.latency_ms,
+      ...(timing ? { timing } : {}),
       cost_cents: s.cost_cents,
       tags: s.tags,
     },
@@ -3036,6 +3051,7 @@ function renderStepCard(
         model: s.model,
         tokens: s.tokens,
         latency_ms: s.latency_ms,
+        ...(timing ? { timing } : {}),
         cost_cents: s.cost_cents,
         tags: s.tags,
       },

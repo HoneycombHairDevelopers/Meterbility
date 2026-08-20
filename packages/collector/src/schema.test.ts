@@ -60,11 +60,11 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
 test("fresh apply lands schema v6 with all new tables + columns", () => {
   const db = freshDb();
   ensureSchema(db);
-  assert.equal(SCHEMA_VERSION, 6, "SCHEMA_VERSION constant must be 6");
+  assert.equal(SCHEMA_VERSION, 7, "SCHEMA_VERSION constant must be 7");
   const row = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string } | undefined;
-  assert.equal(row?.value, "6");
+  assert.equal(row?.value, "7");
 
   // New tables exist.
   assert.equal(tableExists(db, "file_change"), true, "file_change table missing");
@@ -85,6 +85,10 @@ test("fresh apply lands schema v6 with all new tables + columns", () => {
   assert.equal(hasColumn(db, "runs", "provider"), true);
   assert.equal(hasColumn(db, "runs", "upstream_host"), true);
   assert.equal(hasColumn(db, "steps", "provider"), true);
+
+  // v7: streamed-capture timing columns.
+  assert.equal(hasColumn(db, "steps", "ttft_ms"), true);
+  assert.equal(hasColumn(db, "steps", "ttft_visible_ms"), true);
 
   // Indexes are sanity-checked via the master table — the names must
   // match what queries.ts will rely on in Track A.
@@ -118,7 +122,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .all() as Array<{ value: string }>;
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.value, "6");
+  assert.equal(rows[0]!.value, "7");
   // Tables are still singular (the master table doesn't grow on re-apply).
   const fcCount = db
     .prepare(
@@ -227,7 +231,7 @@ test("v3 → v6 migration: hand-built v3 db gets ALTER'd to the current version 
   const ver = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string };
-  assert.equal(ver.value, "6");
+  assert.equal(ver.value, "7");
   db.close();
 });
 
