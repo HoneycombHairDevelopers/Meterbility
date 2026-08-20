@@ -286,7 +286,8 @@ shared `walkTree` and a capture-test-utils module.
 
 ### Claude Code Task-subagent carving retrofit
 **Priority:** P2
-Retrofit the v6 lineage (`parent_run_id`/`parent_run_step_id`) + carve
+Retrofit the v7 lineage (`parent_run_id`/`parent_run_step_id`; v7
+because v0.6.0 claimed schema v6 for provider identity) + carve
 pattern onto the Claude Code adapter so `Task` sub-agents become child
 runs. `adapters/claude-code/src/file_changes.ts:40` already punts
 sub-agent attribution "to v0.5+ when sub-agents become first-class" —
@@ -303,7 +304,7 @@ Umbrella for the channels explicitly deferred by the design doc — see
 its "Phased follow-ons" + "NOT in scope" sections for rationale:
 - VS Code chatSessions ingest (whole-doc JSON, no usage data)
 - Org/enterprise billing puller + day-level reconciliation annotations
-- Replay/fork over carved child runs (lineage-only in v6; fork.ts
+- Replay/fork over carved child runs (lineage-only in v7; fork.ts
   rejects via derived rule)
 - Squad sidecar annotations + watch-mode wave grouping — gated on the
   Brady falsifier checkpoint outcome (premise 5 of the design doc)
