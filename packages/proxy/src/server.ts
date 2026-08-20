@@ -133,6 +133,17 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
         508,
       );
     }
+    // Traversal guard: dot-segments or percent-encoded slash/dot/backslash
+    // in the path could escape a path-carrying upstream base after the
+    // prefix strip (e.g. /groq/v1/..%2f..%2fadmin joined onto
+    // https://api.groq.com/openai). No legitimate LLM API path contains
+    // any of these, so reject flat rather than trying to normalize.
+    if (hasPathTraversal(c.req.path, c.req.url)) {
+      return c.json(
+        { error: "path contains dot-segments or encoded path separators — rejected" },
+        400,
+      );
+    }
     const route = matchRoute(c.req.path, registry);
     if (!route) {
       const bare = [...registry.values()]
@@ -470,6 +481,24 @@ async function persistCapture(args: PersistArgs): Promise<void> {
   args.log(
     `${args.provider} ${exchange.model} → ${actionLabel} (run ${runResolution.run_id.slice(0, 12)} · step ${step.sequence} · ${args.latency_ms}ms · in ${exchange.tokens.input} out ${exchange.tokens.output})`,
   );
+}
+
+/**
+ * True when a request path could traverse out of its provider's
+ * upstream base. The WHATWG URL layer already normalizes literal and
+ * %2e-encoded dot-segments before routing (they resolve within the
+ * prefix and can't escape the upstream join), so the live threat is
+ * percent-encoded slash/backslash — NOT decoded by the URL layer, but
+ * possibly decoded by the upstream into a real traversal. The
+ * dot-segment check is defense-in-depth for any server stack that
+ * skips normalization. Query string exempt — only the path is joined
+ * onto the upstream.
+ */
+function hasPathTraversal(path: string, rawUrl: string): boolean {
+  if (path.split("/").some((seg) => seg === "." || seg === "..")) return true;
+  const qIdx = rawUrl.indexOf("?");
+  const rawPath = qIdx === -1 ? rawUrl : rawUrl.slice(0, qIdx);
+  return /%2e|%2f|%5c/i.test(rawPath);
 }
 
 /**

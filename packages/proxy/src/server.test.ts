@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import OpenAI from "openai";
 import { Store, listRuns, listSteps } from "@meterbility/collector";
 import { startProxy } from "./server.ts";
 
@@ -1096,6 +1097,239 @@ test("zero-usage ok exchange: step gets persistent usage:missing tag (survives -
         steps[0]!.tags.includes("usage:missing"),
         "zero-usage ok-step carries the persistent usage:missing marker",
       );
+    } finally {
+      store.close();
+    }
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+/* ====================================================================
+ * Security hardenings (D3): redirect relay, loop guard, traversal guard
+ * ==================================================================== */
+
+test("upstream 3xx is relayed verbatim — the proxy never follows redirects", async () => {
+  freshHome();
+  let hits = 0;
+  const upstream = await startFakeUpstream((_req, res) => {
+    hits += 1;
+    res.writeHead(302, { location: "https://evil.example/v1/chat/completions" });
+    res.end();
+  });
+  const proxy = await startProxy({
+    port: 0,
+    providers: [{ name: "nvidia", dialect: "openai", url: upstream.url }],
+    spec: { project: "/tmp/proxy-redir", agent: "smoke" },
+    logger: () => {},
+  });
+  try {
+    const resp = await fetch(proxy.url + "/nvidia/v1/chat/completions", {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/json", authorization: "Bearer secret-key" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "x" }] }),
+    });
+    // The 3xx reaches the CLIENT — the proxy must not have chased it
+    // (which would re-send the auth header to the redirect target).
+    assert.equal(resp.status, 302);
+    assert.equal(hits, 1, "exactly one upstream hit — no redirect follow");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("loop guard: a request already carrying the hop marker gets 508", async () => {
+  freshHome();
+  const proxy = await startProxy({
+    port: 0,
+    spec: { project: "/tmp/proxy-loop", agent: "smoke" },
+    logger: () => {},
+  });
+  try {
+    const resp = await fetch(proxy.url + "/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-meterbility-hop": "1",
+      },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "x" }] }),
+    });
+    assert.equal(resp.status, 508);
+    const body = (await resp.json()) as { error: string };
+    assert.match(body.error, /loop detected/);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("forwarded requests carry the hop marker (loop guard arming)", async () => {
+  freshHome();
+  let seenHop: string | undefined;
+  const upstream = await startFakeUpstream((req, res) => {
+    seenHop = req.headers["x-meterbility-hop"] as string | undefined;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: "cmpl_hop",
+        model: "gpt-4o",
+        choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }),
+    );
+  });
+  const proxy = await startProxy({
+    port: 0,
+    upstreams: { openai: upstream.url },
+    spec: { project: "/tmp/proxy-hoparm", agent: "smoke" },
+    logger: () => {},
+  });
+  try {
+    await fetch(proxy.url + "/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "x" }] }),
+    });
+    assert.equal(seenHop, "1", "outbound request is stamped so a chained proxy can 508");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("traversal guard: encoded separators 400; literal dot-segments normalize inside the base", async () => {
+  freshHome();
+  const seenPaths: string[] = [];
+  const upstream = await startFakeUpstream((req, res) => {
+    seenPaths.push(req.url ?? "");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await startProxy({
+    port: 0,
+    // Path-carrying upstream — the exact base a traversal would escape.
+    providers: [{ name: "groq", dialect: "openai", url: upstream.url + "/openai" }],
+    spec: { project: "/tmp/proxy-trav", agent: "smoke" },
+    logger: () => {},
+  });
+  // fetch() normalizes literal dot-segments client-side before sending,
+  // so those cases must go over a raw http request (path transmitted
+  // verbatim) — exactly the kind of non-normalizing client the guard
+  // exists for. Encoded separators survive fetch untouched.
+  const rawStatus = (path: string): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const u = new URL(proxy.url);
+      const req = httpRequest(
+        { host: u.hostname, port: u.port, path, method: "POST" },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+
+  try {
+    // Literal AND %2e-encoded dot-segments sent verbatim on the wire
+    // get NORMALIZED by the WHATWG URL layer before routing (the spec
+    // treats %2e as a dot during path parsing) — they resolve within
+    // the prefix and can never carry a ".." into the upstream join.
+    // The security property is what the UPSTREAM sees; asserted below.
+    assert.equal(await rawStatus("/groq/v1/../admin"), 200);
+    assert.equal(await rawStatus("/groq/v1/./chat/models"), 200);
+    assert.equal(await rawStatus("/groq/v1/%2e%2e/admin"), 200);
+
+    // Encoded SLASH/BACKSLASH are NOT decoded by the URL layer — they'd
+    // reach the upstream verbatim, which may decode them into a real
+    // traversal. The guard rejects them flat.
+    for (const path of [
+      "/groq/v1/..%2f..%2fadmin",
+      "/groq/v1/a%5cb",
+    ]) {
+      const resp = await fetch(proxy.url + path, { method: "POST" });
+      assert.equal(resp.status, 400, `expected 400 for ${path}`);
+    }
+
+    // Sanity: a clean path still routes (encoded chars in the QUERY are fine).
+    const ok = await fetch(proxy.url + "/groq/v1/models?q=a%2fb");
+    assert.equal(ok.status, 200);
+
+    // THE invariant: everything the upstream ever received stays under
+    // its own base path, with no dot-segments or encoded separators.
+    assert.ok(seenPaths.length > 0);
+    for (const p of seenPaths) {
+      assert.ok(p.startsWith("/openai/"), `escaped the upstream base: ${p}`);
+      const pathOnly = p.split("?")[0]!;
+      assert.ok(!pathOnly.includes(".."), `dot-segment reached upstream: ${p}`);
+      assert.ok(!/%2e|%2f|%5c/i.test(pathOnly), `encoded separator reached upstream: ${p}`);
+    }
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+/* ====================================================================
+ * D2: the REAL openai npm client through a prefixed provider — pins the
+ * SDK's actual base-URL join behavior (baseURL + "/chat/completions"),
+ * which HTTP-level tests can only simulate.
+ * ==================================================================== */
+
+test("real openai SDK client captures through a prefixed provider", async () => {
+  freshHome();
+  let seenUrl = "";
+  let seenAuth: string | undefined;
+  const upstream = await startFakeUpstream((req, res) => {
+    seenUrl = req.url ?? "";
+    seenAuth = req.headers["authorization"] as string | undefined;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: "cmpl_sdk",
+        model: "meta/llama-3.1-8b-instruct",
+        choices: [
+          { index: 0, message: { role: "assistant", content: "sdk ok" }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      }),
+    );
+  });
+
+  const proxy = await startProxy({
+    port: 0,
+    providers: [{ name: "nvidia", dialect: "openai", url: upstream.url }],
+    spec: { project: "/tmp/proxy-sdk", agent: "smoke" },
+    logger: () => {},
+  });
+
+  try {
+    const client = new OpenAI({
+      apiKey: "test-not-a-real-key",
+      baseURL: proxy.url + "/nvidia/v1",
+      maxRetries: 0,
+    });
+    const completion = await client.chat.completions.create({
+      model: "meta/llama-3.1-8b-instruct",
+      messages: [{ role: "user", content: "sdk hi" }],
+    });
+    assert.equal(completion.choices[0]!.message.content, "sdk ok");
+    // The SDK joined baseURL + /chat/completions; the proxy stripped
+    // the /nvidia prefix; the upstream saw the canonical path.
+    assert.equal(seenUrl, "/v1/chat/completions");
+    assert.equal(seenAuth, "Bearer test-not-a-real-key");
+
+    await settled();
+    const store = Store.open();
+    try {
+      const runs = listRuns(store);
+      assert.equal(runs.length, 1);
+      assert.equal(runs[0]!.provider, "nvidia");
+      const steps = listSteps(store, runs[0]!.run_id);
+      assert.equal(steps.length, 1);
+      assert.equal((steps[0]!.action as { text: string }).text, "sdk ok");
     } finally {
       store.close();
     }
