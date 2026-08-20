@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meterbility-agent"
-version = "0.5.1"
+version = "0.6.0"
 description = "Meterbility SDK for Python — trace LLM agent runs into the local Meterbility store"
 readme = "README.md"
 requires-python = ">=3.9"
