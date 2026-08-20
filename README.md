@@ -10,9 +10,49 @@ Meterbility turns AI agent runs into a queryable, replayable, forkable corpus an
 
 ## Status
 
-**v0.5.1 — cross-vendor parity.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
+**v0.6.0 — multi-upstream proxy capture.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
-Latest milestones (v0.5.1):
+Latest milestones (v0.6.0):
+
+- **Any OpenAI/Anthropic-dialect upstream** — `meter proxy` is no longer hardcoded to api.anthropic.com + api.openai.com. Register any compatible host (NVIDIA, Groq, Together, Ollama, vLLM, self-hosted gateways) as a named provider with the repeatable `--upstream` flag; each answers at its own `/<name>/` prefix, concurrently on one port, and bare paths behave exactly as before. Verified live against NVIDIA (`integrate.api.nvidia.com`) — its real stream shape is pinned in the test suite.
+- **First-class provider identity** — captured runs and steps carry a `provider` column (plus `upstream_host` provenance on runs), shown as a badge in the web UI. Same prompt + model through two different upstreams lands in two distinct runs.
+- **Cost honesty for open models** — vendor-namespaced models (`meta/llama-…`) with no pricing-table entry render as **unpriced** everywhere, never `$0.00` and never a fabricated frontier-rate guess; ok-steps with zero token usage get a persistent `usage:missing` tag.
+- **Proxy hardening** — upstream redirects are relayed to the client, never followed (no auth replay); a hop-marker loop guard 508s chained/self-referential proxies; encoded path separators are rejected before the upstream join.
+
+### Capturing a non-OpenAI/Anthropic upstream
+
+The flag grammar is `--upstream <name>[:<dialect>]=<url>` — `name` becomes the URL prefix and the persisted provider label, `dialect` picks the capture parser (`openai`, the default, or `anthropic`), and `url` is the upstream base (origins with a path are fine, e.g. `https://api.groq.com/openai`; credentials in the URL are rejected — keys stay in your client's headers, which the proxy forwards but never stores).
+
+One-shot, zero config — `meter run` wires the child's env for you:
+
+```bash
+meter run --upstream nvidia=https://integrate.api.nvidia.com -- python myagent.py
+```
+
+Long-running proxy — export the printed base URL yourself:
+
+```bash
+meter proxy --upstream nvidia=https://integrate.api.nvidia.com
+export OPENAI_BASE_URL=http://127.0.0.1:8765/nvidia/v1   # openai-dialect: /v1 included
+python myagent.py
+```
+
+Multiple providers on one port (each gets its own prefix; clients pick by base URL):
+
+```bash
+meter proxy \
+  --upstream nvidia=https://integrate.api.nvidia.com \
+  --upstream groq=https://api.groq.com/openai \
+  --upstream local:openai=http://localhost:11434 \
+  --upstream mygw:anthropic=https://claude-gw.internal
+# → /nvidia/v1/..., /groq/v1/..., /local/v1/..., /mygw/v1/...
+# anthropic-dialect base URLs omit the /v1 (the Anthropic SDK appends it):
+#   export ANTHROPIC_BASE_URL=http://127.0.0.1:8765/mygw
+```
+
+Rules worth knowing: the built-ins are also prefix-reachable (`/openai/…`, `/anthropic/…`), and `--openai-target`/`--anthropic-target` re-point the whole provider — bare and prefixed aliases follow together. `meter run` wires at most **one upstream per dialect** (env vars are singular; it errors with guidance if you pass two), and `--no-openai`/`--no-anthropic` suppress only the built-in wiring, never an `--upstream` you asked for. Non-capture paths under a prefix (`/nvidia/v1/models`) pass through without writing anything.
+
+Earlier milestones (v0.5.1):
 
 - **Codex CLI rollout parity** — Codex ingests now carry per-step tokens with cache and reasoning splits, real per-turn model ids (from `turn_context`), per-turn latency, and structured file changes from `patch_apply_end` (creates carry full content; updates/deletes/renames record the unified diff as `partial_diff` rows — the rollout has no before-content). Codex sessions also appear in the live fleet view (`meter web --live`) via tail-poll discovery of `~/.codex` rollouts.
 - **Cursor three-channel capture** — (1) deep-diff extraction from `state.vscdb`, including `edit_file_v2` before/after blobs and accept/reject fates, with checkpoint fallback evidence and `aiCodeTrackingLines` AI-authorship annotations; (2) real-time capture via Cursor Hooks — `meter init --cursor-hooks` installs `.cursor/hooks.json` entries that route `afterFileEdit`/`beforeShellExecution`/`stop` through `meter cursor-hook` (never blocks the agent); (3) real billed cost via `meter cursor-usage`, which pulls the Cursor Admin API (Teams/Business, `meter config set cursor.admin_api_key …`) and joins billed tokens + cache splits to ingested runs on conversationId, tagged `cost:actual` vs the local `cost:value` estimate.
