@@ -45,6 +45,9 @@ interface RunRow {
   // v0.3 — Track A + Track B. Both nullable: most runs have neither.
   baseline_tree_id: string | null;
   probe_state: string | null;
+  // v6 — nullable: only proxy multi-upstream capture sets them.
+  provider: string | null;
+  upstream_host: string | null;
 }
 
 interface StepRow {
@@ -69,6 +72,8 @@ interface StepRow {
   cost_cents: number;
   status: string;
   tags: string;
+  // v6 — nullable: only proxy multi-upstream capture sets it.
+  provider: string | null;
 }
 
 function rowToRun(row: RunRow): Run {
@@ -92,6 +97,8 @@ function rowToRun(row: RunRow): Run {
     cost_cents: row.cost_cents,
     step_count: row.step_count,
     tags: JSON.parse(row.tags) as string[],
+    provider: row.provider ?? undefined,
+    upstream_host: row.upstream_host ?? undefined,
     baseline_tree_id: row.baseline_tree_id ?? undefined,
     probe_state:
       row.probe_state === "paused" || row.probe_state === "resumed"
@@ -125,6 +132,7 @@ function rowToStep(row: StepRow): Step {
     cost_cents: row.cost_cents,
     tags: JSON.parse(row.tags) as string[],
     status: row.status as StepStatus,
+    provider: row.provider ?? undefined,
   };
 }
 
@@ -183,8 +191,8 @@ export function insertRun(store: Store, run: Run): void {
         fork_origin_run_id, fork_origin_step_id,
         tokens_total_input, tokens_total_output, tokens_total_cached,
         cost_cents, step_count, tags,
-        baseline_tree_id, probe_state
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        baseline_tree_id, probe_state, provider, upstream_host
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       run.run_id,
@@ -208,6 +216,8 @@ export function insertRun(store: Store, run: Run): void {
       JSON.stringify(run.tags ?? []),
       run.baseline_tree_id ?? null,
       run.probe_state ?? null,
+      run.provider ?? null,
+      run.upstream_host ?? null,
     );
 }
 
@@ -274,7 +284,8 @@ export function insertStep(store: Store, step: Step): void {
         latency_ms=excluded.latency_ms,
         cost_cents=excluded.cost_cents,
         status=excluded.status,
-        tags=excluded.tags`;
+        tags=excluded.tags,
+        provider=excluded.provider`;
   store.db
     .prepare(
       `INSERT INTO steps(
@@ -282,8 +293,8 @@ export function insertStep(store: Store, step: Step): void {
         model, context_snapshot_id, decision_ref, action_json, outcome_json,
         tokens_input, tokens_output, tokens_cached_read, tokens_cache_creation,
         tokens_cache_creation_1h, tokens_reasoning, latency_ms, cost_cents,
-        status, tags
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        status, tags, provider
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(step_id) DO UPDATE SET
         run_id=excluded.run_id,
         sequence=excluded.sequence,${updates}
@@ -311,6 +322,7 @@ export function insertStep(store: Store, step: Step): void {
       step.cost_cents,
       step.status,
       JSON.stringify(step.tags ?? []),
+      step.provider ?? null,
     );
 }
 

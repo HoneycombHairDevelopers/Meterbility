@@ -141,13 +141,39 @@ export const PRICING_FALLBACK: ModelPricing = {
   cache_creation_1h_per_million_cents: 3000,
 };
 
-export function pricingFor(model: string): { pricing: ModelPricing; approx: boolean } {
+/** Zero-rate sentinel for models we refuse to guess a price for. */
+export const PRICING_UNPRICED: ModelPricing = {
+  model: "unpriced",
+  input_per_million_cents: 0,
+  output_per_million_cents: 0,
+  cached_read_per_million_cents: 0,
+  cache_creation_per_million_cents: 0,
+  cache_creation_1h_per_million_cents: 0,
+};
+
+export function pricingFor(model: string): {
+  pricing: ModelPricing;
+  approx: boolean;
+  /** True when we deliberately refuse to price the model. The display
+   *  layer must render "unpriced", never $0.00 — zero reads as free. */
+  unpriced: boolean;
+} {
   for (const row of PRICING) {
     if (model === row.model || model.startsWith(row.model)) {
-      return { pricing: row, approx: false };
+      return { pricing: row, approx: false, unpriced: false };
     }
   }
-  return { pricing: PRICING_FALLBACK, approx: true };
+  // Vendor-namespaced ids (meta/llama-…, nvidia/…, mistralai/… — the
+  // multi-upstream proxy's open-model world) are UNPRICED, not approx:
+  // the Opus-rate fallback would overstate an 8B open model's cost by
+  // ~two orders of magnitude, and a plausible-looking wrong number is
+  // worse than an honest "unknown". Un-namespaced unknowns (new
+  // frontier model ids) keep the fallback — frontier pricing is the
+  // right magnitude there.
+  if (model.includes("/")) {
+    return { pricing: PRICING_UNPRICED, approx: true, unpriced: true };
+  }
+  return { pricing: PRICING_FALLBACK, approx: true, unpriced: false };
 }
 
 export interface UsageCents {
@@ -172,8 +198,8 @@ export interface UsageCents {
 export function costCents(
   model: string,
   usage: UsageCents,
-): { cost_cents: number; approx: boolean } {
-  const { pricing, approx } = pricingFor(model);
+): { cost_cents: number; approx: boolean; unpriced: boolean } {
+  const { pricing, approx, unpriced } = pricingFor(model);
   const cache1hRate =
     pricing.cache_creation_1h_per_million_cents ??
     pricing.input_per_million_cents * 2;
@@ -183,5 +209,5 @@ export function costCents(
     (usage.cached_read * pricing.cached_read_per_million_cents) / 1_000_000 +
     (usage.cache_creation * pricing.cache_creation_per_million_cents) / 1_000_000 +
     ((usage.cache_creation_1h ?? 0) * cache1hRate) / 1_000_000;
-  return { cost_cents: cost, approx };
+  return { cost_cents: cost, approx, unpriced };
 }

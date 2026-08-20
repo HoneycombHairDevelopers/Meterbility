@@ -20,7 +20,7 @@ import type { Client } from "pg";
  *             migrations as new derived_from / op values come online.
  *             Additive-only per v0.2 §17.
  */
-export const POSTGRES_SCHEMA_VERSION = 4;
+export const POSTGRES_SCHEMA_VERSION = 5;
 
 export async function ensurePostgresSchema(client: Client): Promise<void> {
   await client.query(`
@@ -63,7 +63,9 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
       tokens_total_cached BIGINT NOT NULL DEFAULT 0,
       cost_cents DOUBLE PRECISION NOT NULL DEFAULT 0,
       step_count INTEGER NOT NULL DEFAULT 0,
-      tags JSONB NOT NULL DEFAULT '[]'::jsonb
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      provider TEXT,
+      upstream_host TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_runs_project_started
@@ -95,6 +97,7 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
       cost_cents DOUBLE PRECISION NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      provider TEXT,
       UNIQUE(run_id, sequence)
     );
 
@@ -244,6 +247,18 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
   // v4 — Track B: Live Probe state (NULL = never probed).
   await client.query(
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS probe_state TEXT",
+  );
+
+  // v6 — proxy multi-upstream: first-class provider identity (nullable;
+  // legacy rows and transcript-adapter runs stay NULL).
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS provider TEXT",
+  );
+  await client.query(
+    "ALTER TABLE steps ADD COLUMN IF NOT EXISTS provider TEXT",
+  );
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS upstream_host TEXT",
   );
 
   const versionRow = await client.query(

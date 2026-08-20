@@ -57,14 +57,14 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
   return cols.some((c) => c.name === column);
 }
 
-test("fresh apply lands schema v5 with all new tables + columns", () => {
+test("fresh apply lands schema v6 with all new tables + columns", () => {
   const db = freshDb();
   ensureSchema(db);
-  assert.equal(SCHEMA_VERSION, 5, "SCHEMA_VERSION constant must be 5");
+  assert.equal(SCHEMA_VERSION, 6, "SCHEMA_VERSION constant must be 6");
   const row = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string } | undefined;
-  assert.equal(row?.value, "5");
+  assert.equal(row?.value, "6");
 
   // New tables exist.
   assert.equal(tableExists(db, "file_change"), true, "file_change table missing");
@@ -80,6 +80,10 @@ test("fresh apply lands schema v5 with all new tables + columns", () => {
     true,
     "v5 migration: annotations.kind column missing",
   );
+
+  // v6: provider columns (proxy multi-upstream).
+  assert.equal(hasColumn(db, "runs", "provider"), true);
+  assert.equal(hasColumn(db, "steps", "provider"), true);
 
   // Indexes are sanity-checked via the master table — the names must
   // match what queries.ts will rely on in Track A.
@@ -113,7 +117,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .all() as Array<{ value: string }>;
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.value, "5");
+  assert.equal(rows[0]!.value, "6");
   // Tables are still singular (the master table doesn't grow on re-apply).
   const fcCount = db
     .prepare(
@@ -208,7 +212,7 @@ test("v3 → v5 migration: hand-built v3 db gets ALTER'd to v5 without data loss
   const ver = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string };
-  assert.equal(ver.value, "5");
+  assert.equal(ver.value, "6");
   db.close();
 });
 

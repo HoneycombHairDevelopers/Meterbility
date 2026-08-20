@@ -11,12 +11,14 @@ import type { ParsedRequest } from "./types.ts";
  * Heuristic (matches how the Claude Code JSONL adapter groups sessions):
  *
  *   1. **Explicit grouping wins.** If the client sent
- *      `x-meterbility-run-id: <id>` (e.g. via METERBILITY_RUN_ID injection from
- *      `meter run`), use it. This is the cleanest signal and skips the
- *      rest of the heuristic.
+ *      `x-meterbility-run-id: <id>` (SDKs and manual callers set it;
+ *      `meter run` does not inject it today), use it. This is the
+ *      cleanest signal and skips the rest of the heuristic.
  *
- *   2. **Conversation seed.** Hash the first user message + the system
- *      prompt + the model name. This becomes the "seed" key.
+ *   2. **Conversation seed.** Hash the provider name + the first user
+ *      message + the system prompt + the model name. Provider is in the
+ *      seed so identical prompts to the same model name through two
+ *      different upstreams (an A/B comparison) land in distinct Runs.
  *
  *   3. **Sliding window.** Keep an in-memory map of seed → run_id +
  *      messages_count + last_seen. If the same seed shows up within
@@ -60,6 +62,7 @@ export class RunGrouper {
     parsed: ParsedRequest,
     explicitRunId: string | undefined,
     nowMs: number,
+    provider?: string,
   ): { run_id: string; is_new: boolean; step_sequence: number; entry: GroupEntry } {
     if (explicitRunId) {
       const existing = this.entries.get(explicitRunId);
@@ -79,7 +82,7 @@ export class RunGrouper {
       return { run_id: fresh.run_id, is_new: true, step_sequence: 0, entry: fresh };
     }
 
-    const seed = this._seed(parsed);
+    const seed = this._seed(parsed, provider);
     const existing = this.entries.get(seed);
     if (
       existing &&
@@ -118,13 +121,17 @@ export class RunGrouper {
     };
   }
 
-  private _seed(parsed: ParsedRequest): string {
+  private _seed(parsed: ParsedRequest, provider?: string): string {
     // Use the first user message as the seed signal — that's the bit that
     // stays constant across a multi-turn conversation. Add the model so
     // two parallel agents started with the same prompt against different
-    // models don't collide.
+    // models don't collide, and the provider so the same model name via
+    // two different upstreams doesn't either. The seed lives only in
+    // memory, so the formula can change without a migration.
     const firstUser = parsed.history.find((m) => m.role === "user")?.content ?? "";
-    return sha256(`${parsed.model}\n${parsed.systemPrompt ?? ""}\n${firstUser}`);
+    return sha256(
+      `${provider ?? ""}\n${parsed.model}\n${parsed.systemPrompt ?? ""}\n${firstUser}`,
+    );
   }
 
   private _evictIfNeeded(): void {

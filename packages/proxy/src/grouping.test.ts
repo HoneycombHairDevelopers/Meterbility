@@ -54,3 +54,27 @@ test("RunGrouper: gap longer than window starts a new run", () => {
   const b = g.resolve(req([{ role: "user", content: "hi" }]), undefined, 1_000 + 31 * 60 * 1000);
   assert.notEqual(a.run_id, b.run_id);
 });
+
+test("RunGrouper: same prompt+model via two providers lands in distinct runs", () => {
+  const g = new RunGrouper();
+  const a = g.resolve(req([{ role: "user", content: "hi" }]), undefined, 1_000, "openai");
+  const b = g.resolve(req([{ role: "user", content: "hi" }]), undefined, 2_000, "nvidia");
+  assert.notEqual(a.run_id, b.run_id, "provider is part of the grouping seed");
+  assert.equal(b.is_new, true);
+});
+
+test("RunGrouper: same provider still groups a continuing conversation", () => {
+  const g = new RunGrouper();
+  const a = g.resolve(req([{ role: "user", content: "hi" }]), undefined, 1_000, "nvidia");
+  const b = g.resolve(
+    req([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello!" },
+      { role: "user", content: "more" },
+    ]),
+    undefined,
+    2_000,
+    "nvidia",
+  );
+  assert.equal(a.run_id, b.run_id);
+});

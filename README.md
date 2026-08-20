@@ -87,6 +87,7 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Cursor real-time hooks (`meter init --cursor-hooks` → `meter cursor-hook`) | ✅ v0.5.1 |
 | Cursor billed cost via Admin API (`meter cursor-usage`, `cost:actual` tags) | ✅ v0.5.1 |
 | Anthropic + OpenAI proxy capture (`meter proxy`) | ✅ v0.2 |
+| Multi-upstream proxy capture (`--upstream <name>[:<dialect>]=<url>` — any OpenAI/Anthropic-dialect host behind a `/<name>/` prefix, concurrent on one port, first-class `provider` on runs/steps; verified: NVIDIA `integrate.api.nvidia.com`) | ✅ v0.6 |
 | Proxy edge metadata (`x-meterbility-cwd` / `x-meterbility-git-branch` headers) | ✅ v0.5.1 |
 | Claude Code file-change capture (Write/Edit/MultiEdit/Bash-rm) | ✅ v0.3 |
 | Bash side-effect capture — `meter capture` hooks (exact) + `meter watch --files` FileSentinel (fallback) | ✅ v0.5 |
@@ -147,7 +148,7 @@ packages/
   server/             # replay, fork, diff, web (Hono), live inspector, probe panel
   agent/              # TypeScript SDK (MeterbilityTracer + traceAnthropic + probe hook)
   agent-py/           # Python SDK — stdlib only, same shape as TS
-  proxy/              # Anthropic + OpenAI HTTP proxies with capture
+  proxy/              # LLM-API forward proxy with capture (named upstreams via --upstream)
   store-postgres/     # optional Postgres backend
   web/                # placeholder for future SPA
 

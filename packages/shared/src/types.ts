@@ -101,6 +101,21 @@ export interface Run {
   step_count: number;
   tags: string[];
   /**
+   * v0.6 — Upstream provider identity for proxy-captured runs (e.g.
+   * "nvidia", "openai"). NULL/undefined for transcript-adapter runs and
+   * all rows that predate the column. One provider per run, always —
+   * the proxy's provider-scoped upstream overrides guarantee a run
+   * never mixes hosts under one label.
+   */
+  provider?: string;
+  /**
+   * v0.6 — Upstream host:port recorded at run creation (proxy capture
+   * only). Provenance: a provider NAME reused against a different URL
+   * across sessions is otherwise historically indistinguishable. Host
+   * only — never path, query, or credentials.
+   */
+  upstream_host?: string;
+  /**
    * v0.3 — Link to the baseline working tree captured at run start.
    * `undefined` is the dominant case: non-coding runs never trigger
    * baseline capture, and v0.3 Claude Code runs only populate this on
@@ -152,6 +167,8 @@ export interface Step {
   cost_cents: number;
   tags: string[];
   status: StepStatus;
+  /** v0.6 — Upstream provider identity (see Run.provider). */
+  provider?: string;
 }
 
 export type ContextComponentType =

@@ -4,7 +4,15 @@ import { Store, getStep } from "@meterbility/collector";
 import { anthropicCapture } from "./capture-anthropic.ts";
 import { openaiCapture } from "./capture-openai.ts";
 import { RunGrouper } from "./grouping.ts";
-import { matchRoute, PROVIDER_ROUTES, type ProviderName } from "./routes.ts";
+import {
+  buildRegistry,
+  DIALECT_CAPTURE_PATH,
+  joinUpstream,
+  matchRoute,
+  type Dialect,
+  type ProviderInput,
+  type ProviderName,
+} from "./routes.ts";
 import { teeAndCollect } from "./sse.ts";
 import {
   appendStep,
@@ -30,18 +38,30 @@ import type { ProviderCapture } from "./types.ts";
  *   ANTHROPIC_BASE_URL=http://127.0.0.1:8765
  *   OPENAI_BASE_URL=http://127.0.0.1:8765/v1
  *
+ * Named upstreams (multi-provider) get a provider-prefixed base URL —
+ * one port, concurrent providers, prefix stripped before forwarding:
+ *
+ *   meter proxy --upstream nvidia=https://integrate.api.nvidia.com
+ *   OPENAI_BASE_URL=http://127.0.0.1:8765/nvidia/v1
+ *
  * Or all-at-once via the `meter run` wrapper.
  *
- * Per-provider capture lives in capture-anthropic.ts / capture-openai.ts.
- * Run grouping (deciding when two requests belong together) lives in
- * grouping.ts.
+ * Per-dialect capture lives in capture-anthropic.ts / capture-openai.ts.
+ * Provider routing (bare + prefixed) lives in routes.ts. Run grouping
+ * (deciding when two requests belong together) lives in grouping.ts.
  */
 
 export interface ProxyOptions {
   port?: number;
   host?: string;
-  /** Override upstream per provider — useful for self-hosted gateways. */
+  /** Override a DEFAULT provider's upstream — re-points the provider
+   *  entity itself, so bare and `/openai/...`-style prefixed aliases
+   *  both follow. Useful for self-hosted gateways. */
   upstreams?: Partial<Record<ProviderName, string>>;
+  /** Register additional named providers (`--upstream` flag). Each gets
+   *  a `/<name>/...` prefix route and captures with its dialect's
+   *  parser. Validate flag strings with `parseUpstreamFlag()`. */
+  providers?: ProviderInput[];
   /** Project + agent labels written to every captured Run. */
   spec?: ProjectAgentSpec;
   /** Inject a logger for activity output (defaults to console.log). */
@@ -54,7 +74,7 @@ export interface ProxyHandle {
   close: () => Promise<void>;
 }
 
-const CAPTURES: Record<ProviderName, ProviderCapture> = {
+const CAPTURES: Record<Dialect, ProviderCapture> = {
   anthropic: anthropicCapture,
   openai: openaiCapture,
 };
@@ -63,6 +83,12 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
   const port = opts.port ?? 8765;
   const host = opts.host ?? "127.0.0.1";
   const log = opts.logger ?? ((line: string) => console.log(line));
+  // Throws on duplicate/invalid providers — a hard startup error by
+  // design (a proxy with a silently-dropped provider mislabels data).
+  const registry = buildRegistry({
+    upstreams: opts.upstreams,
+    providers: opts.providers,
+  });
   const grouper = new RunGrouper();
   const stepsByRun = new Map<string, Map<string, { step_id: string; sequence: number }>>();
   const seenRuns = new Set<string>();
@@ -90,23 +116,31 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
   });
 
   // Health endpoint — handy for `meter run` to poll readiness.
-  app.get("/__meter/health", (c) => c.json({ ok: true, providers: PROVIDER_ROUTES.map((r) => r.provider) }));
+  // Enumerates the dynamic registry, not a static table.
+  app.get("/__meter/health", (c) =>
+    c.json({ ok: true, providers: [...registry.keys()] }),
+  );
 
-  // Catch-all: route by path prefix.
+  // Catch-all: route by bare capture path or provider prefix.
   app.all("/*", async (c) => {
-    const route = matchRoute(c.req.path);
+    const route = matchRoute(c.req.path, registry);
     if (!route) {
+      const bare = [...registry.values()]
+        .filter((d) => d.builtin)
+        .map((d) => DIALECT_CAPTURE_PATH[d.dialect]);
+      const prefixed = [...registry.keys()].map((n) => `/${n}/...`);
       return c.json(
         {
           error:
             "no Meterbility proxy route for this path. Supported: " +
-            PROVIDER_ROUTES.map((r) => r.path).join(", "),
+            [...bare, ...prefixed].join(", "),
         },
         404,
       );
     }
-    const upstream = (opts.upstreams?.[route.provider] ?? route.defaultUpstream).replace(/\/$/, "");
-    const targetUrl = upstream + c.req.path + (c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : "");
+    const targetUrl =
+      joinUpstream(route.def.upstream, route.forwardPath) +
+      (c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : "");
     const method = c.req.method;
     const reqBody = method === "GET" || method === "HEAD" ? undefined : await c.req.text();
     const headers = forwardHeaders(c.req.raw.headers);
@@ -127,7 +161,16 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     }
     const t1 = Date.now();
 
-    const capture = CAPTURES[route.provider];
+    // Non-capture path under a registered prefix (e.g. /nvidia/v1/models):
+    // pure passthrough — forward the response, write no rows, open no store.
+    if (!route.capture) {
+      return new Response(upstreamResp.body, {
+        status: upstreamResp.status,
+        headers: stripHopByHopHeaders(upstreamResp.headers),
+      });
+    }
+
+    const capture = CAPTURES[route.def.dialect];
 
     // Branch: streaming vs buffered response.
     const ctype = upstreamResp.headers.get("content-type") ?? "";
@@ -139,7 +182,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
       void capturePromise.then(async (collected) => {
         await persistCapture({
           store: ensureStore(),
-          provider: route.provider,
+          provider: route.def.name,
+          upstreamHost: new URL(route.def.upstream).host,
           capture,
           reqBody: reqBody ?? "",
           rawResponse: collected,
@@ -165,7 +209,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     // Don't block the client response on capture — kick it off async.
     void persistCapture({
       store: ensureStore(),
-      provider: route.provider,
+      provider: route.def.name,
+      upstreamHost: new URL(route.def.upstream).host,
       capture,
       reqBody: reqBody ?? "",
       rawResponse: respBody,
@@ -200,8 +245,13 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     typeof addr === "object" && addr && typeof addr.port === "number" ? addr.port : port;
   const url = `http://${host}:${actualPort}`;
   log(`meter proxy listening on ${url}`);
-  log(`  anthropic → ${(opts.upstreams?.anthropic ?? "https://api.anthropic.com")}/v1/messages`);
-  log(`  openai    → ${(opts.upstreams?.openai ?? "https://api.openai.com")}/v1/chat/completions`);
+  const namePad = Math.max(...[...registry.keys()].map((n) => n.length));
+  for (const def of registry.values()) {
+    const alias = def.builtin
+      ? `${DIALECT_CAPTURE_PATH[def.dialect]} and /${def.name}/...`
+      : `/${def.name}/...`;
+    log(`  ${def.name.padEnd(namePad)} → ${def.upstream}  (${alias})`);
+  }
 
   return {
     url,
@@ -221,7 +271,11 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
 
 interface PersistArgs {
   store: Store;
-  provider: ProviderName;
+  /** Provider NAME (registry key, e.g. "nvidia") — the persisted
+   *  identity. The capture dialect travels separately via `capture`. */
+  provider: string;
+  /** Upstream host:port — recorded on the Run for provenance. */
+  upstreamHost: string;
   capture: ProviderCapture;
   reqBody: string;
   rawResponse: string;
@@ -243,7 +297,12 @@ async function persistCapture(args: PersistArgs): Promise<void> {
   const explicitProject =
     args.headers.get("x-meterbility-project") ?? undefined;
   const explicitAgent = args.headers.get("x-meterbility-agent") ?? undefined;
-  const runResolution = args.grouper.resolve(parsed, explicitRunId, Date.now());
+  const runResolution = args.grouper.resolve(
+    parsed,
+    explicitRunId,
+    Date.now(),
+    args.provider,
+  );
 
   const spec: ProjectAgentSpec = {
     project: explicitProject ?? args.spec.project,
@@ -263,6 +322,8 @@ async function persistCapture(args: PersistArgs): Promise<void> {
       // adapters (codex session ids, cursor composerIds) — a raw
       // caller-chosen id could collide with another vendor's session.
       source_session_id: explicitRunId ? `proxy:${explicitRunId}` : undefined,
+      provider: args.provider,
+      upstream_host: args.upstreamHost,
     });
     args.seenRuns.add(runResolution.run_id);
   }
@@ -292,6 +353,7 @@ async function persistCapture(args: PersistArgs): Promise<void> {
     const step = await appendStep(args.store, {
       run_id: runResolution.run_id,
       sequence: runResolution.step_sequence,
+      provider: args.provider,
       model: parsed.model,
       systemPrompt: parsed.systemPrompt,
       toolDefinitions: parsed.toolDefinitions,
@@ -332,6 +394,7 @@ async function persistCapture(args: PersistArgs): Promise<void> {
   const step = await appendStep(args.store, {
     run_id: runResolution.run_id,
     sequence: runResolution.step_sequence,
+    provider: args.provider,
     model: exchange.model || parsed.model,
     systemPrompt: parsed.systemPrompt,
     toolDefinitions: parsed.toolDefinitions,
@@ -355,6 +418,16 @@ async function persistCapture(args: PersistArgs): Promise<void> {
       step_id: step.step_id,
       sequence: step.sequence,
     });
+  }
+
+  // A successful exchange with zero tokens in AND out almost always
+  // means the upstream's usage accounting didn't parse (e.g. an
+  // "OpenAI-compatible" host with a different usage shape). Silent
+  // under-reporting is the cardinal sin in an audit product — warn.
+  if (exchange.tokens.input === 0 && exchange.tokens.output === 0) {
+    args.log(
+      `${args.provider} ${exchange.model} → WARNING: captured ok-step with zero token usage — upstream usage fields may not match the ${args.provider} dialect`,
+    );
   }
 
   const actionLabel =
