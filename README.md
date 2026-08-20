@@ -10,9 +10,15 @@ Meterbility turns AI agent runs into a queryable, replayable, forkable corpus an
 
 ## Status
 
-**v0.6.0 — multi-upstream proxy capture.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
+**v0.6.1 — stream capture fidelity.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
-Latest milestones (v0.6.0):
+Latest milestones (v0.6.1):
+
+- **Reasoning text parity** — streamed `reasoning_content` deltas (NVIDIA NIM-style reasoning models) now fold into the captured decision blob, matching what non-streamed responses already carried. The model's thinking is no longer lost the moment it streams.
+- **Time-to-first-token** — the proxy tee stamps per-chunk arrival marks; every streamed step records `ttft_ms` (first delta of any kind — when thinking began) and `ttft_visible_ms` (first token a user sees). The gap is the invisible **reasoning burn**, now visible in the proxy log line, the step card's Cost tab, and the store.
+- **Cache-report honesty** — a host that omits `prompt_tokens_details` entirely tags the step `usage:cache-unreported`, so "0 cached tokens" is never conflated with "didn't say" (same absent-≠-zero principle as unpriced costs).
+
+Earlier milestones (v0.6.0):
 
 - **Any OpenAI/Anthropic-dialect upstream** — `meter proxy` is no longer hardcoded to api.anthropic.com + api.openai.com. Register any compatible host (NVIDIA, Groq, Together, Ollama, vLLM, self-hosted gateways) as a named provider with the repeatable `--upstream` flag; each answers at its own `/<name>/` prefix, concurrently on one port, and bare paths behave exactly as before. Verified live against NVIDIA (`integrate.api.nvidia.com`) — its real stream shape is pinned in the test suite.
 - **First-class provider identity** — captured runs and steps carry a `provider` column (plus `upstream_host` provenance on runs), shown as a badge in the web UI. Same prompt + model through two different upstreams lands in two distinct runs.
