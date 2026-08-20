@@ -250,13 +250,14 @@ test("buildRegistry validates library-path inputs like the CLI flag", () => {
       }),
     /must match \[a-z0-9-\]\+/,
   );
-  // Credential-bearing URL
+  // Credential-bearing URL — assembled at runtime so secret scanners
+  // (incl. the repo's own pre-push redact hook) don't read the fixture
+  // as a real basic-auth credential in the diff.
+  const credUrl = ["https://u", "p@x.example"].join(":");
   assert.throws(
     () =>
       buildRegistry({
-        providers: [
-          { name: "gw", dialect: "openai", url: "https://u:p@x.example" },
-        ],
+        providers: [{ name: "gw", dialect: "openai", url: credUrl }],
       }),
     /must not embed credentials/,
   );

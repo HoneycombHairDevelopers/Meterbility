@@ -472,6 +472,16 @@ async function persistCapture(args: PersistArgs): Promise<void> {
   );
 }
 
+/**
+ * Loop-guard marker. Stamped on every request this proxy forwards
+ * (AFTER forwardHeaders runs, so the x-meterbility-* strip can't eat
+ * it); a request that arrives already carrying it has passed through a
+ * Meterbility proxy — e.g. `--upstream self=<this proxy>` or a chained
+ * `meter proxy` — and is rejected with 508 before it can double-count
+ * steps or recurse until sockets exhaust.
+ */
+const HOP_HEADER = "x-meterbility-hop";
+
 // Strip headers that don't make sense to forward verbatim (Hono /
 // node:http already handles transfer-encoding etc., but a few extras
 // can confuse clients if echoed unchanged).
