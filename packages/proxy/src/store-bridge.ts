@@ -89,6 +89,10 @@ export interface AppendStepArgs {
   parent_step_id?: string;
   /** Upstream provider identity (registry name, e.g. "nvidia"). */
   provider?: string;
+  /** Extra tags appended to the step's tag list (e.g. "usage:missing"
+   *  when an ok exchange parsed with zero token usage — a persistent
+   *  marker that survives --quiet, unlike the log warning). */
+  extraTags?: string[];
   model: string;
   systemPrompt?: string;
   toolDefinitions?: unknown;
@@ -150,7 +154,7 @@ export async function appendStep(
     cache_creation_1h: args.tokens.cache_creation_1h,
   });
 
-  const tags = ["source:proxy"];
+  const tags = ["source:proxy", ...(args.extraTags ?? [])];
   // Unpriced beats approx: the model is deliberately not priced (cost
   // stored as 0) and the display layer renders "unpriced", never $0.00.
   if (unpriced) {

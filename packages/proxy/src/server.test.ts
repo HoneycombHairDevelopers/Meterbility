@@ -982,3 +982,125 @@ test("startProxy rejects duplicate provider names at startup", async () => {
     /duplicate/,
   );
 });
+
+test("unpriced model: step + run tagged cost:unpriced exactly once, never cost:approx", async () => {
+  freshHome();
+  const upstream = await startFakeUpstream((_req, res, body) => {
+    JSON.parse(body);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: "cmpl_unpriced",
+        model: "meta/llama-3.1-8b-instruct",
+        choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      }),
+    );
+  });
+
+  const proxy = await startProxy({
+    port: 0,
+    providers: [{ name: "nvidia", dialect: "openai", url: upstream.url }],
+    spec: { project: "/tmp/proxy-unpriced", agent: "smoke" },
+    logger: () => {},
+  });
+
+  try {
+    const send = (msgs: Array<{ role: string; content: string }>) =>
+      fetch(proxy.url + "/nvidia/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer fake" },
+        body: JSON.stringify({ model: "meta/llama-3.1-8b-instruct", messages: msgs }),
+      });
+    // Two steps in one conversation → the run-level tag must land exactly once.
+    assert.equal((await send([{ role: "user", content: "hi" }])).status, 200);
+    await settled();
+    assert.equal(
+      (
+        await send([
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "ok" },
+          { role: "user", content: "more" },
+        ])
+      ).status,
+      200,
+    );
+    await settled();
+
+    const store = Store.open();
+    try {
+      const runs = listRuns(store);
+      assert.equal(runs.length, 1);
+      assert.equal(
+        runs[0]!.tags.filter((t) => t === "cost:unpriced").length,
+        1,
+        "run carries cost:unpriced exactly once across two unpriced steps",
+      );
+      const steps = listSteps(store, runs[0]!.run_id);
+      assert.equal(steps.length, 2);
+      for (const s of steps) {
+        assert.ok(s.tags.includes("cost:unpriced"), "step tagged cost:unpriced");
+        assert.ok(!s.tags.includes("cost:approx"), "unpriced suppresses cost:approx");
+        assert.equal(s.cost_cents, 0, "unpriced cost stored as 0 by construction");
+      }
+    } finally {
+      store.close();
+    }
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("zero-usage ok exchange: step gets persistent usage:missing tag (survives --quiet)", async () => {
+  freshHome();
+  const upstream = await startFakeUpstream((_req, res, body) => {
+    JSON.parse(body);
+    // A completion whose usage shape doesn't parse → zero in/out tokens.
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: "cmpl_nousage",
+        model: "gpt-4o",
+        choices: [{ message: { role: "assistant", content: "silent" }, finish_reason: "stop" }],
+        usage: { totally_different_shape: 7 },
+      }),
+    );
+  });
+
+  const proxy = await startProxy({
+    port: 0,
+    upstreams: { openai: upstream.url },
+    spec: { project: "/tmp/proxy-nousage", agent: "smoke" },
+    logger: () => {}, // --quiet: the log warning is gone; the tag must not be
+  });
+
+  try {
+    const resp = await fetch(proxy.url + "/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer fake" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+    });
+    assert.equal(resp.status, 200);
+    await settled();
+
+    const store = Store.open();
+    try {
+      const runs = listRuns(store);
+      assert.equal(runs.length, 1);
+      const steps = listSteps(store, runs[0]!.run_id);
+      assert.equal(steps.length, 1);
+      assert.equal(steps[0]!.tokens.input, 0);
+      assert.equal(steps[0]!.tokens.output, 0);
+      assert.ok(
+        steps[0]!.tags.includes("usage:missing"),
+        "zero-usage ok-step carries the persistent usage:missing marker",
+      );
+    } finally {
+      store.close();
+    }
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});

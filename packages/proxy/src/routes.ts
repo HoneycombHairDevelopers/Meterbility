@@ -40,9 +40,11 @@ export interface ProviderRoute {
   path: string;
   /** Default upstream origin (no trailing slash). */
   defaultUpstream: string;
-  /** Header(s) treated as auth. NOT a forwarding whitelist — all
-   *  non-hop-by-hop headers forward; these are the never-persist
-   *  redaction list. */
+  /** Header(s) treated as auth for this dialect. Documentation only
+   *  today: no proxy code consults this list — capture never persists
+   *  request headers at all (persistCapture reads only x-meterbility-*
+   *  values), which is what actually keeps credentials out of the
+   *  store. Kept on the public ProviderRoute export for reference. */
   authHeaders: string[];
 }
 
@@ -74,10 +76,15 @@ export interface ProviderDef {
   name: string;
   dialect: Dialect;
   /** Upstream base URL, trailing slashes stripped. May carry a path.
-   *  Never persisted (proxy log lines only) — so a provider NAME reused
-   *  against a different URL across sessions is historically
-   *  indistinguishable. Documented limitation, not an accident. */
+   *  The full URL is never persisted (proxy log lines only); the HOST
+   *  is — see `host` below — which is what disambiguates a provider
+   *  name reused against different upstreams across sessions. */
   upstream: string;
+  /** `host[:port]` of the upstream, precomputed at registry build so
+   *  the per-request capture path never re-parses the URL. This is the
+   *  value persisted as `Run.upstream_host` (host only — never path,
+   *  query, or credentials). */
+  host: string;
   /** True for the pre-registered openai/anthropic defaults. */
   builtin: boolean;
 }
@@ -96,28 +103,19 @@ const NAME_RE = /^[a-z0-9-]+$/;
  *  bare API paths). Built-in names are rejected separately as
  *  duplicates of the pre-registered defaults. */
 const ILLEGAL_SEGMENTS = new Set(["v1"]);
-const DIALECTS = new Set<string>(["anthropic", "openai"]);
+// Derived from the capture-path record so the Dialect union, the capture
+// paths, and this validator can never drift apart.
+const DIALECTS = new Set<string>(Object.keys(DIALECT_CAPTURE_PATH));
 
 /**
- * Parse one `--upstream` flag value: `<name>[:<dialect>]=<url>`.
- *
- * Split on the FIRST `=` — URLs contain colons, so the left side is
- * `name[:dialect]` and everything right of the first `=` is the URL.
- * Throws with a user-facing message on any malformed input; callers
- * (CLI and `startProxy`) surface it as a hard startup error.
+ * Validate a provider input (name grammar, reserved segments, dialect,
+ * URL shape). Shared by `parseUpstreamFlag` (CLI) and `buildRegistry`
+ * (library callers of `startProxy({providers})`) so the programmatic
+ * API enforces the same contract as the flag — a name like "v1" or a
+ * credential-bearing URL is rejected on every path in.
  */
-export function parseUpstreamFlag(value: string): ProviderInput {
-  const eq = value.indexOf("=");
-  if (eq <= 0 || eq === value.length - 1) {
-    throw new Error(
-      `invalid --upstream ${JSON.stringify(value)}: expected <name>[:<dialect>]=<url>`,
-    );
-  }
-  const left = value.slice(0, eq);
-  const url = value.slice(eq + 1);
-  const colon = left.indexOf(":");
-  const name = colon === -1 ? left : left.slice(0, colon);
-  const dialect = colon === -1 ? "openai" : left.slice(colon + 1);
+export function validateProviderInput(input: ProviderInput): void {
+  const { name, dialect, url } = input;
   if (!NAME_RE.test(name)) {
     throw new Error(
       `invalid --upstream name ${JSON.stringify(name)}: must match [a-z0-9-]+`,
@@ -149,7 +147,39 @@ export function parseUpstreamFlag(value: string): ProviderInput {
       `invalid --upstream url ${JSON.stringify(url)}: must not carry a query string or fragment`,
     );
   }
-  return { name, dialect: dialect as Dialect, url };
+  // Userinfo credentials would be printed verbatim in startup banners
+  // and error log lines, and fetch() rejects credential-bearing URLs at
+  // request time anyway — fail at parse time with a usable message.
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error(
+      `invalid --upstream url ${JSON.stringify(url)}: must not embed credentials — pass keys via client headers`,
+    );
+  }
+}
+
+/**
+ * Parse one `--upstream` flag value: `<name>[:<dialect>]=<url>`.
+ *
+ * Split on the FIRST `=` — URLs contain colons, so the left side is
+ * `name[:dialect]` and everything right of the first `=` is the URL.
+ * Throws with a user-facing message on any malformed input; callers
+ * (CLI and `startProxy`) surface it as a hard startup error.
+ */
+export function parseUpstreamFlag(value: string): ProviderInput {
+  const eq = value.indexOf("=");
+  if (eq <= 0 || eq === value.length - 1) {
+    throw new Error(
+      `invalid --upstream ${JSON.stringify(value)}: expected <name>[:<dialect>]=<url>`,
+    );
+  }
+  const left = value.slice(0, eq);
+  const url = value.slice(eq + 1);
+  const colon = left.indexOf(":");
+  const name = colon === -1 ? left : left.slice(0, colon);
+  const dialect = colon === -1 ? "openai" : left.slice(colon + 1);
+  const input = { name, dialect: dialect as Dialect, url };
+  validateProviderInput(input);
+  return input;
 }
 
 /**
@@ -164,16 +194,22 @@ export function buildRegistry(opts: {
 }): ProviderRegistry {
   const registry: ProviderRegistry = new Map();
   for (const route of PROVIDER_ROUTES) {
+    const upstream = stripTrailingSlash(
+      opts.upstreams?.[route.provider] ?? route.defaultUpstream,
+    );
     registry.set(route.provider, {
       name: route.provider,
       dialect: route.provider,
-      upstream: stripTrailingSlash(
-        opts.upstreams?.[route.provider] ?? route.defaultUpstream,
-      ),
+      upstream,
+      host: new URL(upstream).host,
       builtin: true,
     });
   }
   for (const input of opts.providers ?? []) {
+    // Same contract as the CLI flag — library callers of
+    // startProxy({providers}) don't get to register "v1", uppercase
+    // names, or credential-bearing URLs either.
+    validateProviderInput(input);
     const existing = registry.get(input.name);
     if (existing) {
       throw new Error(
@@ -182,10 +218,12 @@ export function buildRegistry(opts: {
           : `duplicate --upstream name ${JSON.stringify(input.name)}`,
       );
     }
+    const upstream = stripTrailingSlash(input.url);
     registry.set(input.name, {
       name: input.name,
       dialect: input.dialect,
-      upstream: stripTrailingSlash(input.url),
+      upstream,
+      host: new URL(upstream).host,
       builtin: false,
     });
   }
@@ -208,10 +246,20 @@ export interface RouteMatch {
  * paths hit the built-ins (backward compatible); `/<name>/<rest>` hits
  * the provider registered under `<name>` with the prefix stripped.
  */
+/** Dot-segments (raw) or percent-encoded dot/slash/backslash in a
+ *  request path. Legit LLM API paths never contain these; they only
+ *  appear when someone is trying to escape a path-carrying upstream
+ *  base (e.g. groq's `/openai`) via `/..%2f` tricks that survive WHATWG
+ *  normalization at the framework layer. */
+const SUSPICIOUS_PATH = /(^|\/)\.\.?(\/|$)|%2e|%2f|%5c/i;
+
 export function matchRoute(
   path: string,
   registry: ProviderRegistry,
 ): RouteMatch | undefined {
+  // Reject traversal-shaped paths outright — a non-match 404s upstream
+  // of any forwarding, so nothing escapes a provider's base path.
+  if (SUSPICIOUS_PATH.test(path)) return undefined;
   // Bare paths — today's contract, unchanged.
   for (const def of registry.values()) {
     if (!def.builtin) continue;

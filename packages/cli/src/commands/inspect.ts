@@ -108,7 +108,7 @@ function printRunHeader(run: ReturnType<typeof getRun>): void {
       `  ${pc.dim("branch")} ${run.git_branch ?? "—"}\n` +
       `  ${pc.dim("cwd")}    ${run.cwd ?? "—"}\n` +
       `  ${pc.dim("steps")}  ${run.step_count}\n` +
-      `  ${pc.dim("cost")}   ${fmtCents(run.cost_cents)}  ${pc.dim(`(input ${fmtTokens(run.tokens_total_input)} · output ${fmtTokens(run.tokens_total_output)} · cached ${fmtTokens(run.tokens_total_cached)})`)}\n` +
+      `  ${pc.dim("cost")}   ${run.tags.includes("cost:unpriced") ? "unpriced" : fmtCents(run.cost_cents)}  ${pc.dim(`(input ${fmtTokens(run.tokens_total_input)} · output ${fmtTokens(run.tokens_total_output)} · cached ${fmtTokens(run.tokens_total_cached)})`)}\n` +
       `  ${pc.dim("started")} ${run.started_at}`,
   );
 }

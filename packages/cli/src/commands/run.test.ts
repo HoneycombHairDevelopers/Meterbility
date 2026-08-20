@@ -189,3 +189,43 @@ test("malformed --upstream is a hard parse error before anything starts", () => 
     fx.cleanup();
   }
 });
+
+test("two anthropic-dialect upstreams fail fast naming ANTHROPIC_BASE_URL", () => {
+  const fx = setupEmpty();
+  try {
+    const r = runCli(
+      [
+        "run",
+        "--upstream",
+        "claude-gw:anthropic=https://gw1.example",
+        "--upstream",
+        "claude-alt:anthropic=https://gw2.example",
+        "--",
+        "node",
+        "-e",
+        "process.exit(0)",
+      ],
+      fx,
+      { timeoutMs: 15_000 },
+    );
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /ANTHROPIC_BASE_URL can only point at one/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("credential-bearing --upstream url is rejected at parse time", () => {
+  const fx = setupEmpty();
+  try {
+    const r = runCli(
+      ["run", "--upstream", "gw=https://user:secret@host.example", "--", "node", "-e", "0"],
+      fx,
+      { timeoutMs: 15_000 },
+    );
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /must not embed credentials/);
+  } finally {
+    fx.cleanup();
+  }
+});

@@ -123,6 +123,16 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
 
   // Catch-all: route by bare capture path or provider prefix.
   app.all("/*", async (c) => {
+    // Loop guard: a request that already passed through a Meterbility
+    // proxy (this one via `--upstream self=...`, or a chained meter
+    // proxy) must not re-enter — the cycle would double-count captured
+    // steps and recurse until sockets exhaust.
+    if (c.req.raw.headers.get(HOP_HEADER)) {
+      return c.json(
+        { error: "Meterbility proxy loop detected (request already carries " + HOP_HEADER + ")" },
+        508,
+      );
+    }
     const route = matchRoute(c.req.path, registry);
     if (!route) {
       const bare = [...registry.values()]
@@ -138,12 +148,17 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
         404,
       );
     }
+    // slice(indexOf) not split("?")[1] — a raw "?" is legal INSIDE a
+    // query component, and split would silently truncate everything
+    // after the second one.
+    const qIdx = c.req.url.indexOf("?");
     const targetUrl =
       joinUpstream(route.def.upstream, route.forwardPath) +
-      (c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : "");
+      (qIdx === -1 ? "" : c.req.url.slice(qIdx));
     const method = c.req.method;
     const reqBody = method === "GET" || method === "HEAD" ? undefined : await c.req.text();
     const headers = forwardHeaders(c.req.raw.headers);
+    headers.set(HOP_HEADER, "1");
 
     const t0 = Date.now();
     let upstreamResp: Response;
@@ -152,11 +167,19 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
         method,
         headers,
         body: reqBody,
+        // Never follow upstream redirects: undici forwards non-standard
+        // auth headers (x-api-key etc.) cross-origin, and a redirected
+        // response would be captured under the named provider's label.
+        // Relay the 3xx verbatim — the client's SDK decides.
+        redirect: "manual",
         // @ts-expect-error duplex is required for streaming bodies in Node fetch
         duplex: "half",
       });
     } catch (err) {
-      log(`proxy error → ${targetUrl}: ${(err as Error).message}`);
+      // Log origin+path only: some gateways pass credentials as query
+      // params, and an error line must never persist them.
+      const logUrl = qIdx === -1 ? targetUrl : targetUrl.slice(0, targetUrl.indexOf("?"));
+      log(`proxy error → ${logUrl}: ${(err as Error).message}`);
       return c.json({ error: `proxy upstream error: ${(err as Error).message}` }, 502);
     }
     const t1 = Date.now();
@@ -179,11 +202,14 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     if (isStream && upstreamResp.body) {
       const { clientStream, capturePromise } = teeAndCollect(upstreamResp.body);
       // Fire-and-forget capture so streaming back to the client isn't blocked.
+      // The rejection handler on capturePromise ITSELF matters: a mid-stream
+      // upstream reset rejects it, and an unhandled rejection kills the whole
+      // proxy process (no global handler exists — by design).
       void capturePromise.then(async (collected) => {
         await persistCapture({
           store: ensureStore(),
           provider: route.def.name,
-          upstreamHost: new URL(route.def.upstream).host,
+          upstreamHost: route.def.host,
           capture,
           reqBody: reqBody ?? "",
           rawResponse: collected,
@@ -198,7 +224,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
           spec,
           log,
         }).catch((err) => log(`capture error: ${(err as Error).message}`));
-      });
+      }, (err: unknown) => log(`stream capture aborted: ${(err as Error).message}`));
       return new Response(clientStream, {
         status: upstreamResp.status,
         headers: stripHopByHopHeaders(upstreamResp.headers),
@@ -210,7 +236,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     void persistCapture({
       store: ensureStore(),
       provider: route.def.name,
-      upstreamHost: new URL(route.def.upstream).host,
+      upstreamHost: route.def.host,
       capture,
       reqBody: reqBody ?? "",
       rawResponse: respBody,
@@ -391,10 +417,15 @@ async function persistCapture(args: PersistArgs): Promise<void> {
     return;
   }
 
+  const usageMissing =
+    exchange.tokens.input === 0 && exchange.tokens.output === 0;
   const step = await appendStep(args.store, {
     run_id: runResolution.run_id,
     sequence: runResolution.step_sequence,
     provider: args.provider,
+    // Persistent marker for the zero-usage warning below — the log
+    // line vanishes under --quiet, the tag doesn't.
+    extraTags: usageMissing ? ["usage:missing"] : undefined,
     model: exchange.model || parsed.model,
     systemPrompt: parsed.systemPrompt,
     toolDefinitions: parsed.toolDefinitions,
@@ -424,7 +455,7 @@ async function persistCapture(args: PersistArgs): Promise<void> {
   // means the upstream's usage accounting didn't parse (e.g. an
   // "OpenAI-compatible" host with a different usage shape). Silent
   // under-reporting is the cardinal sin in an audit product — warn.
-  if (exchange.tokens.input === 0 && exchange.tokens.output === 0) {
+  if (usageMissing) {
     args.log(
       `${args.provider} ${exchange.model} → WARNING: captured ok-step with zero token usage — upstream usage fields may not match the ${args.provider} dialect`,
     );

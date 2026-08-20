@@ -232,3 +232,40 @@ test("joinUpstream via registry: trailing slashes never double", () => {
     "https://gw.example/v1/chat/completions",
   );
 });
+
+test("buildRegistry validates library-path inputs like the CLI flag", () => {
+  // Reserved segment
+  assert.throws(
+    () =>
+      buildRegistry({
+        providers: [{ name: "v1", dialect: "openai", url: "https://x.example" }],
+      }),
+    /reserved path segment/,
+  );
+  // Name grammar
+  assert.throws(
+    () =>
+      buildRegistry({
+        providers: [{ name: "Bad Name", dialect: "openai", url: "https://x.example" }],
+      }),
+    /must match \[a-z0-9-\]\+/,
+  );
+  // Credential-bearing URL
+  assert.throws(
+    () =>
+      buildRegistry({
+        providers: [
+          { name: "gw", dialect: "openai", url: "https://u:p@x.example" },
+        ],
+      }),
+    /must not embed credentials/,
+  );
+});
+
+test("buildRegistry precomputes upstream host (host only — no path, port kept)", () => {
+  const reg = buildRegistry({
+    providers: [{ name: "groq", dialect: "openai", url: "https://api.groq.com:8443/openai" }],
+  });
+  assert.equal(reg.get("groq")!.host, "api.groq.com:8443");
+  assert.equal(reg.get("openai")!.host, "api.openai.com");
+});

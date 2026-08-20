@@ -173,8 +173,8 @@ export async function pgInsertRun(store: PostgresStore, run: Run): Promise<void>
        cost_cents = EXCLUDED.cost_cents,
        step_count = EXCLUDED.step_count,
        tags = EXCLUDED.tags,
-       provider = EXCLUDED.provider,
-       upstream_host = EXCLUDED.upstream_host`,
+       provider = COALESCE(EXCLUDED.provider, runs.provider),
+       upstream_host = COALESCE(EXCLUDED.upstream_host, runs.upstream_host)`,
     [
       run.run_id,
       run.agent_id,
@@ -223,7 +223,7 @@ export async function pgInsertStep(store: PostgresStore, step: Step): Promise<vo
        cost_cents = EXCLUDED.cost_cents,
        status = EXCLUDED.status,
        tags = EXCLUDED.tags,
-       provider = EXCLUDED.provider`,
+       provider = COALESCE(EXCLUDED.provider, steps.provider)`,
     [
       step.step_id,
       step.run_id,

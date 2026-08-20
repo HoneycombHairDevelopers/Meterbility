@@ -13,12 +13,15 @@ import type { Client } from "pg";
  * multiple operators share a project's run history.
  */
 /**
- * Version history (mirrors `@meterbility/collector` SCHEMA_VERSION):
+ * Version history (tracks `@meterbility/collector` milestones; the two
+ * counters are independent — pg v5 corresponds to sqlite v6):
  *   v3 → v4 — file_change + baseline_tree tables, runs.baseline_tree_id,
  *             runs.probe_state. Per v0.3 §3.3, full enum coverage in
  *             CHECK constraints up front so v0.4 / v0.5 don't need
  *             migrations as new derived_from / op values come online.
  *             Additive-only per v0.2 §17.
+ *   v4 → v5 — runs.provider + steps.provider + runs.upstream_host
+ *             (proxy multi-upstream; sqlite v6 equivalent)
  */
 export const POSTGRES_SCHEMA_VERSION = 5;
 
@@ -249,8 +252,9 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS probe_state TEXT",
   );
 
-  // v6 — proxy multi-upstream: first-class provider identity (nullable;
-  // legacy rows and transcript-adapter runs stay NULL).
+  // pg v5 (sqlite v6 equivalent) — proxy multi-upstream: first-class
+  // provider identity (nullable; legacy rows and transcript-adapter
+  // runs stay NULL).
   await client.query(
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS provider TEXT",
   );

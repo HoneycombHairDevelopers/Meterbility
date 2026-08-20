@@ -345,7 +345,7 @@ async function persistModelStep(
   recordContextSnapshot(store, snapshot.id, blobRef, snapshot.components.length);
 
   const decisionRef = await store.blobs.putJson(result.decision_content);
-  const { cost_cents, approx } = costCents(result.model, {
+  const { cost_cents, approx, unpriced } = costCents(result.model, {
     input: result.tokens.input,
     output: result.tokens.output,
     cached_read: result.tokens.cached_read,
@@ -353,7 +353,10 @@ async function persistModelStep(
     cache_creation_1h: result.tokens.cache_creation_1h,
   });
   const tags = ["continuation"];
-  if (approx) tags.push("cost:approx");
+  // Unpriced beats approx — cost is 0 by construction and must render
+  // as "unpriced", never $0.00 (same rule as the proxy store-bridge).
+  if (unpriced) tags.push("cost:unpriced");
+  else if (approx) tags.push("cost:approx");
 
   const step: Step = {
     step_id: `stp_${randomUUID()}`,

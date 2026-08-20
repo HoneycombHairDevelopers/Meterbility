@@ -19,8 +19,10 @@ import type Database from "better-sqlite3";
  *   v2 → v3 — settings table for the web UI Settings page
  *   v3 → v4 — file_change, baseline_tree, runs.baseline_tree_id,
  *             runs.probe_state (Track A file capture + Track B Live Probe)
- *   v5 → v6 — runs.provider + steps.provider (proxy multi-upstream:
- *             first-class upstream provider identity)
+ *   v4 → v5 — annotations.kind column
+ *   v5 → v6 — runs.provider + steps.provider + runs.upstream_host
+ *             (proxy multi-upstream: first-class upstream provider
+ *             identity + host provenance)
  */
 export const SCHEMA_VERSION = 6;
 

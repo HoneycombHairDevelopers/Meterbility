@@ -290,7 +290,7 @@ export async function appendLiveStep(
     snapshotRef,
     args.snapshot.components.length,
   );
-  const { cost_cents, approx } = costCents(args.model, {
+  const { cost_cents, approx, unpriced } = costCents(args.model, {
     input: args.tokens.input,
     output: args.tokens.output,
     cached_read: args.tokens.cached_read,
@@ -298,7 +298,10 @@ export async function appendLiveStep(
     cache_creation_1h: args.tokens.cache_creation_1h,
   });
   const tags: string[] = ["live-suffix"];
-  if (approx) tags.push("cost:approx");
+  // Unpriced beats approx — cost is 0 by construction and must render
+  // as "unpriced", never $0.00 (same rule as the proxy store-bridge).
+  if (unpriced) tags.push("cost:unpriced");
+  else if (approx) tags.push("cost:approx");
   const step: Step = {
     step_id: `stp_${randomUUID()}`,
     run_id: runId,

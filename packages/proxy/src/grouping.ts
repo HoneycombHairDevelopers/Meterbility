@@ -13,7 +13,10 @@ import type { ParsedRequest } from "./types.ts";
  *   1. **Explicit grouping wins.** If the client sent
  *      `x-meterbility-run-id: <id>` (SDKs and manual callers set it;
  *      `meter run` does not inject it today), use it. This is the
- *      cleanest signal and skips the rest of the heuristic.
+ *      cleanest signal and skips the rest of the heuristic. Explicit
+ *      ids are provider-scoped: the same id sent through two different
+ *      upstreams yields two Runs, keeping the one-provider-per-run
+ *      invariant honest.
  *
  *   2. **Conversation seed.** Hash the provider name + the first user
  *      message + the system prompt + the model name. Provider is in the
@@ -39,6 +42,10 @@ const MAX_ENTRIES = 1024;
 
 interface GroupEntry {
   run_id: string;
+  /** Provider that created this entry ("" when unknown). Explicit
+   *  run-id entries are provider-scoped so one Run never mixes
+   *  upstreams — the invariant Run.provider documents. */
+  provider: string;
   step_count: number;
   last_messages_count: number;
   last_seen_ms: number;
@@ -64,8 +71,20 @@ export class RunGrouper {
     nowMs: number,
     provider?: string,
   ): { run_id: string; is_new: boolean; step_sequence: number; entry: GroupEntry } {
+    const providerKey = provider ?? "";
     if (explicitRunId) {
-      const existing = this.entries.get(explicitRunId);
+      // Explicit ids are provider-scoped: the first provider to use an
+      // id keeps the raw id as run_id (back compat); a DIFFERENT
+      // provider reusing the same id gets its own Run under a scoped
+      // key. Without this, one Run would mix upstreams while its
+      // provider/upstream_host label claimed otherwise — the exact
+      // "one provider per run" invariant Run.provider promises.
+      let key = explicitRunId;
+      let existing = this.entries.get(key);
+      if (existing && existing.provider !== providerKey) {
+        key = `${providerKey}\n${explicitRunId}`;
+        existing = this.entries.get(key);
+      }
       if (existing) {
         existing.step_count += 1;
         existing.last_messages_count = parsed.history.length;
@@ -77,8 +96,10 @@ export class RunGrouper {
           entry: existing,
         };
       }
-      const fresh = this._fresh(explicitRunId, parsed.history.length, nowMs);
-      this.entries.set(explicitRunId, fresh);
+      const run_id = key === explicitRunId ? explicitRunId : `run_${randomUUID()}`;
+      const fresh = this._fresh(run_id, parsed.history.length, nowMs, providerKey);
+      this.entries.set(key, fresh);
+      this._evictIfNeeded();
       return { run_id: fresh.run_id, is_new: true, step_sequence: 0, entry: fresh };
     }
 
@@ -100,7 +121,7 @@ export class RunGrouper {
       };
     }
     const run_id = `run_${randomUUID()}`;
-    const fresh = this._fresh(run_id, parsed.history.length, nowMs);
+    const fresh = this._fresh(run_id, parsed.history.length, nowMs, providerKey);
     this.entries.set(seed, fresh);
     this._evictIfNeeded();
     return { run_id, is_new: true, step_sequence: 0, entry: fresh };
@@ -111,9 +132,15 @@ export class RunGrouper {
     return this.entries.size;
   }
 
-  private _fresh(run_id: string, messagesCount: number, nowMs: number): GroupEntry {
+  private _fresh(
+    run_id: string,
+    messagesCount: number,
+    nowMs: number,
+    provider: string,
+  ): GroupEntry {
     return {
       run_id,
+      provider,
       step_count: 1,
       last_messages_count: messagesCount,
       last_seen_ms: nowMs,

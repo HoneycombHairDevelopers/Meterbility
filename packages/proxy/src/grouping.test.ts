@@ -78,3 +78,23 @@ test("RunGrouper: same provider still groups a continuing conversation", () => {
   );
   assert.equal(a.run_id, b.run_id);
 });
+
+test("RunGrouper: explicit run-id is provider-scoped — two providers never share a Run", () => {
+  const g = new RunGrouper();
+  // First provider to use the id keeps the raw id as run_id (back compat).
+  const a = g.resolve(req([{ role: "user", content: "hi" }]), "run_shared", 1_000, "openai");
+  assert.equal(a.run_id, "run_shared");
+  assert.equal(a.is_new, true);
+  // A DIFFERENT provider reusing the same explicit id gets its own Run —
+  // one Run never mixes upstreams (the Run.provider invariant).
+  const b = g.resolve(req([{ role: "user", content: "hi" }]), "run_shared", 2_000, "nvidia");
+  assert.notEqual(b.run_id, "run_shared");
+  assert.equal(b.is_new, true);
+  // Each provider continues its own Run on subsequent requests.
+  const a2 = g.resolve(req([{ role: "user", content: "hi" }]), "run_shared", 3_000, "openai");
+  assert.equal(a2.run_id, a.run_id);
+  assert.equal(a2.is_new, false);
+  const b2 = g.resolve(req([{ role: "user", content: "hi" }]), "run_shared", 4_000, "nvidia");
+  assert.equal(b2.run_id, b.run_id);
+  assert.equal(b2.is_new, false);
+});

@@ -83,6 +83,7 @@ test("fresh apply lands schema v6 with all new tables + columns", () => {
 
   // v6: provider columns (proxy multi-upstream).
   assert.equal(hasColumn(db, "runs", "provider"), true);
+  assert.equal(hasColumn(db, "runs", "upstream_host"), true);
   assert.equal(hasColumn(db, "steps", "provider"), true);
 
   // Indexes are sanity-checked via the master table — the names must
@@ -128,7 +129,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
   db.close();
 });
 
-test("v3 → v5 migration: hand-built v3 db gets ALTER'd to v5 without data loss", () => {
+test("v3 → v6 migration: hand-built v3 db gets ALTER'd to the current version without data loss", () => {
   const db = freshDb();
   // Hand-shape a v3 database: enable WAL + FKs (production parity),
   // create the v3 subset of tables (projects, agents, runs without the
@@ -199,14 +200,28 @@ test("v3 → v5 migration: hand-built v3 db gets ALTER'd to v5 without data loss
   assert.equal(hasColumn(db, "runs", "baseline_tree_id"), true);
   assert.equal(hasColumn(db, "runs", "probe_state"), true);
   assert.equal(hasColumn(db, "annotations", "kind"), true);
+  // v6 columns land on the hand-built legacy DB too.
+  assert.equal(hasColumn(db, "runs", "provider"), true);
+  assert.equal(hasColumn(db, "runs", "upstream_host"), true);
+  assert.equal(hasColumn(db, "steps", "provider"), true);
   const legacy = db
-    .prepare("SELECT run_id, baseline_tree_id, probe_state FROM runs WHERE run_id=?")
+    .prepare(
+      "SELECT run_id, baseline_tree_id, probe_state, provider, upstream_host FROM runs WHERE run_id=?",
+    )
     .get("run_legacy") as
-    | { run_id: string; baseline_tree_id: string | null; probe_state: string | null }
+    | {
+        run_id: string;
+        baseline_tree_id: string | null;
+        probe_state: string | null;
+        provider: string | null;
+        upstream_host: string | null;
+      }
     | undefined;
   assert.ok(legacy, "legacy run must survive migration");
   assert.equal(legacy!.baseline_tree_id, null, "new column must default to NULL");
   assert.equal(legacy!.probe_state, null);
+  assert.equal(legacy!.provider, null, "legacy rows get NULL provider");
+  assert.equal(legacy!.upstream_host, null);
 
   // schema_version was bumped.
   const ver = db
