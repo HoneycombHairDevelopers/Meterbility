@@ -169,6 +169,19 @@ export interface Step {
   status: StepStatus;
   /** v0.6 — Upstream provider identity (see Run.provider). */
   provider?: string;
+  /**
+   * v0.7 — Streamed captures only: ms from request start to the FIRST
+   * delta of any kind (reasoning included — for reasoning models this
+   * is when thinking began). NULL for non-streamed steps and captures
+   * that predate the column.
+   */
+  ttft_ms?: number;
+  /**
+   * v0.7 — Streamed captures only: ms from request start to the first
+   * delta a user would SEE (text or tool-call fragment). The gap from
+   * ttft_ms is the invisible reasoning burn.
+   */
+  ttft_visible_ms?: number;
 }
 
 export type ContextComponentType =

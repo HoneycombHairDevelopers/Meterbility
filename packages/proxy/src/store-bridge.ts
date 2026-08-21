@@ -101,6 +101,10 @@ export interface AppendStepArgs {
   action: Action;
   tokens: TokenUsage;
   latency_ms: number;
+  /** Streamed captures: ms from request start to first delta of any
+   *  kind / first VISIBLE delta (see Step.ttft_ms / ttft_visible_ms). */
+  ttft_ms?: number;
+  ttft_visible_ms?: number;
   outcome: Outcome;
 }
 
@@ -181,6 +185,8 @@ export async function appendStep(
     tags,
     status: args.outcome.status === "error" ? "error" : "ok",
     provider: args.provider,
+    ttft_ms: args.ttft_ms,
+    ttft_visible_ms: args.ttft_visible_ms,
   };
   insertStep(store, step);
   updateRunTotals(store, args.run_id);

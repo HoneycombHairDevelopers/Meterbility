@@ -23,7 +23,7 @@ import type { Client } from "pg";
  *   v4 → v5 — runs.provider + steps.provider + runs.upstream_host
  *             (proxy multi-upstream; sqlite v6 equivalent)
  */
-export const POSTGRES_SCHEMA_VERSION = 5;
+export const POSTGRES_SCHEMA_VERSION = 6;
 
 export async function ensurePostgresSchema(client: Client): Promise<void> {
   await client.query(`
@@ -101,6 +101,8 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
       status TEXT NOT NULL,
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
       provider TEXT,
+      ttft_ms INTEGER,
+      ttft_visible_ms INTEGER,
       UNIQUE(run_id, sequence)
     );
 
@@ -263,6 +265,14 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
   );
   await client.query(
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS upstream_host TEXT",
+  );
+
+  // v6 — streamed-capture timing (see collector schema v7 note).
+  await client.query(
+    "ALTER TABLE steps ADD COLUMN IF NOT EXISTS ttft_ms INTEGER",
+  );
+  await client.query(
+    "ALTER TABLE steps ADD COLUMN IF NOT EXISTS ttft_visible_ms INTEGER",
   );
 
   const versionRow = await client.query(

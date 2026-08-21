@@ -13,7 +13,7 @@ import {
   type ProviderInput,
   type ProviderName,
 } from "./routes.ts";
-import { teeAndCollect } from "./sse.ts";
+import { teeAndCollect, type ChunkMark } from "./sse.ts";
 import {
   appendStep,
   attachToolResult,
@@ -223,7 +223,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
           upstreamHost: route.def.host,
           capture,
           reqBody: reqBody ?? "",
-          rawResponse: collected,
+          rawResponse: collected.text,
+          chunkMarks: collected.marks,
           isStream: true,
           status: upstreamResp.status,
           latency_ms: Date.now() - t0,
@@ -316,6 +317,8 @@ interface PersistArgs {
   capture: ProviderCapture;
   reqBody: string;
   rawResponse: string;
+  /** Streamed captures only: the tee's per-chunk arrival marks. */
+  chunkMarks?: ChunkMark[];
   isStream: boolean;
   status: number;
   latency_ms: number;
@@ -418,7 +421,7 @@ async function persistCapture(args: PersistArgs): Promise<void> {
 
   const exchange =
     args.isStream
-      ? args.capture.reassembleStream(args.rawResponse)
+      ? args.capture.reassembleStream(args.rawResponse, args.chunkMarks)
       : args.capture.parseResponse(args.rawResponse);
 
   if (!exchange) {
@@ -430,13 +433,33 @@ async function persistCapture(args: PersistArgs): Promise<void> {
 
   const usageMissing =
     exchange.tokens.input === 0 && exchange.tokens.output === 0;
+  const extraTags: string[] = [];
+  // Persistent marker for the zero-usage warning below — the log
+  // line vanishes under --quiet, the tag doesn't.
+  if (usageMissing) extraTags.push("usage:missing");
+  // "cached_read: 0" with cacheReported === false means the host said
+  // NOTHING about caching (e.g. NVIDIA's nemotron streams), which is
+  // different from an explicit cached_tokens: 0. Keep them tellable
+  // apart forever — same honesty rule as unpriced-vs-$0.
+  if (exchange.cacheReported === false) extraTags.push("usage:cache-unreported");
+
+  // Anchor the tee-relative stream timing to request start: the marks
+  // measure from response headers, requestStartLatency_ms covers
+  // request→headers. Missing timing (non-stream, no marks) stays NULL.
+  const ttft_ms =
+    exchange.timing?.first_delta_ms !== undefined
+      ? args.requestStartLatency_ms + exchange.timing.first_delta_ms
+      : undefined;
+  const ttft_visible_ms =
+    exchange.timing?.first_visible_ms !== undefined
+      ? args.requestStartLatency_ms + exchange.timing.first_visible_ms
+      : undefined;
+
   const step = await appendStep(args.store, {
     run_id: runResolution.run_id,
     sequence: runResolution.step_sequence,
     provider: args.provider,
-    // Persistent marker for the zero-usage warning below — the log
-    // line vanishes under --quiet, the tag doesn't.
-    extraTags: usageMissing ? ["usage:missing"] : undefined,
+    extraTags: extraTags.length > 0 ? extraTags : undefined,
     model: exchange.model || parsed.model,
     systemPrompt: parsed.systemPrompt,
     toolDefinitions: parsed.toolDefinitions,
@@ -444,6 +467,8 @@ async function persistCapture(args: PersistArgs): Promise<void> {
     decisionJson: exchange.decisionJson,
     action: exchange.action,
     tokens: exchange.tokens,
+    ttft_ms,
+    ttft_visible_ms,
     latency_ms: args.latency_ms,
     outcome: { status: "ok" },
   });
@@ -479,7 +504,13 @@ async function persistCapture(args: PersistArgs): Promise<void> {
         ? "msg"
         : exchange.action.kind;
   args.log(
-    `${args.provider} ${exchange.model} → ${actionLabel} (run ${runResolution.run_id.slice(0, 12)} · step ${step.sequence} · ${args.latency_ms}ms · in ${exchange.tokens.input} out ${exchange.tokens.output})`,
+    `${args.provider} ${exchange.model} → ${actionLabel} (run ${runResolution.run_id.slice(0, 12)} · step ${step.sequence} · ${args.latency_ms}ms${
+      ttft_visible_ms !== undefined ? ` · ttft ${ttft_visible_ms}ms` : ""
+    }${
+      ttft_ms !== undefined && ttft_visible_ms !== undefined && ttft_visible_ms > ttft_ms
+        ? ` (reasoning burn ${ttft_visible_ms - ttft_ms}ms)`
+        : ""
+    } · in ${exchange.tokens.input} out ${exchange.tokens.output})`,
   );
 }
 
