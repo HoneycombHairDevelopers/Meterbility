@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -11,13 +12,13 @@ import {
   type SentinelHealth,
 } from "@meterbility/server";
 import {
-  getSetting,
-  setSetting,
-  deleteSetting,
   listFileChanges,
   listRuns,
   maxMainBandSequence,
-  isLiveHeartbeatFresh,
+  liveCaptureHeldFor,
+  liveClaimOwner,
+  writeLiveHeartbeat,
+  clearLiveHeartbeat,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import type { FileChange, Run, Step } from "@meterbility/shared";
@@ -83,6 +84,10 @@ const WRITE_TOOLS = new Set([
   "NotebookEdit",
   "apply_patch",
   "str_replace_editor",
+  // Cursor main-band tool names (adapters/cursor — native tf.name):
+  "edit_file_v2",
+  "search_replace",
+  "delete_file",
 ]);
 
 /** Tools that only MIGHT write (shell commands). They feed the warn
@@ -140,36 +145,52 @@ export function registerLiveCommand(program: Command): void {
 
         // ── Viewer-guard: one sentinel per root (design §2) ────────
         let viewerOnly = false;
-        if (opts.files) {
-          const hb = getSetting(store, "live.heartbeat");
-          if (hb !== undefined && isLiveHeartbeatFresh(hb) && !opts.forceCapture) {
-            viewerOnly = true;
-          }
+        if (opts.files && !opts.forceCapture && liveCaptureHeldFor(store, filesRoot)) {
+          viewerOnly = true;
         }
         // Validate the files root BEFORE the header prints so the
         // header's capture line reflects what will actually run
         // (review finding: never claim an action that is then skipped).
         let filesRootValid = true;
-        if (opts.files && (!existsSync(filesRoot) || !statSync(filesRoot).isDirectory())) {
-          filesRootValid = false;
-          console.error(
-            pc.red(
-              `meter live: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
-            ),
-          );
+        if (opts.files) {
+          try {
+            if (!statSync(filesRoot).isDirectory()) filesRootValid = false;
+          } catch {
+            filesRootValid = false; // missing or vanished — same answer
+          }
+          if (!filesRootValid) {
+            console.error(
+              pc.red(
+                `meter live: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
+              ),
+            );
+          }
         }
         const runsSentinel = opts.files && !viewerOnly && filesRootValid;
+        // Holder identity: lets this instance detect losing a
+        // simultaneous-start race (both passed the guard in the same
+        // check-to-write window) and downgrade, instead of two
+        // sentinels refreshing each other forever (adversarial 4).
+        const ownerId = `${process.pid}-${randomUUID().slice(0, 8)}`;
+        let claimRefresher: NodeJS.Timeout | undefined;
         if (runsSentinel) {
-          // Claim capture IMMEDIATELY (red-team TOCTOU finding): the
-          // evaluator's first write used to come after backfill plus a
-          // 5s tick — a minutes-wide window in which a second instance
-          // would also pass the guard and double-capture. Claiming here
-          // shrinks that window to the check-to-write gap.
+          // Claim capture IMMEDIATELY (red-team TOCTOU finding) and
+          // keep refreshing from the start — the evaluator only exists
+          // after the backfill, and a cold backfill can outlive the
+          // 2-minute freshness window (adversarial 3).
           try {
-            setSetting(store, "live.heartbeat", new Date().toISOString());
+            writeLiveHeartbeat(store, filesRoot, ownerId);
           } catch {
-            // Claim is best-effort; the evaluator re-writes each tick.
+            // Claim is best-effort; the refresher re-writes each tick.
           }
+          claimRefresher = setInterval(() => {
+            try {
+              writeLiveHeartbeat(store, filesRoot, ownerId);
+            } catch {
+              // staleness self-expires
+            }
+          }, EVALUATOR_INTERVAL_MS);
+          claimRefresher.unref?.();
         }
 
         // ── Startup header (design §1) ─────────────────────────────
@@ -213,7 +234,13 @@ export function registerLiveCommand(program: Command): void {
         // drains). Track announced counts; print only NEW rows, tagged
         // `(update)` — late Bash evidence visibly arrives, no
         // duplicate full-step lines.
-        const announced = new Map<string, number>(); // step_id → rows printed
+        const announced = new Map<string, number>(); // run:step → rows printed
+        // file_change_ids already printed as file:captured sentinel
+        // events in THIS process — the files:changed delta printer
+        // skips them so one physical change never prints twice
+        // (adversarial 16). Size-capped; hook-drain rows from other
+        // processes are never in here and still print as step rows.
+        const sentinelPrinted = new Set<string>();
         let printedAtHint = false;
 
         // 7A in-memory health numerator: arrival timestamps of
@@ -240,14 +267,17 @@ export function registerLiveCommand(program: Command): void {
         let sentinel: FileSentinel | undefined;
         let evaluator: NodeJS.Timeout | undefined;
         const stop = (): void => {
+          if (claimRefresher) clearInterval(claimRefresher);
           if (evaluator) clearInterval(evaluator);
           live.stop();
           sentinel?.stop();
-          if (sentinel) {
-            // Clean handoff: release the capture claim immediately so
+          if (sentinel || runsSentinel) {
+            // Clean handoff: release THIS ROOT's claim immediately so
             // the next instance doesn't wait out the staleness window.
+            // runsSentinel too: the startup claim exists even if the
+            // sentinel later failed to start.
             try {
-              deleteSetting(store, "live.heartbeat");
+              clearLiveHeartbeat(store, filesRoot);
             } catch {
               // best-effort — staleness self-expires anyway
             }
@@ -312,7 +342,7 @@ export function registerLiveCommand(program: Command): void {
           }
 
           if (e.type === "files:changed") {
-            printStepFileDelta(store, e, announced, synced, providerByRun.get(e.run_id));
+            printStepFileDelta(store, e, announced, synced, providerByRun.get(e.run_id), sentinelPrinted);
             if (!printedAtHint && synced) {
               printedAtHint = true;
               console.log(
@@ -340,6 +370,10 @@ export function registerLiveCommand(program: Command): void {
             attributionWindowMs: opts.attributionWindow * 1000,
           });
           sentinel.on("data", (e: FileSentinelEvent) => {
+            if (e.type === "file:captured") {
+              sentinelPrinted.add(e.change.file_change_id);
+              if (sentinelPrinted.size > 10_000) sentinelPrinted.clear();
+            }
             if (opts.json) {
               emitJson(e);
               return;
@@ -356,6 +390,16 @@ export function registerLiveCommand(program: Command): void {
             );
             sentinel.stop();
             sentinel = undefined;
+            if (claimRefresher) clearInterval(claimRefresher);
+            claimRefresher = undefined;
+            // Release the startup claim (codex adversarial P1): a
+            // fresh heartbeat with no sentinel behind it would block
+            // other instances from capturing for up to 2 minutes.
+            try {
+              clearLiveHeartbeat(store, filesRoot);
+            } catch {
+              // staleness self-expires
+            }
           }
         }
 
@@ -368,14 +412,30 @@ export function registerLiveCommand(program: Command): void {
         let orphanWarned = false;
         const startedAt = Date.now();
         evaluator = setInterval(() => {
-          // Heartbeat: only the capture-holder writes it (viewer-only
-          // instances must not extend the guard past the holder's
-          // lifetime).
+          // Ownership re-check (adversarial 4): if a simultaneous
+          // start won the last write, exactly one of the racers sees a
+          // foreign owner here and downgrades to viewer — ending the
+          // duplicate-capture overlap within one tick.
           if (sentinel) {
             try {
-              setSetting(store, "live.heartbeat", new Date().toISOString());
+              const owner = liveClaimOwner(store, filesRoot);
+              if (owner !== undefined && owner !== ownerId) {
+                sentinel.stop();
+                sentinel = undefined;
+                if (claimRefresher) clearInterval(claimRefresher);
+                claimRefresher = undefined;
+                viewerOnly = true;
+                if (!opts.json) {
+                  console.log(
+                    pc.yellow(
+                      timeHead() +
+                        "another meter live instance took capture on this root — downgrading to viewer",
+                    ),
+                  );
+                }
+              }
             } catch {
-              // Store contention is never worth killing the stream.
+              // unreadable store — re-check next tick
             }
           }
           // Viewer orphan detection (red-team finding): viewerOnly was
@@ -385,11 +445,11 @@ export function registerLiveCommand(program: Command): void {
           if (viewerOnly && !sentinel) {
             let holderGone = false;
             try {
-              const hb = getSetting(store, "live.heartbeat");
-              holderGone = hb === undefined || !isLiveHeartbeatFresh(hb);
+              holderGone = !liveCaptureHeldFor(store, filesRoot);
             } catch {
               // unreadable store — leave state as-is this tick
             }
+            if (!holderGone) orphanWarned = false; // new holder → re-arm
             if (holderGone && !orphanWarned) {
               orphanWarned = true;
               if (!opts.json) {
@@ -413,6 +473,13 @@ export function registerLiveCommand(program: Command): void {
             return;
           }
           if (!synced) return; // no verdicts on partial data (T3)
+          // Prune here too: the ring is otherwise only trimmed on
+          // run:updated, so reported counts went stale after activity
+          // stopped (adversarial 7).
+          const nowTick = Date.now();
+          while (touchRing.length > 0 && nowTick - touchRing[0]!.t > HEALTH_NUMERATOR_WINDOW_MS) {
+            touchRing.shift();
+          }
           const h = sentinel?.health();
           if (opts.json) {
             emitJson({
@@ -467,7 +534,7 @@ function printHeader(args: {
       ),
   );
   const captureLine = runsSentinel
-    ? `hooks (exact, where installed) + sentinel fallback on ${filesRoot} (minus .meterbilityignore/.gitignore + defaults)`
+    ? `starting — hooks (exact, where installed) + sentinel fallback on ${filesRoot} (live once 'watching files under …' prints; minus .meterbilityignore/.gitignore + defaults)`
     : viewerOnly
       ? `viewer-only — another meter live holds file capture (--force-capture to override)`
       : `ingest only (--no-files)`;
@@ -515,6 +582,7 @@ export function printStepFileDelta(
   announced: Map<string, number>,
   synced: boolean,
   providerTag?: string,
+  alreadyPrinted?: Set<string>,
 ): void {
   const rows = listFileChanges(store, { stepId: e.step_id });
   // Keys are run-scoped so run:completed can evict a finished run's
@@ -527,6 +595,9 @@ export function printStepFileDelta(
   const update = seen > 0;
   const syncPrefix = synced ? "" : pc.dim("[sync] ");
   for (const fc of fresh) {
+    // Rows this process already printed live as file:captured sentinel
+    // events would otherwise print a second time here (adversarial 16).
+    if (alreadyPrinted?.has(fc.file_change_id)) continue;
     console.log(syncPrefix + formatFileRow(e, fc, update, providerTag));
   }
 }

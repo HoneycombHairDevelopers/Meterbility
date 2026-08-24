@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -10,9 +10,9 @@ import {
 } from "@meterbility/server";
 import {
   getSetting,
-  setSetting,
-  deleteSetting,
-  isLiveHeartbeatFresh,
+  liveCaptureHeldFor,
+  writeLiveHeartbeat,
+  clearLiveHeartbeat,
 } from "@meterbility/collector";
 import { openStore } from "../util.ts";
 import { printPretty, printFileEvent } from "../render_events.ts";
@@ -183,12 +183,13 @@ export function registerWatchCommand(program: Command): void {
         // steer a watch --files user straight into that collision.
         let sentinel: FileSentinel | undefined;
         let heartbeat: NodeJS.Timeout | undefined;
+        let watchRoot: string | undefined;
         if (opts.files) {
-          const hb = getSetting(store, "live.heartbeat");
-          if (hb !== undefined && isLiveHeartbeatFresh(hb)) {
+          watchRoot = resolve(opts.filesDir ?? process.cwd());
+          if (liveCaptureHeldFor(store, watchRoot)) {
             console.error(
               pc.yellow(
-                "meter watch: another instance already holds file capture on this machine — skipping a duplicate sentinel (rows would double). `meter live` attaches as a viewer.",
+                `meter watch: another instance already holds file capture on ${watchRoot} — skipping a duplicate sentinel (rows would double). \`meter live\` attaches as a viewer.`,
               ),
             );
             opts.files = false;
@@ -200,7 +201,13 @@ export function registerWatchCommand(program: Command): void {
           // the whole watch session (live stream included) with an
           // unhandled rejection mid-stream.
           const filesRoot = resolve(opts.filesDir ?? process.cwd());
-          if (!existsSync(filesRoot) || !statSync(filesRoot).isDirectory()) {
+          let rootOk = false;
+          try {
+            rootOk = statSync(filesRoot).isDirectory();
+          } catch {
+            rootOk = false; // missing or vanished — same answer
+          }
+          if (!rootOk) {
             console.error(
               pc.red(
                 `meter watch: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
@@ -218,19 +225,28 @@ export function registerWatchCommand(program: Command): void {
               }
               printFileEvent(e);
             });
+            // Claim BEFORE start(): prime() walks the whole tree and
+            // can take minutes on a big repo — an unclaimed prime
+            // window let a concurrent instance start a second sentinel
+            // and double-capture every event (adversarial 2). The
+            // claim write sits OUTSIDE the start try so a transient
+            // SQLITE_BUSY can't be misreported as a capture failure
+            // that tears down a healthy sentinel (adversarial 5b).
+            try {
+              writeLiveHeartbeat(store, watchRoot!);
+            } catch {
+              // best-effort — refresher below re-writes
+            }
+            heartbeat = setInterval(() => {
+              try {
+                writeLiveHeartbeat(store, watchRoot!);
+              } catch {
+                // best-effort — staleness self-expires
+              }
+            }, 5_000);
+            heartbeat.unref?.();
             try {
               await sentinel.start();
-              // Hold the capture claim while this sentinel runs, same
-              // contract as meter live's evaluator tick.
-              setSetting(store, "live.heartbeat", new Date().toISOString());
-              heartbeat = setInterval(() => {
-                try {
-                  setSetting(store, "live.heartbeat", new Date().toISOString());
-                } catch {
-                  // best-effort — staleness self-expires
-                }
-              }, 5_000);
-              heartbeat.unref?.();
             } catch (err) {
               console.error(
                 pc.red(
@@ -239,6 +255,13 @@ export function registerWatchCommand(program: Command): void {
               );
               sentinel.stop();
               sentinel = undefined;
+              if (heartbeat) clearInterval(heartbeat);
+              heartbeat = undefined;
+              try {
+                clearLiveHeartbeat(store, watchRoot!);
+              } catch {
+                // staleness self-expires
+              }
             }
           }
         }
@@ -248,9 +271,9 @@ export function registerWatchCommand(program: Command): void {
           live.stop();
           if (heartbeat) clearInterval(heartbeat);
           sentinel?.stop();
-          if (sentinel) {
+          if (heartbeat && watchRoot) {
             try {
-              deleteSetting(store, "live.heartbeat");
+              clearLiveHeartbeat(store, watchRoot);
             } catch {
               // best-effort — staleness self-expires
             }

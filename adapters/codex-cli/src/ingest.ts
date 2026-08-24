@@ -297,7 +297,19 @@ async function buildSteps(
       (isFunctionCallOutput(p) || isCustomToolCallOutput(p)) &&
       p.call_id !== undefined
     ) {
-      outputByCallId.set(p.call_id, p.output ?? "");
+      // Upstream schema drift (observed in real 2026-07 rollouts):
+      // `output` can be a structured object, not a string. Normalize
+      // here — every consumer (parseExitCode, putString, .split)
+      // assumes a string, and a raw object crash-looped the live
+      // backfill's per-tick ingest of that session.
+      outputByCallId.set(
+        p.call_id,
+        typeof p.output === "string"
+          ? p.output
+          : p.output === undefined
+            ? ""
+            : JSON.stringify(p.output),
+      );
     }
   }
 

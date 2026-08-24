@@ -156,6 +156,13 @@ Four specialists + a red-team pass over the implementation produced two fix roun
 
 Accepted residuals (documented, not fixed): announced-map re-insert on post-completion late events (bounded, conf 4); countSessionFiles one-time sync walk; test-fixture triplication in test files.
 
+### Cycle 3 (Codex + Claude adversarial passes, same day)
+
+8. **Per-root, owner-identified claims**: `live.heartbeat` becomes a JSON map of watched-root → {ts, owner} (legacy plain-ISO reads as a wildcard claim until it expires). A repoA holder no longer disables capture for repoB machine-wide; shutdown releases only its own root; a simultaneous-start race is resolved within one tick — the loser sees a foreign owner and downgrades to viewer with a warning. Claims are written BEFORE `sentinel.start()` in both `live` and `watch --files` (prime can take minutes) and refreshed from the moment of claiming (a cold backfill can outlive the 2-minute freshness window). A failed sentinel start releases the claim.
+9. **Sentinel flush serialization**: overlapping `flushNow` loops shared instance state (snapshot map, coalesced counts) — flushes now queue on a promise chain.
+10. **Query/display correctness**: nudge probe gets a covering index (`idx_fc_derived_created`) and honest wording ("recent file capture", not "capture active"); a sentinel-printed row no longer prints a second time via `files:changed`; JSON/warn "recent steps" counts are window-pruned in the evaluator; `--main-band-only` without a range and `--diff --at` are hard errors; unparseable window boundaries disable band mapping visibly; "to current" windows include trailing band rows (upper bound = now); empty step bounds error; Cursor's `edit_file_v2`/`search_replace`/`delete_file` join WRITE_TOOLS; sanitizer also strips bidi/zero-width characters; root validation is a single `statSync` in try (no TOCTOU crash).
+11. Cycle-3 residuals (accepted): `watch --files` skipped-by-guard has no orphan re-check (meter live is the blessed path); nudge's `Store.open` runs idempotent migrations from a decoration path; publish-time sibling dep ranges bumped at the version step.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |

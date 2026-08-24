@@ -94,6 +94,92 @@ export function isLiveHeartbeatFresh(iso: string, now = Date.now()): boolean {
   return age >= -SKEW_TOLERANCE_MS && age < LIVE_HEARTBEAT_FRESH_MS;
 }
 
+/**
+ * Per-ROOT capture claims (codex adversarial P1: a single global
+ * heartbeat let a `meter live` in repoA silently disable file capture
+ * for every other repo on the machine, and shutdown deleted another
+ * process's claim). The `live.heartbeat` setting value is a JSON map
+ * of watched-root → ISO timestamp. A legacy plain-ISO value (written
+ * by pre-fix builds) reads as a wildcard claim under "*" that matches
+ * any root until it expires.
+ *
+ * Concurrency: writers re-read + rewrite the whole map each tick,
+ * pruning stale entries. Two holders racing a write can clobber each
+ * other's entry for one tick — harmless, because each rewrites within
+ * 5s and freshness tolerates 2 minutes.
+ */
+export interface LiveClaim {
+  ts: string;
+  /** Holder identity (pid + entropy). Lets a holder detect it LOST a
+   *  simultaneous-start race and downgrade, instead of two sentinels
+   *  refreshing each other's freshness forever (adversarial finding). */
+  owner?: string;
+}
+
+export function readLiveHeartbeats(store: Store): Record<string, LiveClaim> {
+  const raw = getSetting(store, "live.heartbeat");
+  if (raw === undefined) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, LiveClaim> = {};
+      for (const [r, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === "string") out[r] = { ts: v };
+        else if (v && typeof v === "object" && typeof (v as LiveClaim).ts === "string") {
+          out[r] = v as LiveClaim;
+        }
+      }
+      return out;
+    }
+  } catch {
+    // legacy plain-ISO value
+  }
+  return { "*": { ts: raw } };
+}
+
+export function writeLiveHeartbeat(store: Store, root: string, owner?: string): void {
+  const next: Record<string, LiveClaim> = {};
+  for (const [r, claim] of Object.entries(readLiveHeartbeats(store))) {
+    if (r !== root && r !== "*" && isLiveHeartbeatFresh(claim.ts)) next[r] = claim;
+  }
+  next[root] = { ts: new Date().toISOString(), ...(owner ? { owner } : {}) };
+  setSetting(store, "live.heartbeat", JSON.stringify(next));
+}
+
+/** Release ONLY this root's claim; other roots' holders are untouched. */
+export function clearLiveHeartbeat(store: Store, root: string): void {
+  const next: Record<string, LiveClaim> = {};
+  for (const [r, claim] of Object.entries(readLiveHeartbeats(store))) {
+    if (r !== root && isLiveHeartbeatFresh(claim.ts)) next[r] = claim;
+  }
+  if (Object.keys(next).length === 0) {
+    deleteSetting(store, "live.heartbeat");
+  } else {
+    setSetting(store, "live.heartbeat", JSON.stringify(next));
+  }
+}
+
+/** Is capture held for THIS root (or by a legacy wildcard claim)? */
+export function liveCaptureHeldFor(store: Store, root: string): boolean {
+  for (const [r, claim] of Object.entries(readLiveHeartbeats(store))) {
+    if ((r === root || r === "*") && isLiveHeartbeatFresh(claim.ts)) return true;
+  }
+  return false;
+}
+
+/** Current owner of this root's fresh claim, if any. */
+export function liveClaimOwner(store: Store, root: string): string | undefined {
+  const claim = readLiveHeartbeats(store)[root];
+  return claim && isLiveHeartbeatFresh(claim.ts) ? claim.owner : undefined;
+}
+
+/** Is ANY live viewer holding capture (nudge suppression)? */
+export function anyLiveCaptureHeld(store: Store): boolean {
+  return Object.values(readLiveHeartbeats(store)).some((c) =>
+    isLiveHeartbeatFresh(c.ts),
+  );
+}
+
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db
     .prepare("SELECT value FROM settings WHERE key = ?")

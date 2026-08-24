@@ -88,6 +88,7 @@ Requires **Node 24+** (rebuilds `better-sqlite3` natively). Python SDK additiona
 npm install -g @meterbility/cli
 
 meter doctor                 # verify the Claude Code surface
+meter live                   # watch sessions + file side effects, one command
 meter ingest claude-code --limit 5
 meter list
 meter inspect <run-id> --at 5 --show context   # exactly what the model saw at step 5
@@ -95,6 +96,23 @@ meter web                    # open the inspector at http://127.0.0.1:4317
 ```
 
 Instrumenting your own agent? Add the SDK to your project instead: `npm install @meterbility/agent` (TypeScript) or `pip install meterbility-agent` (Python).
+
+### The flow — two front doors
+
+Everything in Meterbility hangs off two commands. Pick by where your agent runs:
+
+- **`meter run -- <cmd>`** — *launch and capture.* Wraps any script or agent with the capture proxy auto-wired (Anthropic, OpenAI, or any OpenAI-compatible upstream via `--upstream nvidia=…`). API traffic becomes runs with first-class provider identity. Zero code change.
+- **`meter live`** — *watch and capture.* For sessions Meterbility observes from the outside (Claude Code, Codex, Cursor): one command starts session ingest **and** file side-effect capture together, streams `step 42 · Edit src/foo.ts · +12 −3` lines as they happen, and prints a capture-health line that tells you honestly when the filesystem watcher is degraded. Run it in your repo before (or during — it attaches) an agent session.
+
+Then interrogate what happened:
+
+```bash
+meter files <run-id> --at 5          # what did step 5 change?
+meter files <run-id> --from 3        # everything changed from step 3 to now (live runs too)
+meter files <run-id> --diff src/x.ts --from 3 --to 7   # one file's diffs across a window
+```
+
+One-time setup for exact (hook-based) Bash capture in a repo: `meter init --hooks`. Without it, `meter live`'s filesystem sentinel is the cross-vendor fallback.
 
 ### From a clone
 
@@ -136,7 +154,9 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Multi-upstream proxy capture (`--upstream <name>[:<dialect>]=<url>` — any OpenAI/Anthropic-dialect host behind a `/<name>/` prefix, concurrent on one port, first-class `provider` on runs/steps; verified: NVIDIA `integrate.api.nvidia.com`) | ✅ v0.6 |
 | Proxy edge metadata (`x-meterbility-cwd` / `x-meterbility-git-branch` headers) | ✅ v0.5.1 |
 | Claude Code file-change capture (Write/Edit/MultiEdit/Bash-rm) | ✅ v0.3 |
-| Bash side-effect capture — `meter capture` hooks (exact) + `meter watch --files` FileSentinel (fallback) | ✅ v0.5 |
+| Bash side-effect capture — `meter capture` hooks (exact) + FileSentinel (fallback) | ✅ v0.5 |
+| `meter live` — one-command ingest + file capture, capture-health line, viewer guard | ✅ v0.6 |
+| Step-range file summary (`meter files --from/--to`, band-aware) + attach nudge | ✅ v0.6 |
 | Sensitive-path content redaction (`.env` / keys record fact, not contents) | ✅ v0.5 |
 | **SDK** | |
 | TypeScript SDK (`@meterbility/agent`) | ✅ v0.1 |

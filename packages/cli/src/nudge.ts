@@ -2,9 +2,8 @@ import { existsSync } from "node:fs";
 import pc from "picocolors";
 import {
   Store,
-  getSetting,
+  anyLiveCaptureHeld,
   latestRecentWatchCaptureRunId,
-  isLiveHeartbeatFresh,
 } from "@meterbility/collector";
 import { dbPath } from "@meterbility/shared";
 
@@ -59,14 +58,13 @@ export function maybePrintAttachNudge(
     const store = Store.open();
     try {
       if (Date.now() - t0 > openBudgetMs) return;
-      const hb = getSetting(store, "live.heartbeat");
-      if (hb !== undefined && isLiveHeartbeatFresh(hb)) return;
+      if (anyLiveCaptureHeld(store)) return;
       const cutoff = new Date(Date.now() - RECENT_CAPTURE_WINDOW_MS).toISOString();
       const runId = latestRecentWatchCaptureRunId(store, cutoff);
       if (runId === undefined) return;
       console.error(
         pc.dim(
-          `capture active on ${runId.slice(0, 12)} — \`meter live\` to attach`,
+          `recent file capture on ${runId.slice(0, 12)} — \`meter live\` to watch`,
         ),
       );
     } finally {

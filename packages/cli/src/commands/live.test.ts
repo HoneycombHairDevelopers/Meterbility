@@ -280,11 +280,20 @@ function spawnLive(args: string[], env: Record<string, string>): LiveProc {
   return { child, stdout: () => out, stderr: () => err, waitFor, stop };
 }
 
-function freshEnv(): { home: string; claudeHome: string; filesRoot: string } {
+function freshEnv(): {
+  home: string;
+  claudeHome: string;
+  codexHome: string;
+  filesRoot: string;
+} {
   const home = mkdtempSync(join(tmpdir(), "meter-live-e2e-"));
   const claudeHome = mkdtempSync(join(tmpdir(), "meter-live-e2e-claude-"));
+  // Isolate the Codex sessions root too: the backfill scans it, and an
+  // unisolated run ingests the HOST's real rollout history (slow, and
+  // it once surfaced a real adapter crash mid-suite).
+  const codexHome = mkdtempSync(join(tmpdir(), "meter-live-e2e-codex-"));
   const filesRoot = mkdtempSync(join(tmpdir(), "meter-live-e2e-root-"));
-  return { home, claudeHome, filesRoot };
+  return { home, claudeHome, codexHome, filesRoot };
 }
 
 test("live: header warns loudly with no active session, then SYNCING → SYNCED", async () => {
@@ -292,6 +301,7 @@ test("live: header warns loudly with no active session, then SYNCING → SYNCED"
   const proc = spawnLive(["--no-files"], {
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
+    CODEX_HOME: fx.codexHome,
   });
   let code: number | null = null;
   try {
@@ -308,14 +318,17 @@ test("live: header warns loudly with no active session, then SYNCING → SYNCED"
   assert.match(proc.stdout(), /db: /);
 });
 
-test("live: viewer-guard — a fresh heartbeat makes the second instance attach viewer-only", async () => {
+test("live: viewer-guard — a fresh claim for THIS root (legacy wildcard format) makes the second instance attach viewer-only", async () => {
   const fx = freshEnv();
   const store = Store.open({ path: join(fx.home, "meterbility.db") });
+  // Legacy plain-ISO value: pre-fix builds wrote a global claim; it
+  // must still be honored (as a wildcard) until it expires.
   setSetting(store, "live.heartbeat", new Date().toISOString());
   store.close();
   const proc = spawnLive(["--files-dir", fx.filesRoot], {
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
+    CODEX_HOME: fx.codexHome,
   });
   let code: number | null = null;
   try {
@@ -332,6 +345,7 @@ test("live: invalid --files-dir warns and continues without file capture", async
   const proc = spawnLive(["--files-dir", join(fx.filesRoot, "does-not-exist")], {
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
+    CODEX_HOME: fx.codexHome,
   });
   let code: number | null = null;
   try {
@@ -348,6 +362,7 @@ test("live: --json streams sentinel:ready as NDJSON; SIGINT releases the heartbe
   const proc = spawnLive(["--files-dir", fx.filesRoot, "--json"], {
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
+    CODEX_HOME: fx.codexHome,
   });
   let code: number | null = null;
   try {
@@ -447,6 +462,7 @@ test("live: --force-capture overrides a fresh heartbeat and takes capture", asyn
   const proc = spawnLive(["--files-dir", fx.filesRoot, "--force-capture"], {
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
+    CODEX_HOME: fx.codexHome,
   });
   let code: number | null = null;
   try {
@@ -456,4 +472,36 @@ test("live: --force-capture overrides a fresh heartbeat and takes capture", asyn
   }
   assert.equal(code, 0);
   assert.doesNotMatch(proc.stdout(), /attaching as viewer/);
+});
+
+test("live: a claim for a DIFFERENT root does not force viewer-only (per-root guard)", async () => {
+  const fx = freshEnv();
+  const otherRoot = mkdtempSync(join(tmpdir(), "meter-live-other-root-"));
+  const store = Store.open({ path: join(fx.home, "meterbility.db") });
+  // Codex adversarial P1: a global claim let repoA disable capture for
+  // repoB machine-wide. Claims are per-root now.
+  setSetting(
+    store,
+    "live.heartbeat",
+    JSON.stringify({ [otherRoot]: new Date().toISOString() }),
+  );
+  store.close();
+  const proc = spawnLive(["--files-dir", fx.filesRoot], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    CODEX_HOME: fx.codexHome,
+  });
+  let code: number | null = null;
+  try {
+    await proc.waitFor(/hooks \(exact, where installed\)/);
+  } finally {
+    code = await proc.stop();
+  }
+  assert.equal(code, 0);
+  assert.doesNotMatch(proc.stdout(), /attaching as viewer/);
+  // And the other root's claim survives this instance's shutdown.
+  const store2 = Store.open({ path: join(fx.home, "meterbility.db") });
+  const raw = getSetting(store2, "live.heartbeat");
+  store2.close();
+  assert.ok(raw !== undefined && raw.includes(otherRoot), "other root's claim preserved");
 });

@@ -25,7 +25,10 @@ export function sanitizeTerminal(text: string): string {
   // red-team finding: stripping only \u009b left the 8-bit OSC
   // title/clipboard vector open on C1-honoring terminals).
   // eslint-disable-next-line no-control-regex
-  return text.replace(/[\x00-\x1f\x7f\u0080-\u009f]/g, "");
+  return text.replace(
+    /[\x00-\x1f\x7f\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g,
+    "",
+  );
 }
 
 /** Single-letter op badge shared by watch's file events and live's

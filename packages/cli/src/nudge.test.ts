@@ -109,7 +109,7 @@ test("nudge fires when capture rows are recent and no heartbeat exists", () => {
   const home = freshHome();
   seedCaptureActivity(home);
   const out = captureStderr(() => maybePrintAttachNudge("list", {}, { openBudgetMs: Infinity }));
-  assert.match(out, /capture active on/);
+  assert.match(out, /recent file capture on/);
   assert.match(out, /meter live/);
 });
 
@@ -176,5 +176,45 @@ test("clock-skew: a future-dated heartbeat is treated as stale — the nudge sti
   setSetting(store, "live.heartbeat", new Date(Date.now() + 60 * 60_000).toISOString());
   store.close();
   const out = captureStderr(() => maybePrintAttachNudge("list", {}, { openBudgetMs: Infinity }));
-  assert.match(out, /capture active on/);
+  assert.match(out, /recent file capture on/);
+});
+
+// ─── Per-root heartbeat map (codex adversarial P1) ───────────────────
+
+test("heartbeat map: per-root claims, legacy wildcard compat, root-scoped release", async () => {
+  const home = freshHome();
+  const { readLiveHeartbeats, writeLiveHeartbeat, clearLiveHeartbeat, liveCaptureHeldFor, anyLiveCaptureHeld } =
+    await import("@meterbility/collector");
+  const store = Store.open({ path: join(home, "meterbility.db") });
+  try {
+    // Per-root: repoA's claim must not make repoB viewer-only.
+    writeLiveHeartbeat(store, "/repo/a");
+    assert.equal(liveCaptureHeldFor(store, "/repo/a"), true);
+    assert.equal(liveCaptureHeldFor(store, "/repo/b"), false);
+    assert.equal(anyLiveCaptureHeld(store), true);
+
+    // Root-scoped release: clearing B's (nonexistent) claim leaves A's.
+    writeLiveHeartbeat(store, "/repo/b");
+    clearLiveHeartbeat(store, "/repo/b");
+    assert.equal(liveCaptureHeldFor(store, "/repo/a"), true);
+    assert.equal(liveCaptureHeldFor(store, "/repo/b"), false);
+
+    // Legacy plain-ISO value (pre-fix builds): wildcard claim matches
+    // any root until it expires.
+    setSetting(store, "live.heartbeat", new Date().toISOString());
+    assert.deepEqual(Object.keys(readLiveHeartbeats(store)), ["*"]);
+    assert.equal(liveCaptureHeldFor(store, "/anything"), true);
+
+    // A legacy wildcard survives a root-scoped clear (it may belong to
+    // a still-running old-build holder) and self-expires on its own; a
+    // new-build write prunes it, after which a full release empties
+    // the setting entirely.
+    clearLiveHeartbeat(store, "/repo/a");
+    assert.equal(anyLiveCaptureHeld(store), true, "wildcard not cleared by a root-scoped release");
+    writeLiveHeartbeat(store, "/repo/c");
+    clearLiveHeartbeat(store, "/repo/c");
+    assert.equal(anyLiveCaptureHeld(store), false);
+  } finally {
+    store.close();
+  }
 });

@@ -91,6 +91,16 @@ export function registerFilesCommand(program: Command): void {
           );
           process.exit(2);
         }
+        // Consistency with the rule above (adversarial finding: silent
+        // flag-ignoring beside a hard error is worse than either).
+        if (opts.diff && opts.at !== undefined) {
+          console.error(pc.red("--at cannot be combined with --diff (use --from/--to to scope a diff)"));
+          process.exit(2);
+        }
+        if (opts.mainBandOnly && opts.from === undefined && opts.to === undefined && !opts.diff) {
+          console.error(pc.red("--main-band-only applies to --from/--to range summaries"));
+          process.exit(2);
+        }
         const store = openStore();
         try {
           const run = getRun(store, runId);
@@ -296,10 +306,23 @@ async function runRangeMode(
   // Epoch millis, not lexicographic strings: mixed timestamp precision
   // ("…:56Z" vs "…:56.999Z") breaks string ordering at the '.' vs 'Z'
   // boundary (red-team finding).
-  const lowerMs = inWindowMain[0] ? Date.parse(inWindowMain[0].timestamp) : undefined;
-  const upperMs = inWindowMain[inWindowMain.length - 1]
+  // Unparseable boundaries disable band mapping VISIBLY (footer
+  // note), never silently. "To current" means to NOW: band rows
+  // stamped after the last main-band step (trailing hook drains,
+  // checkpoints) are part of the answer when --to was omitted
+  // (adversarial finding — "everything means everything" failed at
+  // the tail).
+  const rawLower = inWindowMain[0] ? Date.parse(inWindowMain[0].timestamp) : NaN;
+  const rawUpper = inWindowMain[inWindowMain.length - 1]
     ? Date.parse(inWindowMain[inWindowMain.length - 1]!.timestamp)
-    : undefined;
+    : NaN;
+  const boundariesParseable = Number.isFinite(rawLower) && Number.isFinite(rawUpper);
+  const lowerMs = boundariesParseable ? rawLower : undefined;
+  const upperMs = !boundariesParseable
+    ? undefined
+    : opts.to === undefined
+      ? Number.POSITIVE_INFINITY
+      : rawUpper;
 
   const stepById = new Map<string, Step>();
   for (const s of steps) stepById.set(s.step_id, s);
@@ -369,6 +392,13 @@ async function runRangeMode(
           ` · ${collapsed.length} file${collapsed.length === 1 ? "" : "s"} touched)`,
       ),
   );
+  if (!boundariesParseable && inWindowMain.length > 0 && !opts.mainBandOnly) {
+    console.log(
+      pc.yellow(
+        "note: window boundary timestamps unparseable — band-attributed changes could not be mapped",
+      ),
+    );
+  }
   if (collapsed.length === 0) {
     console.log(pc.dim("\n  no captured changes in this step window"));
     if (bandExcluded > 0) {
@@ -729,6 +759,10 @@ function resolveStepSeqLoose(
   run: Run,
   needle: string,
 ): number {
+  if (needle.trim() === "") {
+    console.error(pc.red("empty step bound — pass a sequence number or step id"));
+    process.exit(2);
+  }
   const seq = Number(needle);
   if (Number.isFinite(seq)) return seq;
   const step = getStep(store, needle);

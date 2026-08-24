@@ -320,11 +320,25 @@ export class FileSentinel extends EventEmitter {
     };
   }
 
+  /** Serialization chain: overlapping flushes would interleave two
+   *  processPath loops over shared instance state (snapshot map,
+   *  coalescedForCurrentPath), mis-attaching coalesced counts to the
+   *  wrong rows (adversarial finding). Every flush queues behind the
+   *  previous one instead. */
+  private flushChain: Promise<void> = Promise.resolve();
+
   /**
    * Process everything queued right now. Public so tests (and callers
    * that want deterministic ordering) can bypass the debounce timer.
+   * Serialized: concurrent calls run strictly one after another.
    */
-  async flushNow(): Promise<void> {
+  flushNow(): Promise<void> {
+    const run = this.flushChain.then(() => this.flushBatch());
+    this.flushChain = run.catch(() => {});
+    return run;
+  }
+
+  private async flushBatch(): Promise<void> {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
     const batch = Array.from(this.pending).sort();
