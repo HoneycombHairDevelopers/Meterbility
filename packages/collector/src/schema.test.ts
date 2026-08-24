@@ -115,6 +115,19 @@ test("fresh apply lands schema v6 with all new tables + columns", () => {
   db.close();
 });
 
+test("v8 forward-compat guard: refuses to open a database written by a newer build", () => {
+  const db = freshDb();
+  ensureSchema(db);
+  db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(
+    String(SCHEMA_VERSION + 1),
+  );
+  assert.throws(
+    () => ensureSchema(db),
+    /newer than this build .* upgrade meterbility/i,
+  );
+  db.close();
+});
+
 test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
   const db = freshDb();
   ensureSchema(db);

@@ -406,11 +406,26 @@ export interface ListRunsOpts {
   agentId?: string;
   status?: StepStatus;
   containsTool?: string;
+  /**
+   * v8 — include carved child runs (delegation lineage). Default FALSE:
+   * listings and counts show top-level runs only (`parent_run_id IS
+   * NULL`), with children rendered nested under their parent via
+   * {@link getChildRuns}. Aggregation, exports, live bookkeeping,
+   * sentinel attribution, and batch operations set this to true —
+   * children hold real, exclusive spend and activity (design doc
+   * aggregation policy, eng review T3/2A).
+   */
+  includeChildren?: boolean;
 }
 
 export function listRuns(store: Store, opts: ListRunsOpts = {}): Run[] {
   const params: unknown[] = [];
   let where = "1=1";
+  if (!opts.includeChildren) {
+    // Lineage-free rows have NULL parent_run_id, so pre-v8 databases
+    // (and non-fleet runs) list byte-identically to the old behavior.
+    where += " AND parent_run_id IS NULL";
+  }
   if (opts.projectId) {
     where += " AND project_id = ?";
     params.push(opts.projectId);

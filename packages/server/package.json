@@ -20,6 +20,7 @@
     "shiki": "^1.29.2",
     "@meterbility/claude-code-adapter": "^0.6.0",
     "@meterbility/codex-cli-adapter": "^0.6.0",
+    "@meterbility/github-copilot-adapter": "^0.6.0",
     "@meterbility/cursor-adapter": "^0.6.0",
     "@meterbility/store-postgres": "^0.6.0"
   },

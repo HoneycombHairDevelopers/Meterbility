@@ -2505,6 +2505,13 @@ function fleetEntryHtml(e: FleetEntry): string {
 export interface RunListOptions {
   totalAvailable?: number;
   filters?: { status?: string; tool?: string; project?: string };
+  /**
+   * v8 — carved child runs (per-agent runs of a multi-agent session)
+   * grouped by parent run id. Children render nested under their
+   * parent row; the parent row carries the fleet rollup (agent count +
+   * display-time cost sum — never stored, per the aggregation policy).
+   */
+  childrenByParent?: Map<string, Run[]>;
 }
 
 export function renderRunList(
@@ -2572,9 +2579,20 @@ export function renderRunList(
               title="Seal this run as ok (mostly for proxy-captured runs)"
               onclick="closeRun('${esc(r.run_id)}', 'ok')">Seal</button>`
           : "";
-      return `<tr>
+      // v8 — fleet: children (per-agent runs) nest under the parent
+      // row; the parent gets an agent-count badge plus the display-time
+      // fleet cost sum (own + descendants; unpriced legs excluded from
+      // the sum are already 0 by construction).
+      const children = opts.childrenByParent?.get(r.run_id) ?? [];
+      const fleetCents =
+        r.cost_cents + children.reduce((acc, ch) => acc + ch.cost_cents, 0);
+      const fleetBadge =
+        children.length > 0
+          ? ` <span class="badge" title="Multi-agent session: ${children.length} carved agent run(s). Fleet cost = parent + agents, summed at display time.">${children.length} agents · fleet $${(fleetCents / 100).toFixed(2)}</span>`
+          : "";
+      const parentRow = `<tr>
         <td>
-          <a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}
+          <a href="/runs/${esc(r.run_id)}">${esc(title)}</a>${fork}${fleetBadge}
         </td>
         <td>${status}</td>
         <td class="mono">${esc(r.run_id.slice(0, 12))}</td>
@@ -2585,6 +2603,25 @@ export function renderRunList(
         <td class="mono" title="${esc(projectFull)}">${esc(project)}</td>
         <td>${actions}</td>
       </tr>`;
+      const childRows = children
+        .map((ch) => {
+          const chStatus = `<span class="pill ${esc(ch.status)}">${esc(ch.status)}</span>`;
+          return `<tr style="opacity:.85">
+        <td style="padding-left:22px">
+          <span style="color:var(--fg-mute)">↳</span> <a href="/runs/${esc(ch.run_id)}">${esc(ch.title ?? ch.run_id)}</a>
+        </td>
+        <td>${chStatus}</td>
+        <td class="mono">${esc(ch.run_id.slice(0, 12))}</td>
+        <td class="numeric">${ch.step_count}</td>
+        <td class="numeric">${costEl(ch.cost_cents, ch.tags)}</td>
+        <td class="mono">${esc(ch.started_at)}</td>
+        <td class="mono"></td>
+        <td class="mono"></td>
+        <td></td>
+      </tr>`;
+        })
+        .join("");
+      return parentRow + childRows;
     })
     .join("");
   return `<div style="margin-bottom:var(--space-5)">
@@ -2658,6 +2695,12 @@ export function renderRun(
    * for that gating. Turn 8 chunk 5.
    */
   probePanelHtml = "",
+  /**
+   * v8 — delegation lineage for the header: the parent run when this is
+   * a carved agent run, and/or the carved children when this run
+   * dispatched agents. Route-resolved; empty for lineage-free runs.
+   */
+  lineage: { parent?: Run; children?: Run[] } = {},
 ): string {
   const meta = `<div class="meta-row">
     <div class="kv"><strong>Status</strong> <span class="pill ${esc(run.status)}">${esc(run.status)}</span></div>
@@ -2677,6 +2720,30 @@ export function renderRun(
     <div class="kv"><strong>Run ID</strong> <span class="val mono">${esc(run.run_id.slice(0, 16))}…</span>
       <button class="copy-btn" title="copy full run id" onclick="copyText('${esc(run.run_id)}', this)">copy</button>
     </div>
+    ${
+      lineage.parent
+        ? `<div class="kv"><strong>Agent of</strong> <span class="val">
+            <a href="/runs/${esc(lineage.parent.run_id)}" title="This is a carved agent run of a multi-agent session. It is lineage-only: fork/replay targets the parent.">${esc(lineage.parent.title ?? lineage.parent.run_id)}</a>
+          </span></div>`
+        : ""
+    }
+    ${
+      lineage.children && lineage.children.length > 0
+        ? `<div class="kv"><strong>Agents</strong> <span class="val">
+            ${lineage.children
+              .map(
+                (ch) =>
+                  `<a href="/runs/${esc(ch.run_id)}" style="margin-right:8px">${esc(ch.title ?? ch.run_id)}</a>`,
+              )
+              .join("")}
+            <span title="Fleet cost = this run + its agents, summed at display time.">· fleet $${(
+              (run.cost_cents +
+                lineage.children.reduce((a, ch) => a + ch.cost_cents, 0)) /
+              100
+            ).toFixed(2)}</span>
+          </span></div>`
+        : ""
+    }
     <div class="kv"><strong>Export</strong>
       <a class="val mono" href="/api/runs/${esc(run.run_id)}/export" download="${esc(run.run_id)}.meter.json"
          title="Download as Meterbility Trace Format v0.2 JSON (with inlined blobs)">trace.json</a>

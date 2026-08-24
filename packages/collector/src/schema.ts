@@ -410,6 +410,17 @@ export function ensureSchema(db: Database.Database): void {
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }
     | undefined;
+  // v8 — forward-compat guard: refuse to open a database written by a
+  // NEWER build. Migrations are one-way additive; an older reader would
+  // silently misread semantics it doesn't know (e.g. delegation
+  // lineage: children would leak into default listings as top-level
+  // runs). Failing loudly beats misreading quietly. Builds older than
+  // v8 predate this guard — from here forward the failure is clean.
+  if (row && Number(row.value) > SCHEMA_VERSION) {
+    throw new Error(
+      `database schema v${row.value} is newer than this build (v${SCHEMA_VERSION}); upgrade meterbility to open it`,
+    );
+  }
   if (!row) {
     db.prepare("INSERT INTO meta(key,value) VALUES(?,?)").run(
       "schema_version",

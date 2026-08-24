@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import {
   RESERVED_SEQUENCE_BASE,
   claudeProjectsRoot,
+  copilotLegacySessionRoot,
+  copilotSessionStateRoot,
   probeFilePath,
   readState as readProbeState,
 } from "@meterbility/shared";
@@ -20,6 +22,10 @@ import {
   discoverCodexSessions,
   ingestCodexSession,
 } from "@meterbility/codex-cli-adapter";
+import {
+  discoverCopilotSessions,
+  ingestCopilotSession,
+} from "@meterbility/github-copilot-adapter";
 import {
   getRun,
   getStep,
@@ -162,7 +168,7 @@ export function buildFleetEntries(
   const limit = opts.limit ?? 50;
   const stallSeconds = opts.stallSeconds ?? 120;
   const firedAlerts = opts.firedAlerts;
-  const runs = listRuns(store, { limit });
+  const runs = listRuns(store, { limit, includeChildren: true });
   return runs.map((run) => {
     // Synthetic capture-plane steps (hook/admin/checkpoint bands, seq ≥
     // RESERVED_SEQUENCE_BASE) are bookkeeping, not conversation activity
@@ -266,7 +272,7 @@ export class LiveInspector extends EventEmitter {
     // run:updated — and the run detail page only appends on
     // run:updated, so live append silently never started for any run
     // ingested before `meter web` launched.
-    for (const run of listRuns(this.store, { limit: 100_000 })) {
+    for (const run of listRuns(this.store, { limit: 100_000, includeChildren: true })) {
       this.lastStepCounts.set(run.run_id, run.step_count);
       this.lastStatus.set(run.run_id, run.status);
     }
@@ -388,6 +394,28 @@ export class LiveInspector extends EventEmitter {
         console.error("[meter/live] codex discovery failed:", err);
       }
     }
+    // Copilot CLI sessions are append-as-you-go events.jsonl — same
+    // size-growth tail-poll. The adapter re-carves the whole file per
+    // change (offset = change detector), and a squad session fans one
+    // ingest result into parent + child runs (handled in the emit loop).
+    if (
+      existsSync(copilotSessionStateRoot()) ||
+      existsSync(copilotLegacySessionRoot())
+    ) {
+      try {
+        const copilotSessions = await discoverCopilotSessions();
+        for (const s of copilotSessions) {
+          candidates.push({
+            path: s.path,
+            size_bytes: s.size_bytes,
+            ingest: ingestCopilotSession as IngestFn,
+          });
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[meter/live] copilot discovery failed:", err);
+      }
+    }
 
     // De-dupe paths into a single set so a brand-new file (which qualifies
     // as both "new" AND "size grew from 0") doesn't get processed twice.
@@ -408,56 +436,65 @@ export class LiveInspector extends EventEmitter {
       try {
         const result = await ingest(this.store, path);
         if (result.status === "empty") continue;
-        const run = getRun(this.store, result.run_id);
-        if (!run) continue;
-        const newSteps = collectNewSteps(this.store, run, this.lastMaxSeq);
-        const wasKnown = this.lastStepCounts.has(run.run_id);
-        const prevStatus = this.lastStatus.get(run.run_id);
-        // lastStepCounts stays for wasKnown/run:created bookkeeping;
-        // lastMaxSeq is the append cursor (updated after emit below).
-        this.lastStepCounts.set(run.run_id, run.step_count);
-        this.lastStatus.set(run.run_id, run.status);
-        if (newSteps.length > 0) {
-          this.lastMaxSeq.set(
-            run.run_id,
-            newSteps[newSteps.length - 1]!.sequence,
-          );
-        }
+        // v8 — a multi-agent (squad) session fans one ingest into a
+        // parent run plus carved child runs; each gets its own event
+        // stream so live squad sessions render per-agent activity.
+        const fanout = [
+          result.run_id,
+          ...((result as { child_run_ids?: string[] }).child_run_ids ?? []),
+        ];
+        for (const fanRunId of fanout) {
+          const run = getRun(this.store, fanRunId);
+          if (!run) continue;
+          const newSteps = collectNewSteps(this.store, run, this.lastMaxSeq);
+          const wasKnown = this.lastStepCounts.has(run.run_id);
+          const prevStatus = this.lastStatus.get(run.run_id);
+          // lastStepCounts stays for wasKnown/run:created bookkeeping;
+          // lastMaxSeq is the append cursor (updated after emit below).
+          this.lastStepCounts.set(run.run_id, run.step_count);
+          this.lastStatus.set(run.run_id, run.status);
+          if (newSteps.length > 0) {
+            this.lastMaxSeq.set(
+              run.run_id,
+              newSteps[newSteps.length - 1]!.sequence,
+            );
+          }
 
-        if (!silent) {
-          if (!wasKnown) {
-            this.emit("data", { type: "run:created", run } satisfies LiveEvent);
-          } else if (newSteps.length > 0) {
+          if (!silent) {
+            if (!wasKnown) {
+              this.emit("data", { type: "run:created", run } satisfies LiveEvent);
+            } else if (newSteps.length > 0) {
+              this.emit("data", {
+                type: "run:updated",
+                run,
+                new_steps: newSteps,
+              } satisfies LiveEvent);
+            }
+            // v0.3 §8.5 — emit `files:changed` for every freshly-ingested
+            // step that produced file_change rows. One event per step
+            // (rather than one per row) matches the UI consumer: the
+            // step card refreshes once with the full row set.
+            for (const s of newSteps) {
+              this.emitFilesChangedIfAny(run, s);
+            }
+          }
+
+          // Maybe-alert always runs so firedAlerts gets seeded; pass `silent`
+          // so it suppresses emits during the boot backfill but still records
+          // which alert keys were "already seen" pre-boot.
+          await this.maybeAlert(run, newSteps, silent);
+
+          // Fire run:completed only on the in_progress → ok/error transition,
+          // not every tick a completed run gets re-ingested. During the
+          // silent backfill we never emit; we just record final status.
+          const isTerminal = run.status === "ok" || run.status === "error";
+          const wasTerminal = prevStatus === "ok" || prevStatus === "error";
+          if (!silent && isTerminal && !wasTerminal) {
             this.emit("data", {
-              type: "run:updated",
+              type: "run:completed",
               run,
-              new_steps: newSteps,
             } satisfies LiveEvent);
           }
-          // v0.3 §8.5 — emit `files:changed` for every freshly-ingested
-          // step that produced file_change rows. One event per step
-          // (rather than one per row) matches the UI consumer: the
-          // step card refreshes once with the full row set.
-          for (const s of newSteps) {
-            this.emitFilesChangedIfAny(run, s);
-          }
-        }
-
-        // Maybe-alert always runs so firedAlerts gets seeded; pass `silent`
-        // so it suppresses emits during the boot backfill but still records
-        // which alert keys were "already seen" pre-boot.
-        await this.maybeAlert(run, newSteps, silent);
-
-        // Fire run:completed only on the in_progress → ok/error transition,
-        // not every tick a completed run gets re-ingested. During the
-        // silent backfill we never emit; we just record final status.
-        const isTerminal = run.status === "ok" || run.status === "error";
-        const wasTerminal = prevStatus === "ok" || prevStatus === "error";
-        if (!silent && isTerminal && !wasTerminal) {
-          this.emit("data", {
-            type: "run:completed",
-            run,
-          } satisfies LiveEvent);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -532,7 +569,7 @@ export class LiveInspector extends EventEmitter {
    */
   private detectFileChangeArrivals(silent: boolean): void {
     const now = Date.now();
-    for (const run of listRuns(this.store, { limit: ARRIVAL_SCAN_RUN_LIMIT })) {
+    for (const run of listRuns(this.store, { limit: ARRIVAL_SCAN_RUN_LIMIT, includeChildren: true })) {
       const recentTerminal =
         run.ended_at !== undefined &&
         now - new Date(run.ended_at).getTime() < RECENT_TERMINAL_WINDOW_MS;

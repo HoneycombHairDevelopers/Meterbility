@@ -13,6 +13,7 @@ import {
 } from "@meterbility/shared";
 import {
   getBaselineTree,
+  getChildRuns,
   getFileChange,
   getRun,
   getStep,
@@ -233,12 +234,21 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         (r.cwd ?? "").toLowerCase().includes(project),
       );
     }
+    // v8 — nest carved agent runs under their parent (2A). Children are
+    // excluded from the default listing itself; the indexed per-parent
+    // lookup fills them in for display.
+    const childrenByParent = new Map<string, Run[]>();
+    for (const r of runs) {
+      const kids = getChildRuns(store, r.run_id);
+      if (kids.length > 0) childrenByParent.set(r.run_id, kids);
+    }
     return c.html(
       renderShell(
         "Runs",
         renderRunList(runs, {
           totalAvailable: listRuns(store, { limit: 1000 }).length,
           filters: { status, tool, project },
+          childrenByParent,
         }),
         shellOpts(),
       ),
@@ -340,9 +350,15 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         );
       }
     }
+    // v8 — delegation lineage for the header (parent link on carved
+    // agent runs; agent list + display-time fleet rollup on parents).
+    const lineage = {
+      parent: run.parent_run_id ? getRun(store, run.parent_run_id) : undefined,
+      children: getChildRuns(store, run.run_id),
+    };
     const shell = renderShell(
       run.title ?? run.run_id,
-      renderRun(run, steps, annotations, forks, stepDecisions, fcByStep, probePanel),
+      renderRun(run, steps, annotations, forks, stepDecisions, fcByStep, probePanel, lineage),
       shellOpts(),
     );
     if (process.env.METERBILITY_DEBUG && shell.length > 2_000_000) {
@@ -653,7 +669,16 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     );
   });
 
-  app.get("/api/runs", (c) => c.json(listRuns(store, { limit: 200 })));
+  // v8 — default excludes carved child runs (they nest under parents);
+  // ?children=1 includes them for consumers that want the flat set.
+  app.get("/api/runs", (c) =>
+    c.json(
+      listRuns(store, {
+        limit: 200,
+        includeChildren: c.req.query("children") === "1",
+      }),
+    ),
+  );
   app.get("/api/runs/:id", (c) => {
     const run = getRun(store, c.req.param("id"));
     return run ? c.json(run) : c.notFound();
@@ -881,7 +906,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     const status: Run["status"] =
       body.status === "error" || body.status === "abandoned" ? body.status : "ok";
     const cutoffMs = Date.now() - olderThanMin * 60_000;
-    const all = listRuns(store, { limit: 1000 });
+    const all = listRuns(store, { limit: 1000, includeChildren: true });
     const targets = all.filter((r) => {
       if (r.status !== "in_progress") return false;
       if (source && r.source_runtime !== source) return false;
@@ -1213,7 +1238,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
     if (!t) return c.notFound();
     let runs = body.run_id
       ? [getRun(store, body.run_id)].filter((r): r is NonNullable<typeof r> => !!r)
-      : listRuns(store, { limit: body.limit ?? 50 });
+      : listRuns(store, { limit: body.limit ?? 50, includeChildren: true });
     const results = runs.map((r) => runTest(store, t, r.run_id));
     return c.json(results);
   });
@@ -1352,7 +1377,7 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
   // Ingest trigger
   app.post("/api/ingest", async (c) => {
     const body = (await c.req.json()) as {
-      runtime?: "claude-code" | "codex-cli" | "cursor";
+      runtime?: "claude-code" | "codex-cli" | "cursor" | "github-copilot";
       limit?: number;
       path?: string;
     };
@@ -1396,6 +1421,27 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
           const r = await ingestCodexSession(store, p);
           if (r.status === "ok") {
             runs += 1;
+            steps += r.steps_added;
+            bytes += r.bytes_read;
+          }
+        }
+      } else if (body.runtime === "github-copilot") {
+        const { discoverCopilotSessions, ingestCopilotSession } = await import(
+          "@meterbility/github-copilot-adapter"
+        );
+        let paths: string[] = [];
+        if (body.path) paths = [body.path];
+        else {
+          const sessions = await discoverCopilotSessions();
+          paths = sessions.map((s) => s.path);
+          if (body.limit) paths = paths.slice(0, body.limit);
+        }
+        for (const p of paths) {
+          const r = await ingestCopilotSession(store, p);
+          if (r.status === "ok") {
+            // A squad session counts each carved agent run alongside
+            // the parent — they are real runs (aggregation policy).
+            runs += 1 + r.child_run_ids.length;
             steps += r.steps_added;
             bytes += r.bytes_read;
           }

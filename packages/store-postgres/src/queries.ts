@@ -166,8 +166,9 @@ export async function pgInsertRun(store: PostgresStore, run: Run): Promise<void>
        title, status, started_at, ended_at, git_branch, cwd,
        fork_origin_run_id, fork_origin_step_id,
        tokens_total_input, tokens_total_output, tokens_total_cached,
-       cost_cents, step_count, tags, provider, upstream_host
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21)
+       cost_cents, step_count, tags, provider, upstream_host,
+       parent_run_id, parent_run_step_id
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21,$22,$23)
      ON CONFLICT (run_id) DO UPDATE SET
        status = EXCLUDED.status,
        ended_at = EXCLUDED.ended_at,
@@ -178,7 +179,9 @@ export async function pgInsertRun(store: PostgresStore, run: Run): Promise<void>
        step_count = EXCLUDED.step_count,
        tags = EXCLUDED.tags,
        provider = COALESCE(EXCLUDED.provider, runs.provider),
-       upstream_host = COALESCE(EXCLUDED.upstream_host, runs.upstream_host)`,
+       upstream_host = COALESCE(EXCLUDED.upstream_host, runs.upstream_host),
+       parent_run_id = COALESCE(EXCLUDED.parent_run_id, runs.parent_run_id),
+       parent_run_step_id = COALESCE(EXCLUDED.parent_run_step_id, runs.parent_run_step_id)`,
     [
       run.run_id,
       run.agent_id,
@@ -201,6 +204,8 @@ export async function pgInsertRun(store: PostgresStore, run: Run): Promise<void>
       JSON.stringify(run.tags ?? []),
       run.provider ?? null,
       run.upstream_host ?? null,
+      run.parent_run_id ?? null,
+      run.parent_run_step_id ?? null,
     ],
   );
 }

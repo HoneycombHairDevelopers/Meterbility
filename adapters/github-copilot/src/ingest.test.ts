@@ -10,6 +10,7 @@ import {
   listFileChanges,
   listRuns,
   listSteps,
+  setIngestOffset,
 } from "@meterbility/collector";
 import { ingestCopilotSession } from "./ingest.ts";
 import { parseEventsBuffer } from "./parser.ts";
@@ -206,7 +207,7 @@ test("re-ingest is a no-op on unchanged file and duplicates nothing on growth", 
     [...first.child_run_ids].sort(),
     "child run ids stable across re-carve",
   );
-  const runs = listRuns(store, {});
+  const runs = listRuns(store, { includeChildren: true });
   assert.equal(runs.length, 3, "no duplicate runs after re-carve");
   const parentSteps = listSteps(store, first.run_id);
   const seqs = parentSteps.map((s) => s.sequence);
@@ -358,6 +359,59 @@ test("shape probe flags unknown event types without breaking ingest", async () =
   const path = writeSession(events);
   const r = await ingestCopilotSession(store, path);
   assert.equal(r.status, "ok", "ingest survives unknown event types");
+});
+
+test("M2 gate: full re-carve produces byte-identical DB state", async () => {
+  const store = freshStore();
+  const path = writeSession(squadSession(), { workspaceYaml: "cwd: /repo\n" });
+  await ingestCopilotSession(store, path);
+
+  const dump = () => {
+    const out: Record<string, unknown[]> = {};
+    for (const table of [
+      "runs",
+      "steps",
+      "file_change",
+      "annotations",
+      "projects",
+      "agents",
+      "context_snapshots",
+    ]) {
+      out[table] = store.db
+        .prepare(`SELECT * FROM ${table} ORDER BY 1`)
+        .all()
+        // created_at on projects/agents/annotations is wall-clock; the
+        // byte-identical guarantee covers carve-derived content.
+        .map((row) => {
+          const r = { ...(row as Record<string, unknown>) };
+          delete r.created_at;
+          delete r.last_ingested_at;
+          return r;
+        });
+    }
+    return JSON.stringify(out);
+  };
+
+  const before = dump();
+  // Force a whole-file re-carve (the offset is only a change detector).
+  setIngestOffset(store, "github-copilot", path, 0);
+  const r2 = await ingestCopilotSession(store, path);
+  assert.equal(r2.status, "ok");
+  const after = dump();
+  assert.equal(after, before, "re-carve must be byte-identical");
+});
+
+test("listRuns excludes carved children by default; includeChildren restores the flat set", async () => {
+  const store = freshStore();
+  const path = writeSession(squadSession(), { workspaceYaml: "cwd: /repo\n" });
+  const r = await ingestCopilotSession(store, path);
+
+  const topLevel = listRuns(store, {});
+  assert.equal(topLevel.length, 1, "children excluded from default listing");
+  assert.equal(topLevel[0]!.run_id, r.run_id);
+
+  const flat = listRuns(store, { includeChildren: true });
+  assert.equal(flat.length, 3, "includeChildren restores parent + agents");
 });
 
 test("REGRESSION v8: fresh schema has lineage columns; lineage-free runs list identically", async () => {
