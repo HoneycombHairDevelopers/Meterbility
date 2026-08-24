@@ -37,7 +37,15 @@ export type SettingKey =
   // The api_key is team-scoped (Basic auth); base override is for tests
   // and self-hosted gateways. isSecret() masks the key via `api_key`.
   | "cursor.admin_api_key"
-  | "cursor.admin_api_base";
+  | "cursor.admin_api_base"
+  // meter live (v0.6.x) — capture-attachment heartbeat. ISO timestamp
+  // written every evaluator tick by the `meter live` instance that
+  // holds the FileSentinel; deleted on clean shutdown. Consumers: the
+  // second-instance viewer-guard (fresh heartbeat → new instance runs
+  // viewer-only) and the CLI nudge (stale heartbeat + recent capture
+  // rows → "meter live to attach" hint). A crashed holder's heartbeat
+  // self-expires via staleness — no lock, no pidfile.
+  | "live.heartbeat";
 
 /**
  * Runtime enumeration of every SettingKey — keep in sync with the union
@@ -60,6 +68,7 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   "capture.files.max_skip_bytes",
   "cursor.admin_api_key",
   "cursor.admin_api_base",
+  "live.heartbeat",
 ];
 
 export function getSetting(store: Store, key: SettingKey): string | undefined {
