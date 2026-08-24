@@ -22,8 +22,11 @@ import type { Client } from "pg";
  *             Additive-only per v0.2 §17.
  *   v4 → v5 — runs.provider + steps.provider + runs.upstream_host
  *             (proxy multi-upstream; sqlite v6 equivalent)
+ *   v5 → v6 — steps.ttft_ms + steps.ttft_visible_ms (sqlite v7)
+ *   v6 → v7 — runs.parent_run_id + runs.parent_run_step_id
+ *             (delegation lineage; sqlite v8 equivalent)
  */
-export const POSTGRES_SCHEMA_VERSION = 6;
+export const POSTGRES_SCHEMA_VERSION = 7;
 
 export async function ensurePostgresSchema(client: Client): Promise<void> {
   await client.query(`
@@ -68,8 +71,13 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
       step_count INTEGER NOT NULL DEFAULT 0,
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
       provider TEXT,
-      upstream_host TEXT
+      upstream_host TEXT,
+      parent_run_id TEXT REFERENCES runs(run_id),
+      parent_run_step_id TEXT
     );
+
+    CREATE INDEX IF NOT EXISTS idx_runs_parent
+      ON runs(parent_run_id);
 
     CREATE INDEX IF NOT EXISTS idx_runs_project_started
       ON runs(project_id, started_at DESC);
@@ -273,6 +281,18 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
   );
   await client.query(
     "ALTER TABLE steps ADD COLUMN IF NOT EXISTS ttft_visible_ms INTEGER",
+  );
+
+  // v7 — delegation lineage (see collector schema v8 note). Nullable;
+  // only carved child runs of multi-agent sessions set them.
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS parent_run_id TEXT",
+  );
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS parent_run_step_id TEXT",
+  );
+  await client.query(
+    "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)",
   );
 
   const versionRow = await client.query(

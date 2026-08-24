@@ -14,6 +14,10 @@ import {
   discoverCursorWorkspaces,
   ingestCursorGlobal,
 } from "@meterbility/cursor-adapter";
+import {
+  discoverCopilotSessions,
+  ingestCopilotSession,
+} from "@meterbility/github-copilot-adapter";
 import { openStore } from "../util.ts";
 
 export function registerIngestCommand(program: Command): void {
@@ -189,6 +193,66 @@ export function registerIngestCommand(program: Command): void {
         console.log(
           pc.bold(
             `${r.composers_ingested}/${r.composers_seen} composer(s) · ${r.steps_added} step(s)`,
+          ),
+        );
+      } finally {
+        store.close();
+      }
+    });
+
+  ingest
+    .command("github-copilot [path]")
+    .description(
+      "Import GitHub Copilot CLI sessions. With no path, ingests every session under ~/.copilot/session-state (and the legacy history-session-state). Multi-agent (squad) sessions carve into parent + per-agent child runs.",
+    )
+    .option("--cwd <dir>", "Override cwd attribution (defaults to the session's workspace.yaml)")
+    .option("--limit <n>", "Cap number of sessions ingested", (v) => parseInt(v, 10))
+    .action(async (
+      path: string | undefined,
+      opts: { cwd?: string; limit?: number },
+    ) => {
+      const store = openStore();
+      try {
+        let paths: string[] = [];
+        if (path) {
+          if (!existsSync(path)) throw new Error(`not found: ${path}`);
+          paths = [path];
+        } else {
+          const sessions = await discoverCopilotSessions();
+          paths = sessions.map((s) => s.path);
+          if (opts.limit) paths = paths.slice(0, opts.limit);
+        }
+        if (paths.length === 0) {
+          console.log(pc.dim("no Copilot sessions to ingest"));
+          return;
+        }
+        let runs = 0;
+        let totalSteps = 0;
+        let totalBytes = 0;
+        let totalChildren = 0;
+        for (const p of paths) {
+          const r = await ingestCopilotSession(store, p, { cwd: opts.cwd });
+          if (r.status === "empty") {
+            console.log(`${pc.dim("skip")}  ${p} ${pc.dim("(no new bytes)")}`);
+            continue;
+          }
+          runs += 1;
+          totalSteps += r.steps_added;
+          totalBytes += r.bytes_read;
+          totalChildren += r.child_run_ids.length;
+          const fleet =
+            r.child_run_ids.length > 0
+              ? ` agents=${r.child_run_ids.length}`
+              : "";
+          console.log(
+            `${pc.green("ingested")}  ${p}  ${pc.dim(
+              `run=${r.run_id.slice(0, 12)}${fleet} steps=${r.steps_added} bytes=${r.bytes_read}`,
+            )}`,
+          );
+        }
+        console.log(
+          pc.bold(
+            `\n${runs} session(s) updated · ${totalChildren} agent run(s) · ${totalSteps} step(s) · ${(totalBytes / 1024).toFixed(1)}KB read`,
           ),
         );
       } finally {

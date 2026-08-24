@@ -32,7 +32,7 @@
         "agent_id": { "type": "string" },
         "project_id": { "type": "string" },
         "source_runtime": {
-          "enum": ["claude-code", "codex-cli", "cursor", "sdk-ts", "sdk-py", "fork"]
+          "enum": ["claude-code", "codex-cli", "cursor", "github-copilot", "sdk-ts", "sdk-py", "fork"]
         },
         "source_session_id": { "type": "string" },
         "title": { "type": "string" },

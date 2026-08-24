@@ -48,6 +48,9 @@ interface RunRow {
   // v6 — nullable: only proxy multi-upstream capture sets them.
   provider: string | null;
   upstream_host: string | null;
+  // v8 — nullable: only carved child runs of multi-agent sessions set them.
+  parent_run_id: string | null;
+  parent_run_step_id: string | null;
 }
 
 interface StepRow {
@@ -102,6 +105,8 @@ function rowToRun(row: RunRow): Run {
     tags: JSON.parse(row.tags) as string[],
     provider: row.provider ?? undefined,
     upstream_host: row.upstream_host ?? undefined,
+    parent_run_id: row.parent_run_id ?? undefined,
+    parent_run_step_id: row.parent_run_step_id ?? undefined,
     baseline_tree_id: row.baseline_tree_id ?? undefined,
     probe_state:
       row.probe_state === "paused" || row.probe_state === "resumed"
@@ -196,8 +201,9 @@ export function insertRun(store: Store, run: Run): void {
         fork_origin_run_id, fork_origin_step_id,
         tokens_total_input, tokens_total_output, tokens_total_cached,
         cost_cents, step_count, tags,
-        baseline_tree_id, probe_state, provider, upstream_host
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        baseline_tree_id, probe_state, provider, upstream_host,
+        parent_run_id, parent_run_step_id
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       run.run_id,
@@ -223,7 +229,23 @@ export function insertRun(store: Store, run: Run): void {
       run.probe_state ?? null,
       run.provider ?? null,
       run.upstream_host ?? null,
+      run.parent_run_id ?? null,
+      run.parent_run_step_id ?? null,
     );
+}
+
+/**
+ * v8 — children of a delegating run, carve order (started_at, run_id).
+ * The default run listing excludes children (parent_run_id IS NULL —
+ * the M2 getRuns change); this is the expand path under a parent row.
+ */
+export function getChildRuns(store: Store, parentRunId: string): Run[] {
+  const rows = store.db
+    .prepare(
+      "SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at, run_id",
+    )
+    .all(parentRunId) as RunRow[];
+  return rows.map(rowToRun);
 }
 
 export function updateRunTotals(store: Store, runId: string): void {

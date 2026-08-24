@@ -54,3 +54,26 @@ export function claudeFileHistoryDir(sessionId: string): string {
 export function encodeCwdForClaude(cwd: string): string {
   return cwd.replace(/[\/._]/g, "-");
 }
+
+/**
+ * GitHub Copilot CLI's config/state directory. `COPILOT_HOME` mirrors
+ * the CLAUDE_HOME override pattern for tests and non-default installs.
+ */
+export function copilotHome(): string {
+  return process.env.COPILOT_HOME ?? join(homedir(), ".copilot");
+}
+
+/**
+ * Copilot CLI session persistence: one directory per session containing
+ * `events.jsonl` (typed event log) plus `workspace.yaml` metadata.
+ * NOTE: this is GitHub's undocumented private exhaust, not a stable
+ * product surface — the adapter's shape probe is the drift alarm.
+ */
+export function copilotSessionStateRoot(): string {
+  return join(copilotHome(), "session-state");
+}
+
+/** Legacy session storage on older Copilot CLI installs. Probed second. */
+export function copilotLegacySessionRoot(): string {
+  return join(copilotHome(), "history-session-state");
+}

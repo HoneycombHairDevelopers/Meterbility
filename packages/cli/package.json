@@ -15,6 +15,7 @@
     "@meterbility/claude-code-adapter": "^0.6.0",
     "@meterbility/codex-cli-adapter": "^0.6.0",
     "@meterbility/cursor-adapter": "^0.6.0",
+    "@meterbility/github-copilot-adapter": "^0.6.0",
     "@meterbility/agent": "^0.6.0",
     "@meterbility/proxy": "^0.6.0",
     "@meterbility/store-postgres": "^0.6.0",

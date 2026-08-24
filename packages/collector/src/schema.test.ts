@@ -60,11 +60,11 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
 test("fresh apply lands schema v6 with all new tables + columns", () => {
   const db = freshDb();
   ensureSchema(db);
-  assert.equal(SCHEMA_VERSION, 7, "SCHEMA_VERSION constant must be 7");
+  assert.equal(SCHEMA_VERSION, 8, "SCHEMA_VERSION constant must be 8");
   const row = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string } | undefined;
-  assert.equal(row?.value, "7");
+  assert.equal(row?.value, "8");
 
   // New tables exist.
   assert.equal(tableExists(db, "file_change"), true, "file_change table missing");
@@ -89,6 +89,10 @@ test("fresh apply lands schema v6 with all new tables + columns", () => {
   // v7: streamed-capture timing columns.
   assert.equal(hasColumn(db, "steps", "ttft_ms"), true);
   assert.equal(hasColumn(db, "steps", "ttft_visible_ms"), true);
+
+  // v8: delegation lineage columns (copilot-squad-adapter).
+  assert.equal(hasColumn(db, "runs", "parent_run_id"), true);
+  assert.equal(hasColumn(db, "runs", "parent_run_step_id"), true);
 
   // Indexes are sanity-checked via the master table — the names must
   // match what queries.ts will rely on in Track A.
@@ -122,7 +126,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .all() as Array<{ value: string }>;
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.value, "7");
+  assert.equal(rows[0]!.value, "8");
   // Tables are still singular (the master table doesn't grow on re-apply).
   const fcCount = db
     .prepare(
@@ -227,11 +231,25 @@ test("v3 → v6 migration: hand-built v3 db gets ALTER'd to the current version 
   assert.equal(legacy!.provider, null, "legacy rows get NULL provider");
   assert.equal(legacy!.upstream_host, null);
 
+  // v8 columns land on the hand-built legacy DB too, defaulting NULL.
+  assert.equal(hasColumn(db, "runs", "parent_run_id"), true);
+  assert.equal(hasColumn(db, "runs", "parent_run_step_id"), true);
+  const legacyLineage = db
+    .prepare(
+      "SELECT parent_run_id, parent_run_step_id FROM runs WHERE run_id=?",
+    )
+    .get("run_legacy") as {
+    parent_run_id: string | null;
+    parent_run_step_id: string | null;
+  };
+  assert.equal(legacyLineage.parent_run_id, null);
+  assert.equal(legacyLineage.parent_run_step_id, null);
+
   // schema_version was bumped.
   const ver = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string };
-  assert.equal(ver.value, "7");
+  assert.equal(ver.value, "8");
   db.close();
 });
 

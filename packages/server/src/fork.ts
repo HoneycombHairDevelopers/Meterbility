@@ -48,6 +48,14 @@ export async function forkRun(
 ): Promise<ForkOutcome> {
   const origin = getRun(store, args.origin_run_id);
   if (!origin) throw new Error(`unknown origin run: ${args.origin_run_id}`);
+  // v8 — carved child runs (delegation lineage) are lineage-only: a
+  // child is a slice of a shared session file, so fork/replay's
+  // run↔file assumption doesn't hold. Derived rule, no extra column.
+  if (origin.parent_run_id) {
+    throw new Error(
+      `run ${origin.run_id} is a carved child of ${origin.parent_run_id} and cannot be forked; fork the parent run instead`,
+    );
+  }
 
   const targetStep =
     typeof args.at === "number"

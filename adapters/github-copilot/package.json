@@ -1,0 +1,51 @@
+{
+  "name": "@meterbility/github-copilot-adapter",
+  "version": "0.6.1",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@meterbility/collector": "^0.6.0",
+    "@meterbility/shared": "^0.6.0",
+    "@meterbility/spec": "^0.6.0"
+  },
+  "description": "GitHub Copilot CLI session capture adapter for Meterbility — parses ~/.copilot/session-state events.jsonl and carves multi-agent (squad) sessions into parent/child runs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HoneycombHairDevelopers/Meterbility.git",
+    "directory": "adapters/github-copilot"
+  },
+  "homepage": "https://github.com/HoneycombHairDevelopers/Meterbility#readme",
+  "bugs": {
+    "url": "https://github.com/HoneycombHairDevelopers/Meterbility/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "types": "dist/index.d.ts",
+  "tsup": {
+    "entry": [
+      "src/index.ts"
+    ],
+    "format": [
+      "esm"
+    ],
+    "dts": true,
+    "clean": true
+  },
+  "scripts": {
+    "build": "tsup"
+  }
+}

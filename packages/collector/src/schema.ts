@@ -25,8 +25,12 @@ import type Database from "better-sqlite3";
  *             identity + host provenance)
  *   v6 → v7 — steps.ttft_ms + steps.ttft_visible_ms (streamed-capture
  *             time-to-first-token; the gap is reasoning burn)
+ *   v7 → v8 — runs.parent_run_id + runs.parent_run_step_id (delegation
+ *             lineage: each agent in a multi-agent session becomes a
+ *             child run; github-copilot adapter is the first producer),
+ *             annotations.kind gains 'context_compaction'
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export function ensureSchema(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
@@ -75,7 +79,9 @@ export function ensureSchema(db: Database.Database): void {
       step_count INTEGER NOT NULL DEFAULT 0,
       tags TEXT NOT NULL DEFAULT '[]',
       provider TEXT,
-      upstream_host TEXT
+      upstream_host TEXT,
+      parent_run_id TEXT REFERENCES runs(run_id),
+      parent_run_step_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_runs_project_started
@@ -84,6 +90,10 @@ export function ensureSchema(db: Database.Database): void {
       ON runs(source_session_id);
     CREATE INDEX IF NOT EXISTS idx_runs_fork_origin
       ON runs(fork_origin_run_id);
+    -- idx_runs_parent is created AFTER ensureColumn below so legacy
+    -- (pre-v8) DBs don't trip on an index over a column that doesn't
+    -- exist yet at executescript time — same pattern as
+    -- idx_annotations_kind.
 
     CREATE TABLE IF NOT EXISTS steps (
       step_id TEXT PRIMARY KEY,
@@ -148,7 +158,8 @@ export function ensureSchema(db: Database.Database): void {
       verdict TEXT,
       note TEXT,
       kind TEXT NOT NULL DEFAULT 'comment'
-        CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped')),
+        CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped',
+                        'context_compaction')),
       created_at TEXT NOT NULL
     );
 
@@ -379,6 +390,22 @@ export function ensureSchema(db: Database.Database): void {
   // ttft_visible_ms - ttft_ms = the invisible reasoning burn.
   ensureColumn(db, "steps", "ttft_ms", "INTEGER");
   ensureColumn(db, "steps", "ttft_visible_ms", "INTEGER");
+
+  // v8 — delegation lineage (copilot-squad-adapter design). Nullable:
+  // only carved child runs of multi-agent sessions set them. Plain TEXT
+  // via ALTER (no REFERENCES clause) matching the house pattern for
+  // migrated columns — fresh DBs get the FK from CREATE TABLE above;
+  // the app layer only ever writes ids it just inserted in the same
+  // carve transaction. `parent_run_step_id` is a soft reference by
+  // design (see the Run type docstring). NOTE the CHECK nuance from v5
+  // applies to 'context_compaction' too: legacy-migrated DBs enforce
+  // the annotation kind enum at the API layer only.
+  ensureColumn(db, "runs", "parent_run_id", "TEXT");
+  ensureColumn(db, "runs", "parent_run_step_id", "TEXT");
+  // Index AFTER ensureColumn — see the note in the CREATE TABLE block.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)",
+  );
 
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }
