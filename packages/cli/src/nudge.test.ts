@@ -218,3 +218,22 @@ test("heartbeat map: per-root claims, legacy wildcard compat, root-scoped releas
     store.close();
   }
 });
+
+test("heartbeat map: a race loser's release cannot erase the winner's owned claim", async () => {
+  const home = freshHome();
+  const { writeLiveHeartbeat, clearLiveHeartbeat, liveCaptureHeldFor } =
+    await import("@meterbility/collector");
+  const store = Store.open({ path: join(home, "meterbility.db") });
+  try {
+    writeLiveHeartbeat(store, "/repo/x", "winner-1");
+    // Loser exits and releases with ITS owner id — the winner's claim
+    // must survive (codex structured review P2).
+    clearLiveHeartbeat(store, "/repo/x", "loser-2");
+    assert.equal(liveCaptureHeldFor(store, "/repo/x"), true);
+    // The winner's own release works.
+    clearLiveHeartbeat(store, "/repo/x", "winner-1");
+    assert.equal(liveCaptureHeldFor(store, "/repo/x"), false);
+  } finally {
+    store.close();
+  }
+});

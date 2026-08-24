@@ -277,7 +277,7 @@ export function registerLiveCommand(program: Command): void {
             // runsSentinel too: the startup claim exists even if the
             // sentinel later failed to start.
             try {
-              clearLiveHeartbeat(store, filesRoot);
+              clearLiveHeartbeat(store, filesRoot, ownerId);
             } catch {
               // best-effort — staleness self-expires anyway
             }
@@ -396,7 +396,7 @@ export function registerLiveCommand(program: Command): void {
             // fresh heartbeat with no sentinel behind it would block
             // other instances from capturing for up to 2 minutes.
             try {
-              clearLiveHeartbeat(store, filesRoot);
+              clearLiveHeartbeat(store, filesRoot, ownerId);
             } catch {
               // staleness self-expires
             }

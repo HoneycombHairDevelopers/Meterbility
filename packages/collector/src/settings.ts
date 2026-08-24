@@ -146,11 +146,25 @@ export function writeLiveHeartbeat(store: Store, root: string, owner?: string): 
   setSetting(store, "live.heartbeat", JSON.stringify(next));
 }
 
-/** Release ONLY this root's claim; other roots' holders are untouched. */
-export function clearLiveHeartbeat(store: Store, root: string): void {
+/**
+ * Release ONLY this root's claim; other roots' holders are untouched.
+ * With `expectedOwner`, the entry is removed only when it is ownerless
+ * or owned by the caller — a race LOSER exiting must not erase the
+ * WINNER's live claim (codex structured review P2).
+ */
+export function clearLiveHeartbeat(
+  store: Store,
+  root: string,
+  expectedOwner?: string,
+): void {
   const next: Record<string, LiveClaim> = {};
   for (const [r, claim] of Object.entries(readLiveHeartbeats(store))) {
-    if (r !== root && isLiveHeartbeatFresh(claim.ts)) next[r] = claim;
+    const keepForeign =
+      r === root &&
+      expectedOwner !== undefined &&
+      claim.owner !== undefined &&
+      claim.owner !== expectedOwner;
+    if ((r !== root || keepForeign) && isLiveHeartbeatFresh(claim.ts)) next[r] = claim;
   }
   if (Object.keys(next).length === 0) {
     deleteSetting(store, "live.heartbeat");

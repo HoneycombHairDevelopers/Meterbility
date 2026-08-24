@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -184,6 +185,7 @@ export function registerWatchCommand(program: Command): void {
         let sentinel: FileSentinel | undefined;
         let heartbeat: NodeJS.Timeout | undefined;
         let watchRoot: string | undefined;
+        const ownerId = `${process.pid}-${randomUUID().slice(0, 8)}`;
         if (opts.files) {
           watchRoot = resolve(opts.filesDir ?? process.cwd());
           if (liveCaptureHeldFor(store, watchRoot)) {
@@ -233,13 +235,13 @@ export function registerWatchCommand(program: Command): void {
             // SQLITE_BUSY can't be misreported as a capture failure
             // that tears down a healthy sentinel (adversarial 5b).
             try {
-              writeLiveHeartbeat(store, watchRoot!);
+              writeLiveHeartbeat(store, watchRoot!, ownerId);
             } catch {
               // best-effort — refresher below re-writes
             }
             heartbeat = setInterval(() => {
               try {
-                writeLiveHeartbeat(store, watchRoot!);
+                writeLiveHeartbeat(store, watchRoot!, ownerId);
               } catch {
                 // best-effort — staleness self-expires
               }
@@ -258,7 +260,7 @@ export function registerWatchCommand(program: Command): void {
               if (heartbeat) clearInterval(heartbeat);
               heartbeat = undefined;
               try {
-                clearLiveHeartbeat(store, watchRoot!);
+                clearLiveHeartbeat(store, watchRoot!, ownerId);
               } catch {
                 // staleness self-expires
               }
@@ -273,7 +275,7 @@ export function registerWatchCommand(program: Command): void {
           sentinel?.stop();
           if (heartbeat && watchRoot) {
             try {
-              clearLiveHeartbeat(store, watchRoot);
+              clearLiveHeartbeat(store, watchRoot, ownerId);
             } catch {
               // best-effort — staleness self-expires
             }
