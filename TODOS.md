@@ -192,7 +192,7 @@ Eliminate the forgetting failure entirely: the already-installed hook plane
 auto-spawns a detached ingest+sentinel process on the first tool call of a
 session; `meter live` becomes a pure viewer attaching to capture that is
 already happening. Deferred twice (office-hours D9, eng review D1) to stay
-out of the sell-track demo window. Consent posture settled: explicit consent
+out of the current release window. Consent posture settled: explicit consent
 at `meter init --hooks` time, automation at run-time — no silent always-on
 daemon. The `live.heartbeat` settings row + viewer-guard shipped with
 `meter live` is the designed insertion point (auto-spawned capture holds the
@@ -307,7 +307,7 @@ its "Phased follow-ons" + "NOT in scope" sections for rationale:
 - Replay/fork over carved child runs (lineage-only in v7; fork.ts
   rejects via derived rule)
 - Squad sidecar annotations + watch-mode wave grouping — gated on the
-  Brady falsifier checkpoint outcome (premise 5 of the design doc)
+  ecosystem-validation checkpoint outcome (premise 5 of the design doc)
 These are intentional deferrals, not omissions; split into own entries
 when picked up.
 
