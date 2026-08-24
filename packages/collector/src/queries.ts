@@ -574,8 +574,9 @@ export function maxMainBandSequence(store: Store, runId: string): number {
  * Run id of the most recent watch/hook-derived FileChange younger than
  * `cutoffIso`, or undefined. Owns the `derived_from='filesystem_watch'`
  * discriminator and the SQL so the CLI nudge doesn't reach into the
- * schema with raw strings. LIMIT 1 existence probe — no covering index
- * on purpose (TODOS: add only if it shows in CLI startup latency).
+ * schema with raw strings. LIMIT 1 existence probe, backed by the
+ * `idx_fc_derived_created` covering index (added in ensureSchema when
+ * the probe showed up in CLI startup latency on large stores).
  */
 export function latestRecentWatchCaptureRunId(
   store: Store,

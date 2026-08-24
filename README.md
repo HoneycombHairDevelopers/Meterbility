@@ -252,6 +252,7 @@ docs/
 | [Trace format](docs/trace-format.md) | Wire-format spec (export/import) |
 | [Roadmap follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
 | [Capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
+| [CHANGELOG](CHANGELOG.md) | What shipped in each release |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, PR conventions |
 | [SECURITY](SECURITY.md) | Vulnerability disclosure |
 | [Third-party licenses](LICENSES-third-party.md) | Dependency audit |

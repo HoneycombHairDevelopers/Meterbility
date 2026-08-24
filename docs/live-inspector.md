@@ -89,12 +89,12 @@ await live.start();
 
 Tool-call inspection captures what the agent *thinks* it changed; it can't see what a `Bash` step actually did to disk (`sed`, `mv`, `npm install`, build scripts). v0.5 closes that gap with two capture paths that share one engine:
 
-| | Hook capture (`meter capture`) | FileSentinel (`meter watch --files`) |
+| | Hook capture (`meter capture`) | FileSentinel (`meter live` / `meter watch --files`) |
 |---|---|---|
 | Works for | Claude Code | any runtime (Codex, Cursor, proxy, …) |
 | Attribution | exact (the step whose Bash call it was) | heuristic (temporal proximity) |
 | Process model | ephemeral, fired per tool call | resident watcher |
-| Opt-in via | `meter init --hooks` | the `--files` flag |
+| Opt-in via | `meter init --hooks` | `meter live` (or `meter watch --files`) |
 
 Both paths emit `FileChange` rows with `derived_from = 'filesystem_watch'`, filter through `.meterbilityignore` + `.gitignore` + the shipped defaults, and defer to tool-call capture: when a step already has a full-fidelity `tool_call` row for a path, the filesystem observation is dropped (SPEC §3.1.3 — the partial Bash stubs are exactly what these supplement).
 
@@ -111,9 +111,24 @@ Every Bash call is bracketed: `pre` refreshes a persistent per-repo manifest (fo
 ### FileSentinel — the cross-vendor fallback
 
 ```bash
-meter watch --files                # watch every file under the current directory
+meter live                         # v0.6 front door: session ingest + sentinel, one command
+meter watch --files                # raw event stream (scripting) — same sentinel
 meter watch --files --files-dir ~/code/my-app --attribution-window 300
 ```
+
+As of v0.6, **`meter live` is the primary way to run the sentinel**: one
+command starts session ingest and file capture together, streams
+`step 42 · Edit src/foo.ts · +12 −3` lines as steps land, and prints a
+capture-health line that says honestly when the watcher is degraded (warn
+after >5s of filesystem-event silence, degraded after >15s only when there
+is definite write activity, plus a counter for events that arrived too late
+to attribute; `--json` streams a typed `capture:health` event).
+`meter watch --files` drives the same sentinel as a raw event stream for
+scripting — its help points humans at `meter live`. Both share a per-root,
+owner-identified heartbeat (the `live.heartbeat` settings row) so two
+watchers can never double-capture the same tree: a second instance attaches
+as a viewer (`--force-capture` overrides), and when capture is running with
+no viewer attached, the next `meter` command prints a one-line attach hint.
 
 `--files` takes no file argument — it watches the **entire directory tree recursively** (the current directory, or `--files-dir`). Every file is covered by default; the only things excluded are `.meterbilityignore` / `.gitignore` patterns, the shipped defaults (`node_modules/`, build artifacts, `.env`, keys, …), and `.git/` internals. To narrow what's captured, add patterns to `.meterbilityignore` — there is no per-file allowlist.
 
