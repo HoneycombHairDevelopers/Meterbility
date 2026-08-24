@@ -637,3 +637,166 @@ test("watch --files: single-path lifecycle — create → rewrite → rewrite �
     ctx.cleanup();
   }
 });
+
+// ─── v0.6.x capture-health instrumentation (meter live design §4) ────
+//
+// Additive, read-only observability on the sentinel. These tests also
+// graduate the 2026-08-19 "only additions" investigation's scenarios
+// (S2 / S3 / S4b) into pinned design-property documentation: quiet-
+// period net snapshot diffing coalesces same-window bursts BY DESIGN.
+
+test("health: raw-event accounting is pre-ignore — ignored paths still prove the stream is alive", async () => {
+  const ctx = await setup({ files: {} });
+  try {
+    const before = ctx.daemon.health();
+    assert.equal(before.raw_event_count, 0);
+    assert.equal(before.last_raw_event_at, undefined);
+    assert.ok(before.ready_at !== undefined, "prime() anchors ready_at");
+
+    // node_modules/ is in the default ignore set: no row may result,
+    // but the raw counters MUST advance — delivery for an ignored path
+    // is exactly the OS-stream liveness signal the health line needs
+    // when an agent is legitimately editing ignored files.
+    ctx.daemon.enqueue("node_modules/pkg/index.js");
+    await ctx.daemon.flushNow();
+
+    const after = ctx.daemon.health();
+    assert.equal(after.raw_event_count, 1);
+    assert.ok(after.last_raw_event_at !== undefined);
+    const rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 0, "ignored path never produces a row");
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("S2 (pinned design property): create+edit burst in one flush nets a single all-additions create with coalesced_events", async () => {
+  const ctx = await setup({ files: {} });
+  try {
+    // Investigation mutation script: create a,b → edit to a,b,c,d →
+    // edit to a,d,E — a true modify stream contains removals, but the
+    // sentinel diffs snapshot → current-bytes-at-flush, so one flush
+    // sees only the final content.
+    const abs = join(ctx.root, "app.ts");
+    writeFileSync(abs, "a\nb\n");
+    ctx.daemon.enqueue("app.ts");
+    writeFileSync(abs, "a\nb\nc\nd\n");
+    ctx.daemon.enqueue("app.ts");
+    writeFileSync(abs, "a\nd\nE\n");
+    ctx.daemon.enqueue("app.ts");
+    await ctx.daemon.flushNow();
+
+    const rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 1, "whole burst nets exactly one row");
+    const fc = rows[0]!;
+    assert.equal(fc.op, "create");
+    assert.equal(fc.lines_added, 3);
+    assert.equal(fc.lines_removed, 0);
+    const notes = fc.normalizer_notes as Record<string, unknown>;
+    assert.equal(
+      notes.coalesced_events,
+      3,
+      "row is badged as the net of 3 filesystem events",
+    );
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("S3 (pinned design property): late delivery after mutations → one create, then unchanged-skips", async () => {
+  const ctx = await setup({ files: {} });
+  try {
+    // Starved-host ordering: ALL mutations land before the first event
+    // is processed. First flush reads final bytes; each later (late)
+    // event dedupes as unchanged via blob-ref equality.
+    const abs = join(ctx.root, "late.ts");
+    writeFileSync(abs, "a\nb\n");
+    writeFileSync(abs, "a\nb\nc\nd\n");
+    writeFileSync(abs, "a\nd\nE\n");
+
+    ctx.daemon.enqueue("late.ts");
+    await ctx.daemon.flushNow();
+    ctx.daemon.enqueue("late.ts");
+    await ctx.daemon.flushNow();
+    ctx.daemon.enqueue("late.ts");
+    await ctx.daemon.flushNow();
+
+    const rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.op, "create");
+    assert.equal(rows[0]!.lines_added, 3);
+    assert.equal(rows[0]!.lines_removed, 0);
+    const skips = ctx.events.filter(
+      (e) => e.type === "file:skipped" && e.reason === "unchanged",
+    );
+    assert.equal(skips.length, 2, "late events absorb as unchanged skips");
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("S4b (pinned design property): same-window add-then-remove on a primed file nets only additions", async () => {
+  const ctx = await setup({ files: { "s4b.ts": "a\nb\n" } });
+  try {
+    // Edit 1 adds c,d; edit 2 removes d and adds E. Net vs the primed
+    // snapshot: +2 −0 — the removal vanishes because it removed a line
+    // the same window added.
+    const abs = join(ctx.root, "s4b.ts");
+    writeFileSync(abs, "a\nb\nc\nd\n");
+    ctx.daemon.enqueue("s4b.ts");
+    writeFileSync(abs, "a\nb\nc\nE\n");
+    ctx.daemon.enqueue("s4b.ts");
+    await ctx.daemon.flushNow();
+
+    const rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.op, "modify", "primed file is never mislabeled create");
+    assert.equal(rows[0]!.lines_added, 2);
+    assert.equal(rows[0]!.lines_removed, 0);
+    const notes = rows[0]!.normalizer_notes as Record<string, unknown>;
+    assert.equal(notes.coalesced_events, 2);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("health: single-event flush carries no coalesced_events annotation", async () => {
+  const ctx = await setup({ files: { "one.ts": "a\n" } });
+  try {
+    writeFileSync(join(ctx.root, "one.ts"), "a\nb\n");
+    ctx.daemon.enqueue("one.ts");
+    await ctx.daemon.flushNow();
+    const rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 1);
+    const notes = rows[0]!.normalizer_notes as Record<string, unknown>;
+    assert.equal(
+      notes.coalesced_events,
+      undefined,
+      "one event = one atomic change, no badge",
+    );
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("health: no-recent-step unattribution increments the loss counter", async () => {
+  // Step is far older than the 120s attribution window → the event is
+  // dropped as no-recent-step. That is data LOSS (the starvation worst
+  // case), and health must count it.
+  const ctx = await setup({ files: {}, stepAgeMs: 500_000 });
+  try {
+    writeFileSync(join(ctx.root, "lost.ts"), "x\n");
+    ctx.daemon.enqueue("lost.ts");
+    await ctx.daemon.flushNow();
+
+    assert.equal(ctx.daemon.health().unattributed_no_recent_step, 1);
+    const unattributed = ctx.events.filter(
+      (e) => e.type === "file:unattributed" && e.reason === "no-recent-step",
+    );
+    assert.equal(unattributed.length, 1);
+    const rows = listFileChanges(ctx.store, { runId: ctx.runId });
+    assert.equal(rows.length, 0);
+  } finally {
+    ctx.cleanup();
+  }
+});

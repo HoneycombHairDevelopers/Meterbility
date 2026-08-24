@@ -159,6 +159,28 @@ export class FileSentinel extends EventEmitter {
   private flushTimer?: NodeJS.Timeout;
   private watcher?: FSWatcher;
   private stopped = false;
+  // v0.6.x capture-health instrumentation (meter live). Read-only
+  // observability — none of these fields influence capture behavior.
+  // Raw-event accounting is PRE-ignore: delivery for an ignored path
+  // (node_modules/, .env) still proves the OS event stream is alive,
+  // which is the thing the health line measures. Null-filename
+  // overflow events count too, for the same reason.
+  private rawEventCount = 0;
+  private lastRawEventAt?: number;
+  /** Raw events per path since that path's last flush — >1 at flush
+   *  time means the row is a net diff of several filesystem events
+   *  (quiet-period coalescing), recorded as `coalesced_events`. */
+  private rawPerPath = new Map<string, number>();
+  /** Events so late they fell outside the attribution window — the
+   *  observable footprint of actual data loss under starvation. */
+  private unattributedNoRecentStep = 0;
+  /** Set when prime() completes; anchors the health startup grace. */
+  private readyAt?: number;
+  /** Coalesced-event count for the path currently being processed.
+   *  Instance state (not a parameter) because processPath fans out to
+   *  handleDelete/insertChange through several call sites and flushNow
+   *  processes paths strictly sequentially. */
+  private coalescedForCurrentPath = 0;
 
   constructor(store: Store, opts: FileSentinelOptions = {}) {
     super();
@@ -184,8 +206,12 @@ export class FileSentinel extends EventEmitter {
       (_event, filename) => {
         // Platform caveat: filename can be null (overflow / coalesced).
         // We can't rescan cheaply per event, so we drop it — a missed
-        // row, never a wrong one.
-        if (!filename) return;
+        // row, never a wrong one. It still counts as raw-event
+        // liveness: the stream delivered SOMETHING.
+        if (!filename) {
+          this.noteRawEvent();
+          return;
+        }
         this.enqueue(filename.split("\\").join("/"));
       },
     );
@@ -220,6 +246,8 @@ export class FileSentinel extends EventEmitter {
    * immediately instead of re-arming the timer. */
   enqueue(relPath: string): void {
     if (this.stopped) return;
+    // Health accounting BEFORE the ignore check (see field docs).
+    this.noteRawEvent(relPath);
     if (this.isIgnored(relPath)) return;
     if (this.pending.size === 0) this.pendingSince = Date.now();
     this.pending.add(relPath);
@@ -238,6 +266,35 @@ export class FileSentinel extends EventEmitter {
       },
       overdue ? 0 : this.debounceMs,
     );
+  }
+
+  private noteRawEvent(relPath?: string): void {
+    this.rawEventCount += 1;
+    this.lastRawEventAt = Date.now();
+    if (relPath !== undefined) {
+      this.rawPerPath.set(relPath, (this.rawPerPath.get(relPath) ?? 0) + 1);
+    }
+  }
+
+  /**
+   * Read-only health snapshot for `meter live`'s capture-health line.
+   * `last_raw_event_at`/`raw_event_count` are pre-ignore and
+   * pre-debounce; `ready_at` anchors the startup grace period;
+   * `unattributed_no_recent_step` counts events that arrived too late
+   * to attribute (data loss, not just lag).
+   */
+  health(): {
+    ready_at?: number;
+    raw_event_count: number;
+    last_raw_event_at?: number;
+    unattributed_no_recent_step: number;
+  } {
+    return {
+      ready_at: this.readyAt,
+      raw_event_count: this.rawEventCount,
+      last_raw_event_at: this.lastRawEventAt,
+      unattributed_no_recent_step: this.unattributedNoRecentStep,
+    };
   }
 
   /**
@@ -304,6 +361,7 @@ export class FileSentinel extends EventEmitter {
       }
     };
     await walk("");
+    this.readyAt = Date.now();
   }
 
   /** Ignore check for event paths: the path itself and every ancestor
@@ -323,6 +381,10 @@ export class FileSentinel extends EventEmitter {
 
   private async processPath(rel: string): Promise<void> {
     const abs = join(this.root, rel);
+    // Pop this path's raw-event count: >1 means the row we're about to
+    // write nets several filesystem events into one diff (coalescing).
+    this.coalescedForCurrentPath = this.rawPerPath.get(rel) ?? 0;
+    this.rawPerPath.delete(rel);
     let st;
     try {
       // lstat, NOT stat: stat follows symlinks, and a symlink inside
@@ -466,6 +528,11 @@ export class FileSentinel extends EventEmitter {
   ): Promise<void> {
     const attributed = this.attribute();
     if ("reason" in attributed) {
+      if (attributed.reason === "no-recent-step") {
+        // The event arrived too late to attribute — the row is LOST,
+        // not lagged. Health surfaces this as loss evidence.
+        this.unattributedNoRecentStep += 1;
+      }
       this.emit("data", {
         type: "file:unattributed",
         path: rel,
@@ -521,6 +588,13 @@ export class FileSentinel extends EventEmitter {
       watcher_root: this.root,
       gap_ms: gapMs,
       observed_at: new Date().toISOString(),
+      // Quiet-period coalescing honesty (investigation 2026-08-19):
+      // when >1 raw filesystem event preceded this flush, the diff is
+      // the NET of those events, not one atomic change — views badge
+      // it "net diff of n events" instead of presenting it as atomic.
+      ...(this.coalescedForCurrentPath > 1
+        ? { coalesced_events: this.coalescedForCurrentPath }
+        : {}),
     };
 
     let change: FileChange;
