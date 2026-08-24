@@ -107,6 +107,14 @@ export function registerRunCommand(program: Command): void {
             `[meter] proxy ${handle.url} → spawning: ${userArgs.join(" ")}\n`,
           ),
         );
+        // meter-live design §6: capture just started — this is the
+        // exact moment an attach hint is useful. run is excluded from
+        // the generic pre-command nudge (child-stdio purity); this
+        // line is its replacement, on stderr like the other [meter]
+        // chrome, silenced by --quiet.
+        process.stderr.write(
+          pc.dim(`[meter] capture live — \`meter live\` in another terminal to watch\n`),
+        );
       }
 
       const [bin, ...rest] = userArgs;
