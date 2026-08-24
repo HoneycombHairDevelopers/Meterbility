@@ -233,3 +233,25 @@ test("credential-bearing --upstream url is rejected at parse time", () => {
     fx.cleanup();
   }
 });
+
+test("attach hint: printed on stderr without --quiet, silenced with it (meter-live design §6)", () => {
+  const fx = setupEmpty();
+  try {
+    const loud = runCli(["run", "--", "node", "-e", "process.exit(0)"], fx, {
+      timeoutMs: 30_000,
+    });
+    assert.equal(loud.status, 0, `stderr: ${loud.stderr}`);
+    assert.match(
+      loud.stderr,
+      /capture live — `meter live` in another terminal to watch/,
+      "run replaces the generic nudge with its own attach hint at proxy start",
+    );
+    const quiet = runCli(["run", "--quiet", "--", "node", "-e", "process.exit(0)"], fx, {
+      timeoutMs: 30_000,
+    });
+    assert.equal(quiet.status, 0, `stderr: ${quiet.stderr}`);
+    assert.doesNotMatch(quiet.stderr, /capture live/);
+  } finally {
+    fx.cleanup();
+  }
+});

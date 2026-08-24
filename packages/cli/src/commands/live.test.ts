@@ -18,7 +18,14 @@ import {
 } from "@meterbility/collector";
 import type { LiveEvent, FileSentinelEvent } from "@meterbility/server";
 import type { Step } from "@meterbility/shared";
-import { evaluateHealth, isFileTouching, printStepFileDelta } from "./live.ts";
+import {
+  evaluateHealth,
+  isFileTouching,
+  printStepFileDelta,
+  printHealthLine,
+  rawEventAgeMs,
+} from "./live.ts";
+import { cwdOverlapsRoot } from "@meterbility/server";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const CLI_ENTRY = resolve(TEST_DIR, "../index.ts");
@@ -133,7 +140,6 @@ function captureStdout(fn: () => void): string {
 
 test("3A: re-emitted files:changed prints only the NEW rows, tagged (update)", async () => {
   const home = mkdtempSync(join(tmpdir(), "meter-live-delta-"));
-  process.env.METERBILITY_HOME = home;
   const store = Store.open({ path: join(home, "meterbility.db") });
   const cwd = mkdtempSync(join(tmpdir(), "meter-live-delta-cwd-"));
   const project = upsertProjectByCwd(store, cwd, "delta-test");
@@ -233,10 +239,21 @@ function spawnLive(args: string[], env: Record<string, string>): LiveProc {
     });
   const stop = (): Promise<number | null> =>
     new Promise((resolvePromise) => {
+      // A child that already died (startup crash) has no future 'exit'
+      // event — resolve immediately or the suite hangs with no
+      // diagnostic (ship review, testing specialist).
+      if (child.exitCode !== null || child.signalCode !== null) {
+        resolvePromise(child.exitCode);
+        return;
+      }
       child.once("exit", (code) => resolvePromise(code));
       child.kill("SIGINT");
-      // Belt and braces: SIGKILL if SIGINT hangs.
-      setTimeout(() => child.kill("SIGKILL"), 10_000).unref();
+      // Belt and braces: SIGKILL if SIGINT hangs — and resolve either
+      // way so a SIGINT-ignoring child can't wedge the test.
+      setTimeout(() => {
+        child.kill("SIGKILL");
+        resolvePromise(null);
+      }, 10_000).unref();
     });
   return { child, stdout: () => out, stderr: () => err, waitFor, stop };
 }
@@ -254,14 +271,17 @@ test("live: header warns loudly with no active session, then SYNCING → SYNCED"
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
   });
+  let code: number | null = null;
   try {
     await proc.waitFor(/no active session — start your agent/);
     await proc.waitFor(/SYNCING/);
     await proc.waitFor(/SYNCED · streaming live/);
   } finally {
-    const code = await proc.stop();
-    assert.equal(code, 0);
+    // Stop only — asserting in finally would mask the waitFor
+    // diagnostic when the try body threw (ship review).
+    code = await proc.stop();
   }
+  assert.equal(code, 0);
   assert.match(proc.stdout(), /meter live/);
   assert.match(proc.stdout(), /db: /);
 });
@@ -275,13 +295,14 @@ test("live: viewer-guard — a fresh heartbeat makes the second instance attach 
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
   });
+  let code: number | null = null;
   try {
     await proc.waitFor(/capture already active — attaching as viewer/);
     await proc.waitFor(/viewer-only — another meter live holds file capture/);
   } finally {
-    const code = await proc.stop();
-    assert.equal(code, 0);
+    code = await proc.stop();
   }
+  assert.equal(code, 0);
 });
 
 test("live: invalid --files-dir warns and continues without file capture", async () => {
@@ -290,13 +311,14 @@ test("live: invalid --files-dir warns and continues without file capture", async
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
   });
+  let code: number | null = null;
   try {
     await proc.waitFor(/--files-dir is not a directory/);
     await proc.waitFor(/SYNCED/);
   } finally {
-    const code = await proc.stop();
-    assert.equal(code, 0);
+    code = await proc.stop();
   }
+  assert.equal(code, 0);
 });
 
 test("live: --json streams sentinel:ready as NDJSON; SIGINT releases the heartbeat", async () => {
@@ -322,6 +344,9 @@ test("live: --json streams sentinel:ready as NDJSON; SIGINT releases the heartbe
       }
     })();
     assert.equal(hbSeen, true, "capture-holder writes the heartbeat");
+    // The evaluator has ticked at least once (heartbeat exists), so a
+    // typed capture:health event must be in the NDJSON stream shortly.
+    await proc.waitFor(/"type":"capture:health"/);
   } finally {
     code = await proc.stop();
   }
@@ -331,7 +356,82 @@ test("live: --json streams sentinel:ready as NDJSON; SIGINT releases the heartbe
   store.close();
   assert.equal(hb, undefined, "clean shutdown releases the capture claim");
   // Every stdout line parses as JSON (NDJSON contract).
-  for (const line of proc.stdout().split("\n").filter(Boolean)) {
-    JSON.parse(line) as LiveEvent | FileSentinelEvent | Record<string, unknown>;
+  const parsed = proc
+    .stdout()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const health = parsed.find((o) => o.type === "capture:health");
+  assert.ok(health, "typed capture:health event present in the stream");
+  assert.equal(health!.mode, "capturing");
+  assert.equal(typeof health!.fs_event_age_ms, "number");
+  assert.equal(health!.degraded, false, "idle temp repo must not read degraded");
+});
+
+// ─── printHealthLine + rawEventAgeMs (ship review: loss surfacing) ───
+
+test("printHealthLine: verdict lines and the capture:lost data-loss warning", () => {
+  const snap = h();
+  const healthy = captureStdout(() => printHealthLine("healthy", snap, 0, 0, false));
+  assert.match(healthy, /capture:healthy/);
+  const warn = captureStdout(() => printHealthLine("warn", snap, 2, 0, false));
+  assert.match(warn, /capture:warn/);
+  assert.match(warn, /2 file-touching steps/);
+  const degraded = captureStdout(() => printHealthLine("degraded", snap, 1, 0, false));
+  assert.match(degraded, /capture:degraded/);
+  assert.match(degraded, /hook-based capture unaffected/);
+  const lost = captureStdout(() => printHealthLine("healthy", snap, 0, 3, true));
+  assert.match(lost, /capture:lost/);
+  assert.match(lost, /3 changes arrived too late/);
+  assert.match(lost, /data loss, not lag/);
+  const notGrown = captureStdout(() => printHealthLine("healthy", snap, 0, 3, false));
+  assert.doesNotMatch(notGrown, /capture:lost/, "loss line only fires on growth");
+});
+
+test("rawEventAgeMs anchors: last event, then ready, then start", () => {
+  const now = Date.now();
+  const viaEvent = rawEventAgeMs(h({ last_raw_event_at: now - 3_000 }), now - 60_000);
+  assert.ok(viaEvent >= 3_000 && viaEvent < 4_000);
+  const viaReady = rawEventAgeMs(
+    h({ last_raw_event_at: undefined, ready_at: now - 7_000 }),
+    now - 60_000,
+  );
+  assert.ok(viaReady >= 7_000 && viaReady < 8_000);
+  const viaStart = rawEventAgeMs(
+    h({ last_raw_event_at: undefined, ready_at: undefined }),
+    now - 11_000,
+  );
+  assert.ok(viaStart >= 11_000 && viaStart < 12_000);
+});
+
+// ─── cwdOverlapsRoot (shared with sentinel attribution) ──────────────
+
+test("cwdOverlapsRoot: prefix overlap is path-segment aware, not string-prefix", () => {
+  assert.equal(cwdOverlapsRoot("/repo/foo", "/repo/foo"), true);
+  assert.equal(cwdOverlapsRoot("/repo/foo", "/repo/foo/sub"), true);
+  assert.equal(cwdOverlapsRoot("/repo/foo/sub", "/repo/foo"), true);
+  assert.equal(cwdOverlapsRoot("/repo/foo", "/repo/foobar"), false);
+  assert.equal(cwdOverlapsRoot("/repo/foobar", "/repo/foo"), false);
+  assert.equal(cwdOverlapsRoot(undefined, "/repo"), false);
+});
+
+// ─── --force-capture takeover (ship review + coverage audit) ─────────
+
+test("live: --force-capture overrides a fresh heartbeat and takes capture", async () => {
+  const fx = freshEnv();
+  const store = Store.open({ path: join(fx.home, "meterbility.db") });
+  setSetting(store, "live.heartbeat", new Date().toISOString());
+  store.close();
+  const proc = spawnLive(["--files-dir", fx.filesRoot, "--force-capture"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+  });
+  let code: number | null = null;
+  try {
+    await proc.waitFor(/hooks \(exact, where installed\)/);
+  } finally {
+    code = await proc.stop();
   }
+  assert.equal(code, 0);
+  assert.doesNotMatch(proc.stdout(), /attaching as viewer/);
 });

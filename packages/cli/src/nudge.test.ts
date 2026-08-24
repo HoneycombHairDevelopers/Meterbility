@@ -108,7 +108,7 @@ function freshHome(): string {
 test("nudge fires when capture rows are recent and no heartbeat exists", () => {
   const home = freshHome();
   seedCaptureActivity(home);
-  const out = captureStderr(() => maybePrintAttachNudge("list", {}));
+  const out = captureStderr(() => maybePrintAttachNudge("list", {}, { openBudgetMs: Infinity }));
   assert.match(out, /capture active on/);
   assert.match(out, /meter live/);
 });
@@ -155,4 +155,12 @@ test("4A swallow: a corrupt store never fails the command", () => {
   // Must neither throw nor print.
   const out = captureStderr(() => maybePrintAttachNudge("list", {}));
   assert.equal(out, "");
+});
+
+test("4A budget: a slow store open aborts the nudge silently", () => {
+  const home = freshHome();
+  seedCaptureActivity(home);
+  // Negative budget: every open is over budget, deterministically.
+  const out = captureStderr(() => maybePrintAttachNudge("list", {}, { openBudgetMs: -1 }));
+  assert.equal(out, "", "over-budget open must abort the decoration");
 });

@@ -606,3 +606,92 @@ test("files --from 1 (whole run) --json emits the range structure with band_sour
   const aRow = parsed.files.find((f) => f.path === "src/a.ts");
   assert.equal(aRow?.change_count, 2, "both a.ts changes collapse into one path row");
 });
+
+test("files --to only: window starts at 0; band row outside the wall-clock span is excluded", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--to", "2"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /RANGE {2}steps 0–2/);
+  assert.match(r.stdout, /src\/a\.ts/);
+  assert.match(r.stdout, /src\/b\.ts/);
+  // Band step at 10:01:30 sits after the [10:00:00, 10:01:00] span.
+  assert.doesNotMatch(r.stdout, /scripts\/c\.sh/);
+});
+
+test("files range: admin and checkpoint bands render their own labels; band-only runs yield an empty window", async () => {
+  const { home, store } = freshStore();
+  const { upsertProjectByCwd, upsertAgent, insertRun, insertStep, insertFileChange } =
+    await import("@meterbility/collector");
+  const { randomUUID } = await import("node:crypto");
+  const cwd = mkdtempSync(join(tmpdir(), "meter-files-bands-cwd-"));
+  const project = upsertProjectByCwd(store, cwd, "bands-test");
+  const agent = upsertAgent(store, project.project_id, "cursor");
+  const mkRun = (): string => {
+    const id = `run_${randomUUID()}`;
+    insertRun(store, {
+      run_id: id, agent_id: agent.agent_id, project_id: project.project_id,
+      source_runtime: "cursor", status: "in_progress",
+      started_at: "2026-08-19T10:00:00Z", cwd,
+      tokens_total_input: 0, tokens_total_output: 0, tokens_total_cached: 0,
+      cost_cents: 0, step_count: 0, tags: [],
+    });
+    return id;
+  };
+  const mkStep = (runId: string, sequence: number, timestamp: string): string => {
+    const id = `stp_${randomUUID()}`;
+    insertStep(store, {
+      step_id: id, run_id: runId, sequence, timestamp, model: "m",
+      context_snapshot_id: "c", decision_ref: "d",
+      action: { kind: "tool_call", tool_name: "Bash" },
+      outcome: { status: "ok" },
+      tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+      latency_ms: 0, cost_cents: 0, tags: [], status: "ok",
+    });
+    return id;
+  };
+  const mkStub = (runId: string, stepId: string, path: string): void => {
+    insertFileChange(store, {
+      run_id: runId, step_id: stepId, sequence: 1000,
+      derived_from: "filesystem_watch", path, op: "create",
+      partial_diff: true, gitignored: false, bom: false,
+      lines_added: 0, lines_removed: 0, redacted: false,
+    });
+  };
+
+  // Run A: main steps bracketing admin + checkpoint band steps.
+  const runA = mkRun();
+  mkStep(runA, 1, "2026-08-19T10:00:00Z");
+  mkStep(runA, 2, "2026-08-19T10:02:00Z");
+  const admin = mkStep(runA, 200_000, "2026-08-19T10:00:30Z");
+  const checkpoint = mkStep(runA, 300_000, "2026-08-19T10:01:00Z");
+  mkStub(runA, admin, "admin.txt");
+  mkStub(runA, checkpoint, "checkpoint.txt");
+
+  // Run B: ONLY band steps — no main band at all.
+  const runB = mkRun();
+  const bandOnly = mkStep(runB, 100_000, "2026-08-19T10:00:30Z");
+  mkStub(runB, bandOnly, "orphan.txt");
+  store.close();
+
+  const claudeHome = mkdtempSync(join(tmpdir(), "meter-files-bands-claude-"));
+  const env = { METERBILITY_HOME: home, CLAUDE_HOME: claudeHome, NO_COLOR: "1" };
+
+  const a = runCli(["files", runA, "--from", "1"], env);
+  assert.equal(a.status, 0, a.stderr);
+  assert.match(a.stdout, /admin\.txt/);
+  assert.match(a.stdout, /\(admin\)/);
+  assert.match(a.stdout, /checkpoint\.txt/);
+  assert.match(a.stdout, /\(checkpoint\)/);
+  assert.match(a.stdout, /2 band-attributed changes included/);
+
+  // Band-only run: no main-band steps → no wall-clock span → empty
+  // window, not a crash, and the band row cannot map in.
+  const b = runCli(["files", runB, "--from", "1"], env);
+  assert.equal(b.status, 0, b.stderr);
+  assert.match(b.stdout, /no captured changes in this step window/);
+  assert.doesNotMatch(b.stdout, /orphan\.txt/);
+});

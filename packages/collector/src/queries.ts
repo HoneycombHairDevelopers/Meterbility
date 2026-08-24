@@ -20,6 +20,7 @@ import type {
   StepStatus,
   TokenUsage,
 } from "@meterbility/shared";
+import { RESERVED_SEQUENCE_BASE } from "@meterbility/shared";
 import type { Store } from "./store.ts";
 
 interface RunRow {
@@ -552,6 +553,42 @@ export function getStep(store: Store, stepId: string): Step | undefined {
     .all(`${stepId}%`) as StepRow[];
   if (prefix.length === 1) return rowToStep(prefix[0]!);
   return undefined;
+}
+
+/**
+ * Highest main-band (non-synthetic) step sequence for a run, or 0 when
+ * the run has no main-band steps. One indexed aggregate — callers must
+ * not materialize the whole step list just to read the tail (meter
+ * live's header did exactly that before this helper existed).
+ */
+export function maxMainBandSequence(store: Store, runId: string): number {
+  const row = store.db
+    .prepare(
+      "SELECT MAX(sequence) AS m FROM steps WHERE run_id = ? AND sequence < ?",
+    )
+    .get(runId, RESERVED_SEQUENCE_BASE) as { m: number | null };
+  return row.m ?? 0;
+}
+
+/**
+ * Run id of the most recent watch/hook-derived FileChange younger than
+ * `cutoffIso`, or undefined. Owns the `derived_from='filesystem_watch'`
+ * discriminator and the SQL so the CLI nudge doesn't reach into the
+ * schema with raw strings. LIMIT 1 existence probe — no covering index
+ * on purpose (TODOS: add only if it shows in CLI startup latency).
+ */
+export function latestRecentWatchCaptureRunId(
+  store: Store,
+  cutoffIso: string,
+): string | undefined {
+  const row = store.db
+    .prepare(
+      `SELECT run_id FROM file_change
+       WHERE derived_from = 'filesystem_watch' AND created_at > ?
+       LIMIT 1`,
+    )
+    .get(cutoffIso) as { run_id: string } | undefined;
+  return row?.run_id;
 }
 
 export function getStepBySequence(

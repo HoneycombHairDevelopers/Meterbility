@@ -71,6 +71,14 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   "live.heartbeat",
 ];
 
+/**
+ * Freshness contract for the `live.heartbeat` setting — the single
+ * source both the `meter live` viewer-guard and the CLI nudge compare
+ * against. A heartbeat younger than this means a live viewer holds
+ * capture; older self-expires (crashed holder).
+ */
+export const LIVE_HEARTBEAT_FRESH_MS = 2 * 60_000;
+
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db
     .prepare("SELECT value FROM settings WHERE key = ?")

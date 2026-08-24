@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import pc from "picocolors";
-import { Store, getSetting } from "@meterbility/collector";
+import {
+  Store,
+  getSetting,
+  latestRecentWatchCaptureRunId,
+  LIVE_HEARTBEAT_FRESH_MS,
+} from "@meterbility/collector";
 import { dbPath } from "@meterbility/shared";
 
 /**
@@ -9,8 +14,9 @@ import { dbPath } from "@meterbility/shared";
  *
  * Fires when watch/hook-derived FileChange rows landed in the last 10
  * minutes (capture is happening) AND the `live.heartbeat` setting is
- * absent or staler than 2 minutes (no live viewer attached). One dim
- * line; forgetting to attach recovers itself at the next command.
+ * absent or staler than the shared freshness window (no live viewer
+ * attached). One dim line; forgetting to attach recovers itself at the
+ * next command.
  *
  * Safety contract (eng review 4A) — this is decoration on the hot path
  * of EVERY human command, so it must never cost anything when things
@@ -19,6 +25,10 @@ import { dbPath } from "@meterbility/shared";
  *     checking must never create `~/.meter` as a side effect;
  *   - the entire check swallows all errors (locked DB, mid-upgrade
  *     schema — the command the user actually ran is unaffected);
+ *   - a time budget aborts when just opening the store was slow (cold
+ *     disk, contention — the wrong moment for decoration). Injectable
+ *     so tests can pin both sides of the branch deterministically
+ *     instead of racing the wall clock.
  *   - excluded commands: hook hot paths (`capture`, `cursor-hook`),
  *     child-stdio wrappers (`run` prints its own attach hint after its
  *     proxy starts), the attach targets themselves (`live`, `watch`),
@@ -26,7 +36,7 @@ import { dbPath } from "@meterbility/shared";
  */
 
 const RECENT_CAPTURE_WINDOW_MS = 10 * 60_000;
-const HEARTBEAT_FRESH_MS = 2 * 60_000;
+const DEFAULT_OPEN_BUDGET_MS = 50;
 const EXCLUDED_COMMANDS = new Set([
   "capture",
   "cursor-hook",
@@ -38,6 +48,7 @@ const EXCLUDED_COMMANDS = new Set([
 export function maybePrintAttachNudge(
   commandName: string,
   opts: Record<string, unknown>,
+  { openBudgetMs = DEFAULT_OPEN_BUDGET_MS }: { openBudgetMs?: number } = {},
 ): void {
   try {
     if (EXCLUDED_COMMANDS.has(commandName)) return;
@@ -47,26 +58,18 @@ export function maybePrintAttachNudge(
     const t0 = Date.now();
     const store = Store.open();
     try {
-      // Time budget (4A): if just opening the store blew ~50ms (cold
-      // disk, contention), this is the wrong moment for decoration.
-      if (Date.now() - t0 > 50) return;
+      if (Date.now() - t0 > openBudgetMs) return;
       const hb = getSetting(store, "live.heartbeat");
       if (hb !== undefined) {
         const age = Date.now() - Date.parse(hb);
-        if (Number.isFinite(age) && age < HEARTBEAT_FRESH_MS) return;
+        if (Number.isFinite(age) && age < LIVE_HEARTBEAT_FRESH_MS) return;
       }
       const cutoff = new Date(Date.now() - RECENT_CAPTURE_WINDOW_MS).toISOString();
-      const row = store.db
-        .prepare(
-          `SELECT fc.run_id FROM file_change fc
-           WHERE fc.derived_from = 'filesystem_watch' AND fc.created_at > ?
-           LIMIT 1`,
-        )
-        .get(cutoff) as { run_id: string } | undefined;
-      if (!row) return;
+      const runId = latestRecentWatchCaptureRunId(store, cutoff);
+      if (runId === undefined) return;
       console.error(
         pc.dim(
-          `capture active on ${row.run_id.slice(0, 12)} — \`meter live\` to attach`,
+          `capture active on ${runId.slice(0, 12)} — \`meter live\` to attach`,
         ),
       );
     } finally {

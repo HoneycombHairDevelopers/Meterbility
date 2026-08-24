@@ -12,6 +12,29 @@ import type {
  * future format change, and neither command imports the other.
  */
 
+/**
+ * Strip C0/C1 control characters and ESC from untrusted strings before
+ * they reach the terminal (file paths from filesystem events, run
+ * titles from ingested transcripts, sentinel error messages). A watched
+ * repo or a prompt-injected agent can otherwise smuggle ANSI/OSC
+ * sequences into filenames — spoofed lines, title/clipboard writes.
+ */
+export function sanitizeTerminal(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0b-\x1f\x7f\u009b]/g, "");
+}
+
+/** Single-letter op badge shared by watch's file events and live's
+ *  step-file rows — one place, no drift. */
+export function opBadge(op: string): string {
+  return op === "create" ? "A" : op === "delete" ? "D" : "M";
+}
+
+/** `+N −M` line accounting, shared for the same reason. */
+export function lineStat(c: { lines_added: number; lines_removed: number }): string {
+  return `+${c.lines_added} −${c.lines_removed}`;
+}
+
 export function printFileEvent(e: FileSentinelEvent): void {
   const head = timeHead();
   switch (e.type) {
@@ -25,34 +48,32 @@ export function printFileEvent(e: FileSentinelEvent): void {
       return;
     case "file:captured": {
       const c = e.change;
-      const opBadge =
-        c.op === "create" ? "A" : c.op === "delete" ? "D" : "M";
       const stat = c.partial_diff
         ? pc.dim("(partial)")
-        : pc.dim(`+${c.lines_added} −${c.lines_removed}`);
+        : pc.dim(lineStat(c));
       console.log(
         head +
           pc.green("file:captured") +
           "  " +
           pc.cyan(e.run_id.slice(0, 12)) +
-          `  ${opBadge} ${c.path}  ` +
+          `  ${opBadge(c.op)} ${sanitizeTerminal(c.path)}  ` +
           stat,
       );
       return;
     }
     case "file:unattributed":
       console.log(
-        head + pc.dim(`file:unattributed  ${e.op} ${e.path} (${e.reason})`),
+        head + pc.dim(`file:unattributed  ${e.op} ${sanitizeTerminal(e.path)} (${e.reason})`),
       );
       return;
     case "file:skipped":
       if (e.reason === "unchanged") return; // pure noise
       console.log(
-        head + pc.dim(`file:skipped  ${e.path} (${e.reason})`),
+        head + pc.dim(`file:skipped  ${sanitizeTerminal(e.path)} (${e.reason})`),
       );
       return;
     case "sentinel:error":
-      console.log(head + pc.red("sentinel:error") + "  " + e.message);
+      console.log(head + pc.red("sentinel:error") + "  " + sanitizeTerminal(e.message));
       return;
   }
 }
@@ -65,7 +86,7 @@ export function printPretty(e: LiveEvent): void {
         head +
           pc.blue("run:created  ") +
           pc.cyan(e.run.run_id.slice(0, 12)) +
-          (e.run.title ? "  " + e.run.title : ""),
+          (e.run.title ? "  " + sanitizeTerminal(e.run.title) : ""),
       );
       return;
     case "run:updated":

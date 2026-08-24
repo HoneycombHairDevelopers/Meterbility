@@ -800,3 +800,26 @@ test("health: no-recent-step unattribution increments the loss counter", async (
     ctx.cleanup();
   }
 });
+
+test("health: ignored-path raw events advance liveness but never leak per-path state", async () => {
+  const ctx = await setup({ files: {} });
+  try {
+    // Ship review (testing+security+performance, triple-confirmed):
+    // per-path coalescing entries are only popped in processPath, which
+    // ignored paths never reach — counting them pre-ignore leaked the
+    // map for the process lifetime (node_modules churn, .git objects).
+    for (let i = 0; i < 100; i++) {
+      ctx.daemon.enqueue(`node_modules/pkg${i}/index.js`);
+    }
+    await ctx.daemon.flushNow();
+    const health = ctx.daemon.health();
+    assert.equal(health.raw_event_count, 100, "liveness accounting stays pre-ignore");
+    assert.equal(
+      (ctx.daemon as unknown as { rawPerPath: Map<string, number> }).rawPerPath.size,
+      0,
+      "ignored paths must not accumulate per-path coalescing state",
+    );
+  } finally {
+    ctx.cleanup();
+  }
+});

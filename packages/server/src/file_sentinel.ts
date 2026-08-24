@@ -81,6 +81,31 @@ export interface FileSentinelOptions {
   matcher?: IgnoreMatcher;
 }
 
+/** Read-only sentinel health snapshot consumed by `meter live`'s
+ *  capture-health evaluator. One named shape, referenced everywhere. */
+export interface SentinelHealth {
+  ready_at?: number;
+  raw_event_count: number;
+  last_raw_event_at?: number;
+  unattributed_no_recent_step: number;
+}
+
+/**
+ * Attribution overlap predicate: does this run's cwd overlap the
+ * watched root? Exported so `meter live`'s health numerator uses the
+ * EXACT predicate attribution uses — a divergence would let the two
+ * silently disagree about which runs count.
+ */
+export function cwdOverlapsRoot(cwd: string | undefined, root: string): boolean {
+  if (!cwd) return false;
+  const norm = resolve(cwd);
+  return (
+    norm === root ||
+    root.startsWith(norm + "/") ||
+    norm.startsWith(root + "/")
+  );
+}
+
 export type FileSentinelEvent =
   | { type: "sentinel:ready"; root: string; primed_files: number }
   | { type: "file:captured"; run_id: string; step_id: string; change: FileChange }
@@ -246,9 +271,15 @@ export class FileSentinel extends EventEmitter {
    * immediately instead of re-arming the timer. */
   enqueue(relPath: string): void {
     if (this.stopped) return;
-    // Health accounting BEFORE the ignore check (see field docs).
-    this.noteRawEvent(relPath);
+    // Global liveness accounting BEFORE the ignore check (see field
+    // docs) — but per-path coalescing counts only AFTER it: ignored
+    // paths never reach processPath (the sole deletion site), so
+    // counting them would grow rawPerPath without bound over a long
+    // session (node_modules churn, .git objects — triple-confirmed by
+    // the ship review's testing/security/performance specialists).
+    this.noteRawEvent();
     if (this.isIgnored(relPath)) return;
+    this.rawPerPath.set(relPath, (this.rawPerPath.get(relPath) ?? 0) + 1);
     if (this.pending.size === 0) this.pendingSince = Date.now();
     this.pending.add(relPath);
     const overdue =
@@ -268,12 +299,9 @@ export class FileSentinel extends EventEmitter {
     );
   }
 
-  private noteRawEvent(relPath?: string): void {
+  private noteRawEvent(): void {
     this.rawEventCount += 1;
     this.lastRawEventAt = Date.now();
-    if (relPath !== undefined) {
-      this.rawPerPath.set(relPath, (this.rawPerPath.get(relPath) ?? 0) + 1);
-    }
   }
 
   /**
@@ -283,12 +311,7 @@ export class FileSentinel extends EventEmitter {
    * `unattributed_no_recent_step` counts events that arrived too late
    * to attribute (data loss, not just lag).
    */
-  health(): {
-    ready_at?: number;
-    raw_event_count: number;
-    last_raw_event_at?: number;
-    unattributed_no_recent_step: number;
-  } {
+  health(): SentinelHealth {
     return {
       ready_at: this.readyAt,
       raw_event_count: this.rawEventCount,
@@ -673,13 +696,7 @@ export class FileSentinel extends EventEmitter {
   }
 
   private cwdOverlaps(cwd: string | undefined): boolean {
-    if (!cwd) return false;
-    const norm = resolve(cwd);
-    return (
-      norm === this.root ||
-      this.root.startsWith(norm + "/") ||
-      norm.startsWith(this.root + "/")
-    );
+    return cwdOverlapsRoot(cwd, this.root);
   }
 }
 

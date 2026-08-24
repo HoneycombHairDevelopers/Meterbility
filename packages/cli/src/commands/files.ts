@@ -9,7 +9,11 @@ import {
   listSteps,
 } from "@meterbility/collector";
 import type { FileChange, FileOp, Run, Step } from "@meterbility/shared";
-import { RESERVED_SEQUENCE_BASE } from "@meterbility/shared";
+import {
+  RESERVED_SEQUENCE_BASE,
+  ADMIN_SEQUENCE_BASE,
+  CHECKPOINT_SEQUENCE_BASE,
+} from "@meterbility/shared";
 import { openStore } from "../util.ts";
 
 /**
@@ -395,14 +399,14 @@ async function runRangeMode(
 }
 
 /**
- * Human label for a synthetic-band sequence. Sub-band floors mirror
- * adapters/cursor/src/bands.ts (the authority); duplicated as literals
- * here because the CLI must not depend on a specific adapter for a
- * display label.
+ * Human label for a synthetic-band sequence. Floors come from
+ * @meterbility/shared (sequence.ts) — the same constants the cursor
+ * adapter's band authority re-exports, so a floor change can't strand
+ * this label.
  */
 function bandLabel(sequence: number): string {
-  if (sequence >= 300_000) return "checkpoint";
-  if (sequence >= 200_000) return "admin";
+  if (sequence >= CHECKPOINT_SEQUENCE_BASE) return "checkpoint";
+  if (sequence >= ADMIN_SEQUENCE_BASE) return "admin";
   return "hook";
 }
 

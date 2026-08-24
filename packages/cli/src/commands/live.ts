@@ -5,8 +5,10 @@ import pc from "picocolors";
 import {
   LiveInspector,
   FileSentinel,
+  cwdOverlapsRoot,
   type LiveEvent,
   type FileSentinelEvent,
+  type SentinelHealth,
 } from "@meterbility/server";
 import {
   getSetting,
@@ -14,7 +16,8 @@ import {
   deleteSetting,
   listFileChanges,
   listRuns,
-  listSteps,
+  maxMainBandSequence,
+  LIVE_HEARTBEAT_FRESH_MS,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import type { FileChange, Run, Step } from "@meterbility/shared";
@@ -24,7 +27,14 @@ import {
   dbPath,
 } from "@meterbility/shared";
 import { openStore } from "../util.ts";
-import { printPretty, printFileEvent, timeHead } from "../render_events.ts";
+import {
+  printPretty,
+  printFileEvent,
+  timeHead,
+  opBadge,
+  lineStat,
+  sanitizeTerminal,
+} from "../render_events.ts";
 
 /**
  * `meter live` — the one-command front door for watching a session and
@@ -50,8 +60,12 @@ import { printPretty, printFileEvent, timeHead } from "../render_events.ts";
  * overrides. The holder's heartbeat self-expires if it crashes.
  */
 
-const HEARTBEAT_FRESH_MS = 2 * 60_000;
 const EVALUATOR_INTERVAL_MS = 5_000;
+/** Recency page size for the header's active-session scan. An
+ *  in-progress run older than this many rows is omitted from the
+ *  HEADER only (the stream still shows it) — bounded startup cost
+ *  beats an unbounded scan of a large store. */
+const HEADER_RUN_SCAN_LIMIT = 50;
 const HEALTH_WARN_MS = 5_000;
 const HEALTH_DEGRADED_MS = 15_000;
 const HEALTH_NUMERATOR_WINDOW_MS = 15_000;
@@ -121,17 +135,29 @@ export function registerLiveCommand(program: Command): void {
         if (opts.files) {
           const hb = getSetting(store, "live.heartbeat");
           const hbAge = hb ? Date.now() - Date.parse(hb) : Infinity;
-          if (Number.isFinite(hbAge) && hbAge < HEARTBEAT_FRESH_MS && !opts.forceCapture) {
+          if (Number.isFinite(hbAge) && hbAge < LIVE_HEARTBEAT_FRESH_MS && !opts.forceCapture) {
             viewerOnly = true;
           }
         }
-        const runsSentinel = opts.files && !viewerOnly;
+        // Validate the files root BEFORE the header prints so the
+        // header's capture line reflects what will actually run
+        // (review finding: never claim an action that is then skipped).
+        let filesRootValid = true;
+        if (opts.files && (!existsSync(filesRoot) || !statSync(filesRoot).isDirectory())) {
+          filesRootValid = false;
+          console.error(
+            pc.red(
+              `meter live: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
+            ),
+          );
+        }
+        const runsSentinel = opts.files && !viewerOnly && filesRootValid;
 
         // ── Startup header (design §1) ─────────────────────────────
         const emitJson = (obj: unknown): void => {
           process.stdout.write(JSON.stringify(obj) + "\n");
         };
-        const active = listRuns(store, { limit: 50 }).filter(
+        const active = listRuns(store, { limit: HEADER_RUN_SCAN_LIMIT }).filter(
           (r) => r.status === "in_progress" && matchesRun(r.run_id),
         );
         if (!opts.json) {
@@ -177,6 +203,12 @@ export function registerLiveCommand(program: Command): void {
         const touchRing: number[] = [];
 
         const live = new LiveInspector(store, {});
+        // run_id → provider label for stream-line tags (schema v6).
+        // Seeded from the header scan; refreshed from run events.
+        const providerByRun = new Map<string, string>();
+        for (const r of active) if (r.provider) providerByRun.set(r.run_id, r.provider);
+        // Last ingest activity — feeds capture:health's ingest_lag_ms.
+        let lastIngestAt: number | undefined;
 
         // Signal handlers register BEFORE any await: a ctrl-c during
         // startup (backfill can take a while on a cold store) must
@@ -212,9 +244,21 @@ export function registerLiveCommand(program: Command): void {
             synced = true;
             if (!opts.json) console.log(pc.dim("SYNCED · streaming live"));
           }
+          if (e.type === "run:created" || e.type === "run:updated") {
+            if (e.run.provider) providerByRun.set(e.run.run_id, e.run.provider);
+            if (e.type === "run:updated" && e.new_steps.length > 0) lastIngestAt = Date.now();
+          }
+          if (e.type === "run:completed") {
+            // Evict per-run stream state — a days-long live session must
+            // not accumulate step bookkeeping for finished runs.
+            providerByRun.delete(e.run.run_id);
+            for (const key of announced.keys()) {
+              if (key.startsWith(e.run.run_id + ":")) announced.delete(key);
+            }
+          }
           // Health numerator feed — before display filtering: capture
           // stays global, and so does the health view of activity.
-          if (e.type === "run:updated" && synced && cwdOverlaps(e.run.cwd, filesRoot)) {
+          if (e.type === "run:updated" && synced && cwdOverlapsRoot(e.run.cwd, filesRoot)) {
             const now = Date.now();
             for (const s of e.new_steps) {
               if (s.sequence >= RESERVED_SEQUENCE_BASE) continue;
@@ -245,7 +289,7 @@ export function registerLiveCommand(program: Command): void {
           }
 
           if (e.type === "files:changed") {
-            printStepFileDelta(store, e, announced, synced);
+            printStepFileDelta(store, e, announced, synced, providerByRun.get(e.run_id));
             if (!printedAtHint && synced) {
               printedAtHint = true;
               console.log(
@@ -264,15 +308,9 @@ export function registerLiveCommand(program: Command): void {
 
         await live.start();
 
-        // ── File side-effect capture ───────────────────────────────
+        // ── File side-effect capture (root pre-validated above) ────
         if (runsSentinel) {
-          if (!existsSync(filesRoot) || !statSync(filesRoot).isDirectory()) {
-            console.error(
-              pc.red(
-                `meter live: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
-              ),
-            );
-          } else {
+          {
             sentinel = new FileSentinel(store, {
               root: filesRoot,
               attributionWindowMs: opts.attributionWindow * 1000,
@@ -317,14 +355,12 @@ export function registerLiveCommand(program: Command): void {
           if (!synced) return; // no verdicts on partial data (T3)
           const h = sentinel?.health();
           if (opts.json) {
-            const rawAge =
-              h === undefined
-                ? undefined
-                : Date.now() - (h.last_raw_event_at ?? h.ready_at ?? startedAt);
             emitJson({
               type: "capture:health",
               mode: sentinel ? "capturing" : viewerOnly ? "viewer-only" : "no-files",
-              fs_event_age_ms: rawAge,
+              fs_event_age_ms: h === undefined ? undefined : rawEventAgeMs(h, startedAt),
+              ingest_lag_ms:
+                lastIngestAt === undefined ? undefined : Date.now() - lastIngestAt,
               file_touching_steps_recent: touchRing.length,
               unattributed_lost: h?.unattributed_no_recent_step ?? 0,
               degraded: sentinel ? evaluateHealth(h!, touchRing, startedAt) === "degraded" : false,
@@ -371,7 +407,7 @@ function printHeader(args: {
       ),
   );
   const captureLine = runsSentinel
-    ? `hooks (exact, where installed) + sentinel fallback on ${filesRoot}`
+    ? `hooks (exact, where installed) + sentinel fallback on ${filesRoot} (minus .meterbilityignore/.gitignore + defaults)`
     : viewerOnly
       ? `viewer-only — another meter live holds file capture (--force-capture to override)`
       : `ingest only (--no-files)`;
@@ -390,10 +426,9 @@ function printHeader(args: {
   }
   console.log("");
   for (const r of active) {
-    const steps = listSteps(store, r.run_id).filter(
-      (s) => s.sequence < RESERVED_SEQUENCE_BASE,
-    );
-    const current = steps.length > 0 ? steps[steps.length - 1]!.sequence : 0;
+    // MAX(sequence) query, not a full listSteps materialization — a
+    // thousand-step run costs one indexed aggregate here, not a scan.
+    const current = maxMainBandSequence(store, r.run_id);
     // v0.6 provider identity (schema v6): proxy-captured runs speak
     // their provider, never a generic "proxy".
     const providerTag = r.provider
@@ -417,16 +452,20 @@ export function printStepFileDelta(
   e: Extract<LiveEvent, { type: "files:changed" }>,
   announced: Map<string, number>,
   synced: boolean,
+  providerTag?: string,
 ): void {
   const rows = listFileChanges(store, { stepId: e.step_id });
-  const seen = announced.get(e.step_id) ?? 0;
+  // Keys are run-scoped so run:completed can evict a finished run's
+  // bookkeeping without a second index.
+  const key = `${e.run_id}:${e.step_id}`;
+  const seen = announced.get(key) ?? 0;
   const fresh = rows.slice(seen);
-  announced.set(e.step_id, rows.length);
+  announced.set(key, rows.length);
   if (fresh.length === 0) return;
   const update = seen > 0;
   const syncPrefix = synced ? "" : pc.dim("[sync] ");
   for (const fc of fresh) {
-    console.log(syncPrefix + formatFileRow(e, fc, update));
+    console.log(syncPrefix + formatFileRow(e, fc, update, providerTag));
   }
 }
 
@@ -434,19 +473,21 @@ function formatFileRow(
   e: Extract<LiveEvent, { type: "files:changed" }>,
   fc: FileChange,
   update: boolean,
+  providerTag?: string,
 ): string {
-  const opBadge = fc.op === "create" ? "A" : fc.op === "delete" ? "D" : "M";
   const tool = fc.source_tool_name ?? (fc.derived_from === "filesystem_watch" ? "fs" : "tool");
   const stat = fc.partial_diff
     ? pc.yellow("(partial)")
-    : pc.dim(`+${fc.lines_added} −${fc.lines_removed}`);
+    : pc.dim(lineStat(fc));
   const coalesced = (fc.normalizer_notes as { coalesced_events?: number } | undefined)
     ?.coalesced_events;
   return (
     timeHead() +
     pc.bold(`step ${e.sequence}`) +
     (update ? pc.dim(" (update)") : "") +
-    ` · ${pc.cyan(e.run_id.slice(0, 12))} · ${tool} ${opBadge} ${fc.path} ` +
+    ` · ${pc.cyan(e.run_id.slice(0, 12))} · ` +
+    (providerTag ? pc.magenta(`[${sanitizeTerminal(providerTag)}] `) : "") +
+    `${sanitizeTerminal(tool)} ${opBadge(fc.op)} ${sanitizeTerminal(fc.path)} ` +
     stat +
     (coalesced ? pc.dim(` · net of ${coalesced} events`) : "")
   );
@@ -454,21 +495,22 @@ function formatFileRow(
 
 // ─── Capture health (design §4, investigation-validated) ─────────────
 
+/** Age of the newest raw filesystem event, anchored to ready/start
+ *  when no event has arrived yet — the ONE anchoring rule shared by
+ *  the pretty verdict and the JSON event (review: no dual anchors). */
+export function rawEventAgeMs(h: SentinelHealth, startedAt: number): number {
+  return Date.now() - (h.last_raw_event_at ?? h.ready_at ?? startedAt);
+}
+
 export function evaluateHealth(
-  h: {
-    ready_at?: number;
-    raw_event_count: number;
-    last_raw_event_at?: number;
-    unattributed_no_recent_step: number;
-  },
+  h: SentinelHealth,
   touchRing: number[],
   startedAt: number,
 ): HealthVerdict {
   const now = Date.now();
   const numerator = touchRing.filter((t) => now - t <= HEALTH_NUMERATOR_WINDOW_MS).length;
   if (numerator === 0) return "healthy"; // idle repo is healthy, not degraded
-  const anchor = h.last_raw_event_at ?? h.ready_at ?? startedAt;
-  const rawAge = now - anchor;
+  const rawAge = rawEventAgeMs(h, startedAt);
   // Startup grace: FSEvents streams come live asynchronously (2s–15s+
   // under load). No degraded verdict until the stream has proven
   // itself once, or the grace period after ready has elapsed.
@@ -479,14 +521,9 @@ export function evaluateHealth(
   return "healthy";
 }
 
-function printHealthLine(
+export function printHealthLine(
   verdict: HealthVerdict,
-  h: {
-    ready_at?: number;
-    raw_event_count: number;
-    last_raw_event_at?: number;
-    unattributed_no_recent_step: number;
-  },
+  h: SentinelHealth,
   numerator: number,
   lost: number,
   lossGrew: boolean,
@@ -518,14 +555,6 @@ function printHealthLine(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
-
-/** Same overlap predicate FileSentinel uses for attribution — a
- *  session editing a different repo can't move this root's health. */
-function cwdOverlaps(cwd: string | undefined, root: string): boolean {
-  if (!cwd) return false;
-  const norm = resolve(cwd);
-  return norm === root || root.startsWith(norm + "/") || norm.startsWith(root + "/");
-}
 
 /** Eng review 1A: sourced from step ACTIONS (always present in ingest)
  *  — never from filesystem_watch rows, which come from the plane this
