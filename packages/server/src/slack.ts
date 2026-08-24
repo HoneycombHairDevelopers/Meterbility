@@ -181,7 +181,7 @@ export class SlackNotifier {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `${icon} *${escapeSlack(e.run.title ?? e.run.run_id)}* finished · ${e.run.step_count} steps · ${formatCost(e.run.cost_cents)}\n<${link(e.run.run_id)}|open in Meterbility>`,
+              text: `${icon} *${escapeSlack(e.run.title ?? e.run.run_id)}* finished · ${e.run.step_count} steps · ${e.run.tags.includes("cost:unpriced") ? "unpriced" : formatCost(e.run.cost_cents)}\n<${link(e.run.run_id)}|open in Meterbility>`,
             },
           },
         ],

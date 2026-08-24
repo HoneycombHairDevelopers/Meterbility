@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/cursor-adapter",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -11,10 +11,10 @@
     }
   },
   "dependencies": {
-    "@meterbility/collector": "^0.5.0",
-    "@meterbility/shared": "^0.5.0",
-    "@meterbility/spec": "^0.5.0",
-    "@meterbility/claude-code-adapter": "^0.5.0",
+    "@meterbility/collector": "^0.6.0",
+    "@meterbility/shared": "^0.6.0",
+    "@meterbility/spec": "^0.6.0",
+    "@meterbility/claude-code-adapter": "^0.6.0",
     "better-sqlite3": "^13.0.3"
   },
   "description": "Cursor composer capture adapter for Meterbility",

@@ -1,6 +1,6 @@
 {
   "name": "meterbility",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "private": true,
   "license": "MIT",
   "description": "The debugger for AI agents",
@@ -24,6 +24,7 @@
     "@types/node": "^24.0.0",
     "@types/pg": "^8.20.0",
     "fast-check": "^4.8.0",
+    "openai": "^7.5.0",
     "tsup": "^8.5.1",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"

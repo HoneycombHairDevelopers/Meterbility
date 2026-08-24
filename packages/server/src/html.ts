@@ -1318,7 +1318,7 @@ function renderFleetEntry(e) {
     + '</div>'
     + '<div class="meta">'
     +   '<span class="kv">' + r.step_count + ' steps</span>'
-    +   '<span class="kv">' + costStr(r.cost_cents) + COST_MARK + '</span>'
+    +   '<span class="kv">' + ((r.tags || []).indexOf('cost:unpriced') !== -1 ? '<span class="cost-mark" title="No pricing-table entry for this model — cost intentionally shown as unknown, not $0.00.">unpriced</span>' : costStr(r.cost_cents) + COST_MARK) + '</span>'
     +   '<span class="kv">' + escapeHtml(r.git_branch || '') + '</span>'
     +   '<span class="age" data-age="' + escapeHtml(e.last_step_at || '') + '">' + fmtAge(e.last_step_at) + '</span>'
     + '</div>'
@@ -2492,7 +2492,7 @@ function fleetEntryHtml(e: FleetEntry): string {
     </div>
     <div class="meta">
       <span class="kv">${r.step_count} steps</span>
-      <span class="kv">${costEl(r.cost_cents)}</span>
+      <span class="kv">${costEl(r.cost_cents, r.tags)}</span>
       <span class="kv">${esc(r.git_branch ?? "")}</span>
       <span class="age" data-age="${esc(e.last_step_at ?? "")}"></span>
     </div>
@@ -2559,7 +2559,7 @@ export function renderRunList(
       const fork = r.fork_origin_run_id
         ? ` <span class="badge badge--premium">fork</span>`
         : "";
-      const cost = costEl(r.cost_cents);
+      const cost = costEl(r.cost_cents, r.tags);
       const title = r.title ?? r.run_id;
       const project = projectLabel(r.cwd);
       const projectFull = r.cwd ?? "";
@@ -2662,7 +2662,7 @@ export function renderRun(
   const meta = `<div class="meta-row">
     <div class="kv"><strong>Status</strong> <span class="pill ${esc(run.status)}">${esc(run.status)}</span></div>
     <div class="kv"><strong>Steps</strong> <span class="val">${run.step_count}</span></div>
-    <div class="kv"><strong>Cost</strong> <span class="val">${costEl(run.cost_cents)}</span></div>
+    <div class="kv"><strong>Cost</strong> <span class="val">${costEl(run.cost_cents, run.tags)}</span></div>
     <div class="kv"><strong>Input</strong> <span class="val">${run.tokens_total_input.toLocaleString()}</span></div>
     <div class="kv"><strong>Output</strong> <span class="val">${run.tokens_total_output.toLocaleString()}</span></div>
     <div class="kv"><strong>Cached</strong> <span class="val">${run.tokens_total_cached.toLocaleString()}</span></div>
@@ -2808,8 +2808,15 @@ export function renderRun(
       m.dataset.stepCount = ${JSON.stringify(String(steps.length))};
     })();
   </script>`;
+  // v0.6 — provider badge: only proxy multi-upstream capture sets
+  // run.provider; legacy rows are NULL and render nothing. Tooltip
+  // carries the upstream host recorded at run creation (provenance —
+  // the same provider name can point at different hosts over time).
+  const providerBadge = run.provider
+    ? ` · <span class="provider-badge" title="upstream provider${run.upstream_host ? ` · ${esc(run.upstream_host)}` : ""}">${esc(run.provider)}</span>`
+    : "";
   return `<div style="margin-bottom:var(--space-6)">
-      <div class="section-label">${esc(runtimeLabel)} · Run</div>
+      <div class="section-label">${esc(runtimeLabel)} · Run${providerBadge}</div>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <h2 style="margin:0">${esc(run.title ?? run.run_id)}</h2>
         ${closeButton}
@@ -3006,11 +3013,26 @@ function renderStepCard(
       ? `/api/blob/${s.outcome.tool_result_ref}`
       : undefined,
   });
+  // v0.7 — streamed-capture timing rides the Cost tab next to latency.
+  // Only present on streamed proxy steps; the reasoning burn (visible -
+  // first delta) is derived here so operators don't do the subtraction.
+  const timing =
+    s.ttft_ms !== undefined || s.ttft_visible_ms !== undefined
+      ? {
+          ttft_ms: s.ttft_ms,
+          ttft_visible_ms: s.ttft_visible_ms,
+          reasoning_burn_ms:
+            s.ttft_ms !== undefined && s.ttft_visible_ms !== undefined
+              ? s.ttft_visible_ms - s.ttft_ms
+              : undefined,
+        }
+      : undefined;
   const prettyCost = prettyTab(
     "cost",
     {
       tokens: s.tokens,
       latency_ms: s.latency_ms,
+      ...(timing ? { timing } : {}),
       cost_cents: s.cost_cents,
       tags: s.tags,
     },
@@ -3029,6 +3051,7 @@ function renderStepCard(
         model: s.model,
         tokens: s.tokens,
         latency_ms: s.latency_ms,
+        ...(timing ? { timing } : {}),
         cost_cents: s.cost_cents,
         tags: s.tags,
       },
@@ -3339,7 +3362,14 @@ export function renderTests(tests: RegressionTest[], recent: RegressionResult[])
 }
 
 /** Render a cost figure with the API-metered marker + tooltip. */
-function costEl(cents: number): string {
+function costEl(cents: number, tags?: string[]): string {
+  // cost:unpriced — the model is deliberately not in the pricing table
+  // (vendor-namespaced open models via the multi-upstream proxy). The
+  // stored cost is 0 by construction; rendering "$0.00" would read as
+  // "free", so we render the truth instead.
+  if (tags?.includes("cost:unpriced")) {
+    return `<span class="cost-mark" title="No pricing-table entry for this model (open models served via named upstreams vary by host). Cost is intentionally shown as unknown rather than a made-up number — token counts are still recorded and exact.">unpriced</span>`;
+  }
   return `${costStr(cents)}<span class="cost-mark" title="Meterbility computes cost from token counts × Anthropic public per-token API rates. Two caveats: (1) Claude Pro/Max users pay a flat subscription — this is API-equivalent, NOT money out of your account. (2) Current API rates reflect VC-subsidized 2026 frontier-model economics: they cover inference with margin, but training runs (>$1B per Opus-class model) and cluster CapEx are funded by equity, not per-token revenue. If labs ever have to be cash-flow positive on a fully-loaded basis, expect these numbers to rise. Use for relative comparison between runs.">api·metered</span>`;
 }
 /**

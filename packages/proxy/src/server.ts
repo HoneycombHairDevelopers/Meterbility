@@ -4,8 +4,16 @@ import { Store, getStep } from "@meterbility/collector";
 import { anthropicCapture } from "./capture-anthropic.ts";
 import { openaiCapture } from "./capture-openai.ts";
 import { RunGrouper } from "./grouping.ts";
-import { matchRoute, PROVIDER_ROUTES, type ProviderName } from "./routes.ts";
-import { teeAndCollect } from "./sse.ts";
+import {
+  buildRegistry,
+  DIALECT_CAPTURE_PATH,
+  joinUpstream,
+  matchRoute,
+  type Dialect,
+  type ProviderInput,
+  type ProviderName,
+} from "./routes.ts";
+import { teeAndCollect, type ChunkMark } from "./sse.ts";
 import {
   appendStep,
   attachToolResult,
@@ -30,18 +38,30 @@ import type { ProviderCapture } from "./types.ts";
  *   ANTHROPIC_BASE_URL=http://127.0.0.1:8765
  *   OPENAI_BASE_URL=http://127.0.0.1:8765/v1
  *
+ * Named upstreams (multi-provider) get a provider-prefixed base URL —
+ * one port, concurrent providers, prefix stripped before forwarding:
+ *
+ *   meter proxy --upstream nvidia=https://integrate.api.nvidia.com
+ *   OPENAI_BASE_URL=http://127.0.0.1:8765/nvidia/v1
+ *
  * Or all-at-once via the `meter run` wrapper.
  *
- * Per-provider capture lives in capture-anthropic.ts / capture-openai.ts.
- * Run grouping (deciding when two requests belong together) lives in
- * grouping.ts.
+ * Per-dialect capture lives in capture-anthropic.ts / capture-openai.ts.
+ * Provider routing (bare + prefixed) lives in routes.ts. Run grouping
+ * (deciding when two requests belong together) lives in grouping.ts.
  */
 
 export interface ProxyOptions {
   port?: number;
   host?: string;
-  /** Override upstream per provider — useful for self-hosted gateways. */
+  /** Override a DEFAULT provider's upstream — re-points the provider
+   *  entity itself, so bare and `/openai/...`-style prefixed aliases
+   *  both follow. Useful for self-hosted gateways. */
   upstreams?: Partial<Record<ProviderName, string>>;
+  /** Register additional named providers (`--upstream` flag). Each gets
+   *  a `/<name>/...` prefix route and captures with its dialect's
+   *  parser. Validate flag strings with `parseUpstreamFlag()`. */
+  providers?: ProviderInput[];
   /** Project + agent labels written to every captured Run. */
   spec?: ProjectAgentSpec;
   /** Inject a logger for activity output (defaults to console.log). */
@@ -54,7 +74,7 @@ export interface ProxyHandle {
   close: () => Promise<void>;
 }
 
-const CAPTURES: Record<ProviderName, ProviderCapture> = {
+const CAPTURES: Record<Dialect, ProviderCapture> = {
   anthropic: anthropicCapture,
   openai: openaiCapture,
 };
@@ -63,6 +83,12 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
   const port = opts.port ?? 8765;
   const host = opts.host ?? "127.0.0.1";
   const log = opts.logger ?? ((line: string) => console.log(line));
+  // Throws on duplicate/invalid providers — a hard startup error by
+  // design (a proxy with a silently-dropped provider mislabels data).
+  const registry = buildRegistry({
+    upstreams: opts.upstreams,
+    providers: opts.providers,
+  });
   const grouper = new RunGrouper();
   const stepsByRun = new Map<string, Map<string, { step_id: string; sequence: number }>>();
   const seenRuns = new Set<string>();
@@ -90,26 +116,60 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
   });
 
   // Health endpoint — handy for `meter run` to poll readiness.
-  app.get("/__meter/health", (c) => c.json({ ok: true, providers: PROVIDER_ROUTES.map((r) => r.provider) }));
+  // Enumerates the dynamic registry, not a static table.
+  app.get("/__meter/health", (c) =>
+    c.json({ ok: true, providers: [...registry.keys()] }),
+  );
 
-  // Catch-all: route by path prefix.
+  // Catch-all: route by bare capture path or provider prefix.
   app.all("/*", async (c) => {
-    const route = matchRoute(c.req.path);
+    // Loop guard: a request that already passed through a Meterbility
+    // proxy (this one via `--upstream self=...`, or a chained meter
+    // proxy) must not re-enter — the cycle would double-count captured
+    // steps and recurse until sockets exhaust.
+    if (c.req.raw.headers.get(HOP_HEADER)) {
+      return c.json(
+        { error: "Meterbility proxy loop detected (request already carries " + HOP_HEADER + ")" },
+        508,
+      );
+    }
+    // Traversal guard: dot-segments or percent-encoded slash/dot/backslash
+    // in the path could escape a path-carrying upstream base after the
+    // prefix strip (e.g. /groq/v1/..%2f..%2fadmin joined onto
+    // https://api.groq.com/openai). No legitimate LLM API path contains
+    // any of these, so reject flat rather than trying to normalize.
+    if (hasPathTraversal(c.req.path, c.req.url)) {
+      return c.json(
+        { error: "path contains dot-segments or encoded path separators — rejected" },
+        400,
+      );
+    }
+    const route = matchRoute(c.req.path, registry);
     if (!route) {
+      const bare = [...registry.values()]
+        .filter((d) => d.builtin)
+        .map((d) => DIALECT_CAPTURE_PATH[d.dialect]);
+      const prefixed = [...registry.keys()].map((n) => `/${n}/...`);
       return c.json(
         {
           error:
             "no Meterbility proxy route for this path. Supported: " +
-            PROVIDER_ROUTES.map((r) => r.path).join(", "),
+            [...bare, ...prefixed].join(", "),
         },
         404,
       );
     }
-    const upstream = (opts.upstreams?.[route.provider] ?? route.defaultUpstream).replace(/\/$/, "");
-    const targetUrl = upstream + c.req.path + (c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : "");
+    // slice(indexOf) not split("?")[1] — a raw "?" is legal INSIDE a
+    // query component, and split would silently truncate everything
+    // after the second one.
+    const qIdx = c.req.url.indexOf("?");
+    const targetUrl =
+      joinUpstream(route.def.upstream, route.forwardPath) +
+      (qIdx === -1 ? "" : c.req.url.slice(qIdx));
     const method = c.req.method;
     const reqBody = method === "GET" || method === "HEAD" ? undefined : await c.req.text();
     const headers = forwardHeaders(c.req.raw.headers);
+    headers.set(HOP_HEADER, "1");
 
     const t0 = Date.now();
     let upstreamResp: Response;
@@ -118,16 +178,33 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
         method,
         headers,
         body: reqBody,
+        // Never follow upstream redirects: undici forwards non-standard
+        // auth headers (x-api-key etc.) cross-origin, and a redirected
+        // response would be captured under the named provider's label.
+        // Relay the 3xx verbatim — the client's SDK decides.
+        redirect: "manual",
         // @ts-expect-error duplex is required for streaming bodies in Node fetch
         duplex: "half",
       });
     } catch (err) {
-      log(`proxy error → ${targetUrl}: ${(err as Error).message}`);
+      // Log origin+path only: some gateways pass credentials as query
+      // params, and an error line must never persist them.
+      const logUrl = qIdx === -1 ? targetUrl : targetUrl.slice(0, targetUrl.indexOf("?"));
+      log(`proxy error → ${logUrl}: ${(err as Error).message}`);
       return c.json({ error: `proxy upstream error: ${(err as Error).message}` }, 502);
     }
     const t1 = Date.now();
 
-    const capture = CAPTURES[route.provider];
+    // Non-capture path under a registered prefix (e.g. /nvidia/v1/models):
+    // pure passthrough — forward the response, write no rows, open no store.
+    if (!route.capture) {
+      return new Response(upstreamResp.body, {
+        status: upstreamResp.status,
+        headers: stripHopByHopHeaders(upstreamResp.headers),
+      });
+    }
+
+    const capture = CAPTURES[route.def.dialect];
 
     // Branch: streaming vs buffered response.
     const ctype = upstreamResp.headers.get("content-type") ?? "";
@@ -136,13 +213,18 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     if (isStream && upstreamResp.body) {
       const { clientStream, capturePromise } = teeAndCollect(upstreamResp.body);
       // Fire-and-forget capture so streaming back to the client isn't blocked.
+      // The rejection handler on capturePromise ITSELF matters: a mid-stream
+      // upstream reset rejects it, and an unhandled rejection kills the whole
+      // proxy process (no global handler exists — by design).
       void capturePromise.then(async (collected) => {
         await persistCapture({
           store: ensureStore(),
-          provider: route.provider,
+          provider: route.def.name,
+          upstreamHost: route.def.host,
           capture,
           reqBody: reqBody ?? "",
-          rawResponse: collected,
+          rawResponse: collected.text,
+          chunkMarks: collected.marks,
           isStream: true,
           status: upstreamResp.status,
           latency_ms: Date.now() - t0,
@@ -154,7 +236,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
           spec,
           log,
         }).catch((err) => log(`capture error: ${(err as Error).message}`));
-      });
+      }, (err: unknown) => log(`stream capture aborted: ${(err as Error).message}`));
       return new Response(clientStream, {
         status: upstreamResp.status,
         headers: stripHopByHopHeaders(upstreamResp.headers),
@@ -165,7 +247,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     // Don't block the client response on capture — kick it off async.
     void persistCapture({
       store: ensureStore(),
-      provider: route.provider,
+      provider: route.def.name,
+      upstreamHost: route.def.host,
       capture,
       reqBody: reqBody ?? "",
       rawResponse: respBody,
@@ -200,8 +283,13 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
     typeof addr === "object" && addr && typeof addr.port === "number" ? addr.port : port;
   const url = `http://${host}:${actualPort}`;
   log(`meter proxy listening on ${url}`);
-  log(`  anthropic → ${(opts.upstreams?.anthropic ?? "https://api.anthropic.com")}/v1/messages`);
-  log(`  openai    → ${(opts.upstreams?.openai ?? "https://api.openai.com")}/v1/chat/completions`);
+  const namePad = Math.max(...[...registry.keys()].map((n) => n.length));
+  for (const def of registry.values()) {
+    const alias = def.builtin
+      ? `${DIALECT_CAPTURE_PATH[def.dialect]} and /${def.name}/...`
+      : `/${def.name}/...`;
+    log(`  ${def.name.padEnd(namePad)} → ${def.upstream}  (${alias})`);
+  }
 
   return {
     url,
@@ -221,10 +309,16 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<ProxyHandle> 
 
 interface PersistArgs {
   store: Store;
-  provider: ProviderName;
+  /** Provider NAME (registry key, e.g. "nvidia") — the persisted
+   *  identity. The capture dialect travels separately via `capture`. */
+  provider: string;
+  /** Upstream host:port — recorded on the Run for provenance. */
+  upstreamHost: string;
   capture: ProviderCapture;
   reqBody: string;
   rawResponse: string;
+  /** Streamed captures only: the tee's per-chunk arrival marks. */
+  chunkMarks?: ChunkMark[];
   isStream: boolean;
   status: number;
   latency_ms: number;
@@ -243,7 +337,12 @@ async function persistCapture(args: PersistArgs): Promise<void> {
   const explicitProject =
     args.headers.get("x-meterbility-project") ?? undefined;
   const explicitAgent = args.headers.get("x-meterbility-agent") ?? undefined;
-  const runResolution = args.grouper.resolve(parsed, explicitRunId, Date.now());
+  const runResolution = args.grouper.resolve(
+    parsed,
+    explicitRunId,
+    Date.now(),
+    args.provider,
+  );
 
   const spec: ProjectAgentSpec = {
     project: explicitProject ?? args.spec.project,
@@ -263,6 +362,8 @@ async function persistCapture(args: PersistArgs): Promise<void> {
       // adapters (codex session ids, cursor composerIds) — a raw
       // caller-chosen id could collide with another vendor's session.
       source_session_id: explicitRunId ? `proxy:${explicitRunId}` : undefined,
+      provider: args.provider,
+      upstream_host: args.upstreamHost,
     });
     args.seenRuns.add(runResolution.run_id);
   }
@@ -292,6 +393,7 @@ async function persistCapture(args: PersistArgs): Promise<void> {
     const step = await appendStep(args.store, {
       run_id: runResolution.run_id,
       sequence: runResolution.step_sequence,
+      provider: args.provider,
       model: parsed.model,
       systemPrompt: parsed.systemPrompt,
       toolDefinitions: parsed.toolDefinitions,
@@ -319,7 +421,7 @@ async function persistCapture(args: PersistArgs): Promise<void> {
 
   const exchange =
     args.isStream
-      ? args.capture.reassembleStream(args.rawResponse)
+      ? args.capture.reassembleStream(args.rawResponse, args.chunkMarks)
       : args.capture.parseResponse(args.rawResponse);
 
   if (!exchange) {
@@ -329,9 +431,35 @@ async function persistCapture(args: PersistArgs): Promise<void> {
     return;
   }
 
+  const usageMissing =
+    exchange.tokens.input === 0 && exchange.tokens.output === 0;
+  const extraTags: string[] = [];
+  // Persistent marker for the zero-usage warning below — the log
+  // line vanishes under --quiet, the tag doesn't.
+  if (usageMissing) extraTags.push("usage:missing");
+  // "cached_read: 0" with cacheReported === false means the host said
+  // NOTHING about caching (e.g. NVIDIA's nemotron streams), which is
+  // different from an explicit cached_tokens: 0. Keep them tellable
+  // apart forever — same honesty rule as unpriced-vs-$0.
+  if (exchange.cacheReported === false) extraTags.push("usage:cache-unreported");
+
+  // Anchor the tee-relative stream timing to request start: the marks
+  // measure from response headers, requestStartLatency_ms covers
+  // request→headers. Missing timing (non-stream, no marks) stays NULL.
+  const ttft_ms =
+    exchange.timing?.first_delta_ms !== undefined
+      ? args.requestStartLatency_ms + exchange.timing.first_delta_ms
+      : undefined;
+  const ttft_visible_ms =
+    exchange.timing?.first_visible_ms !== undefined
+      ? args.requestStartLatency_ms + exchange.timing.first_visible_ms
+      : undefined;
+
   const step = await appendStep(args.store, {
     run_id: runResolution.run_id,
     sequence: runResolution.step_sequence,
+    provider: args.provider,
+    extraTags: extraTags.length > 0 ? extraTags : undefined,
     model: exchange.model || parsed.model,
     systemPrompt: parsed.systemPrompt,
     toolDefinitions: parsed.toolDefinitions,
@@ -339,6 +467,8 @@ async function persistCapture(args: PersistArgs): Promise<void> {
     decisionJson: exchange.decisionJson,
     action: exchange.action,
     tokens: exchange.tokens,
+    ttft_ms,
+    ttft_visible_ms,
     latency_ms: args.latency_ms,
     outcome: { status: "ok" },
   });
@@ -357,6 +487,16 @@ async function persistCapture(args: PersistArgs): Promise<void> {
     });
   }
 
+  // A successful exchange with zero tokens in AND out almost always
+  // means the upstream's usage accounting didn't parse (e.g. an
+  // "OpenAI-compatible" host with a different usage shape). Silent
+  // under-reporting is the cardinal sin in an audit product — warn.
+  if (usageMissing) {
+    args.log(
+      `${args.provider} ${exchange.model} → WARNING: captured ok-step with zero token usage — upstream usage fields may not match the ${args.provider} dialect`,
+    );
+  }
+
   const actionLabel =
     exchange.action.kind === "tool_call"
       ? `tool:${exchange.action.tool_name}`
@@ -364,9 +504,43 @@ async function persistCapture(args: PersistArgs): Promise<void> {
         ? "msg"
         : exchange.action.kind;
   args.log(
-    `${args.provider} ${exchange.model} → ${actionLabel} (run ${runResolution.run_id.slice(0, 12)} · step ${step.sequence} · ${args.latency_ms}ms · in ${exchange.tokens.input} out ${exchange.tokens.output})`,
+    `${args.provider} ${exchange.model} → ${actionLabel} (run ${runResolution.run_id.slice(0, 12)} · step ${step.sequence} · ${args.latency_ms}ms${
+      ttft_visible_ms !== undefined ? ` · ttft ${ttft_visible_ms}ms` : ""
+    }${
+      ttft_ms !== undefined && ttft_visible_ms !== undefined && ttft_visible_ms > ttft_ms
+        ? ` (reasoning burn ${ttft_visible_ms - ttft_ms}ms)`
+        : ""
+    } · in ${exchange.tokens.input} out ${exchange.tokens.output})`,
   );
 }
+
+/**
+ * True when a request path could traverse out of its provider's
+ * upstream base. The WHATWG URL layer already normalizes literal and
+ * %2e-encoded dot-segments before routing (they resolve within the
+ * prefix and can't escape the upstream join), so the live threat is
+ * percent-encoded slash/backslash — NOT decoded by the URL layer, but
+ * possibly decoded by the upstream into a real traversal. The
+ * dot-segment check is defense-in-depth for any server stack that
+ * skips normalization. Query string exempt — only the path is joined
+ * onto the upstream.
+ */
+function hasPathTraversal(path: string, rawUrl: string): boolean {
+  if (path.split("/").some((seg) => seg === "." || seg === "..")) return true;
+  const qIdx = rawUrl.indexOf("?");
+  const rawPath = qIdx === -1 ? rawUrl : rawUrl.slice(0, qIdx);
+  return /%2e|%2f|%5c/i.test(rawPath);
+}
+
+/**
+ * Loop-guard marker. Stamped on every request this proxy forwards
+ * (AFTER forwardHeaders runs, so the x-meterbility-* strip can't eat
+ * it); a request that arrives already carrying it has passed through a
+ * Meterbility proxy — e.g. `--upstream self=<this proxy>` or a chained
+ * `meter proxy` — and is rejected with 508 before it can double-count
+ * steps or recurse until sockets exhaust.
+ */
+const HOP_HEADER = "x-meterbility-hop";
 
 // Strip headers that don't make sense to forward verbatim (Hono /
 // node:http already handles transfer-encoding etc., but a few extras

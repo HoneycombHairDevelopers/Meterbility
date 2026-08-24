@@ -19,8 +19,14 @@ import type Database from "better-sqlite3";
  *   v2 → v3 — settings table for the web UI Settings page
  *   v3 → v4 — file_change, baseline_tree, runs.baseline_tree_id,
  *             runs.probe_state (Track A file capture + Track B Live Probe)
+ *   v4 → v5 — annotations.kind column
+ *   v5 → v6 — runs.provider + steps.provider + runs.upstream_host
+ *             (proxy multi-upstream: first-class upstream provider
+ *             identity + host provenance)
+ *   v6 → v7 — steps.ttft_ms + steps.ttft_visible_ms (streamed-capture
+ *             time-to-first-token; the gap is reasoning burn)
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 7;
 
 export function ensureSchema(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
@@ -67,7 +73,9 @@ export function ensureSchema(db: Database.Database): void {
       tokens_total_cached INTEGER NOT NULL DEFAULT 0,
       cost_cents REAL NOT NULL DEFAULT 0,
       step_count INTEGER NOT NULL DEFAULT 0,
-      tags TEXT NOT NULL DEFAULT '[]'
+      tags TEXT NOT NULL DEFAULT '[]',
+      provider TEXT,
+      upstream_host TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_runs_project_started
@@ -99,6 +107,9 @@ export function ensureSchema(db: Database.Database): void {
       cost_cents REAL NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
       tags TEXT NOT NULL DEFAULT '[]',
+      provider TEXT,
+      ttft_ms INTEGER,
+      ttft_visible_ms INTEGER,
       UNIQUE(run_id, sequence)
     );
 
@@ -349,6 +360,25 @@ export function ensureSchema(db: Database.Database): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind)",
   );
+
+  // v6 — Upstream provider identity for proxy multi-upstream capture.
+  // Nullable: legacy rows and transcript-adapter runs have no provider;
+  // the display layer falls back to nothing. One provider per run —
+  // enforced by the proxy's provider-scoped upstream model, not a
+  // constraint (a CHECK can't express it and the column is open-ended
+  // by design: any registered upstream name is valid).
+  ensureColumn(db, "runs", "provider", "TEXT");
+  ensureColumn(db, "steps", "provider", "TEXT");
+  // v6 — upstream host:port at run creation (proxy provenance; host
+  // only, never path/query/credentials). Nullable like provider.
+  ensureColumn(db, "runs", "upstream_host", "TEXT");
+
+  // v7 — streamed-capture timing, recovered from the proxy tee's
+  // chunk-arrival marks and anchored to request start. NULL for
+  // non-streamed steps and every capture that predates the column.
+  // ttft_visible_ms - ttft_ms = the invisible reasoning burn.
+  ensureColumn(db, "steps", "ttft_ms", "INTEGER");
+  ensureColumn(db, "steps", "ttft_visible_ms", "INTEGER");
 
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }

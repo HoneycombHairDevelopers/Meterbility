@@ -30,9 +30,12 @@ A squad user who wants to know "what did my agents do / cost" today: opens the `
 
 - Copilot CLI is alpha-velocity: shape probe (adapters/claude-code/src/shape_probe.ts pattern) ships day one; this repo has schema-drift scar tissue (file-history-snapshot incident).
 - Primary channel is `~/.copilot/session-state/{id}/events.jsonl` (typed events incl. `subagent.started/completed`; server-reported token counts and premium-request costs). Legacy `history-session-state/` probed and tolerated. VS Code chatSessions (whole-doc JSON, no usage) and org/enterprise billing API are phased follow-ons; individuals have no public usage API; GitHub billing moved to usage-based AI credits June 2026.
-- Schema v5 → v6: nullable `runs.parent_run_id` + `runs.parent_run_step_id`, mirrored in store-postgres (which has its own version counter — v4 → v5 there); delegation lineage stays separate from fork lineage (`fork_origin_*`). Designed vendor-agnostically so Claude Code `Task` carving can retrofit later.
+- Schema **v6 → v7** (rebased on v0.6.0, which claimed v6 for the proxy's `runs/steps.provider` + `runs.upstream_host` columns — SCHEMA_VERSION is 6 on main today): nullable `runs.parent_run_id` + `runs.parent_run_step_id`, mirrored in store-postgres (its own counter: **v5 → v6** there); delegation lineage stays separate from fork lineage (`fork_origin_*`). Designed vendor-agnostically so Claude Code `Task` carving can retrofit later. The v0.6 provider-column migration is the freshest additive-nullable precedent, including its migration-idempotency tests — copy that pattern. **Migration is one-way:** older CLI/web builds opening a v7 DB must fail the existing schema-version guard rather than misread lineage — verified explicitly in M2 (eng review / outside voice).
+- **Provider identity (new in v0.6):** the adapter is the first non-proxy producer of `Run.provider`/`Step.provider` — set `provider: "github"` on all Copilot-adapter runs and steps (GitHub is the serving/billing provider regardless of which underlying model a step used; the model field carries the model). `upstream_host` stays null (proxy provenance only). This keeps the web UI's provider badge and provider-aware grouping meaningful across capture paths.
+- **Unsupported-source positioning:** `events.jsonl` is GitHub's undocumented private exhaust, not a stable product surface. The adapter is best-effort by nature; the shape probe is the mitigation and README/marketing copy must carry the caveat (outside voice, accepted).
 - Adapter follows the house convention (discover/parser/ingest, `SOURCE_RUNTIME = "github-copilot"`) plus the known registration checklist: source_runtime unions, trace-format schemas, CLI ingest command, live.ts poll, web.ts ingest switch, pricing rows, build order.
-- **Sub-agent carving (the "harness layer" = v6 lineage schema + this carving; vendor-generic, ships in M1-M2 regardless of the falsifier):** child-run identity is deterministic — `run_${hashJson([parentSessionId, subagentStartEventId])}`; child steps get `deterministicStepId(childRunId, eventId)` and their own sequence space (children are real runs, not bands within the parent). Event routing is **per-event id-correlation first**: `events.jsonl` records carry `id`/`parentId`, and `subagent.*` events name the agent — route each event to its child by correlation, falling back to contiguous started→completed ranges only if Phase 0 fixtures show correlation ids are absent (this is a verified design fork, see Open Questions). In the fallback branch the child-run id recipe cannot use event ids, so it becomes `run_${hashJson([parentSessionId, agentName, spawnOrdinal])}` — the nth `subagent.started` for that agent in file order — which is stable under whole-file re-carve. The parent keeps one `sub_agent_dispatch` step per spawn at its natural sequence. Token/cost totals are **exclusive per run** (children are real runs; nothing is double-counted); fleet totals (parent + descendants) are computed at display time, never stored. Unmatched `subagent.started` (crash, kill, live tail): the child run stays `in_progress` and is closed as `abandoned` when the parent session ends without a matching `completed`.
+- **Sub-agent carving (the "harness layer" = v7 lineage schema + this carving; vendor-generic, ships in M1-M2 regardless of the falsifier):** child-run identity is deterministic — `run_${hashJson([parentSessionId, subagentStartEventId])}`; child steps get `deterministicStepId(childRunId, eventId)` and their own sequence space (children are real runs, not bands within the parent). Event routing is **correlation-only** (eng review T1, replacing the earlier contiguous-range fallback): `events.jsonl` records carry `id`/`parentId`, and `subagent.*` events name the agent — route each event to its child by correlation. **If Phase 0 shows correlation ids are absent, the adapter does NOT carve children at all**: the session stays one parent run, `subagent.*` events become `sub_agent_dispatch` steps with agent tags, and no inferred attribution is ever presented as recorded attribution. An event whose `parentId` matches no known child (drift, truncation, missed start) lands on the **parent run tagged `copilot:unrouted`** with a shape-probe counter — never dropped (eng review 1A). **Atomicity (eng review 4A):** the entire per-session carve — parent, children, dispatch steps, child steps, file rows, ingest offset — commits in one `store.db.transaction`, cursor-style (cursor/ingest.ts:561); TODOS.md:66's unwrapped-loop failure mode is designed out from day one. Unmatched `subagent.started` (crash, kill, live tail): the child run stays `in_progress` and is closed as `abandoned` when the parent session ends without a matching `completed`.
+- **Cost semantics (eng review T2):** token/cost totals are **exclusive per run**; usage that cannot be attributed to a specific child stays on the parent as an explicit **unallocated** bucket — no allocation heuristics, ever. The fleet rollup renders "agent-attributed + unallocated" separately. **Aggregation policy (eng review T3):** children are INCLUDED in all cost/token aggregates and exports (they hold real spend), EXCLUDED from default run listings and counts — `getRuns` defaults to `parent_run_id IS NULL` with children rendered nested/expandable under the parent (eng review 2A); M2 carries an explicit audit of every getRuns/aggregate consumer against this rule.
 - **Incremental ingest = change detection, not partial parse:** like the Claude Code adapter, the stored offset only answers "did anything change"; on change the whole file is re-read and re-carved. This makes mid-band resume a non-problem — carve state is never persisted across ingests.
 - **File changes:** the expected source is tool events (`tool.execution_start/complete` for edit/create/write-style tools) — inputs give paths and edit payloads, so the fidelity tier is `partial_diff` rows from tool inputs (complete before/after blobs are not expected from events.jsonl); exact tool vocabulary is a Phase 0 fixture question. Existing redaction conventions apply to all Copilot ingest planes: sensitive-path suppression on FileChange rows and `redactString` on inline payloads, same as cursor/codex (v0.5.1 behavior).
 - **Squad enrichment (M3, the falsifier-gated layer):** detection-based (`.squad/team.md` in run cwd), tags runs (`squad`, `agent:<name>`, `role:<role>`). Agent-identity *parsing* from spawn prompts ("You are {Name}, the {Role}") is owned by the adapter core and ships in M1 — enrichment only adds detection and tags on top. Squad's four spawn paths map: in-session `task`/`runSubagent` → carved child runs as above; `create_session` sub-sessions and watch-mode processes → naturally separate runs, linked by lineage where native linkage exists and by tags where it doesn't.
@@ -42,7 +45,7 @@ A squad user who wants to know "what did my agents do / cost" today: opens the `
 1. **Channel wedge, not revenue wedge.** Brady/squad is distribution into the Copilot ecosystem; the revenue archetype stays the agent-fleet EM. Success metric: squad users seeing their fleets in Meterbility.
 2. **Differentiation = operable substrate** (fork/replay/diff/file provenance) vs squad's view-only telemetry — currently unvalidated; validating with Brady is a mandatory parallel workstream (same pattern as the sell-track).
 3. **Copilot CLI `events.jsonl` is primary**; VS Code + billing API secondary; shape probe day one.
-4. **Each agent = a run requires real lineage** (parent_run_id/parent_run_step_id, v6), separate from fork lineage, designed vendor-agnostically.
+4. **Each agent = a run requires real lineage** (parent_run_id/parent_run_step_id, schema v7 — rebased after v0.6.0 claimed v6 for provider identity), separate from fork lineage, designed vendor-agnostically.
 5. **Full adapter ships, with a falsifiable mid-build checkpoint** (revised twice: founder added the checkpoint in D6, adopted Codex's falsifier in D8): the milestone-1 artifact goes to Brady with a written failure condition — *if he doesn't ask to replay, fork, diff, or inspect file provenance, premise 2 is wrong.* A failed test triggers a scope review that gates **milestone 3 (squad enrichment) and the squad-specific phased follow-ons** — the adapter itself and the vendor-generic lineage/carving (M1-M2) complete regardless, as they serve all vendors.
 
 ## Cross-Model Perspective
@@ -62,7 +65,7 @@ Synthesis: Codex independently converged on the same architecture and thesis; so
 Thin events.jsonl parser, lineage migration, spawn-prompt naming, one Brady report. Effort S (human ~3 days / CC ~half day), risk Low. Not chosen as the end state — fastest to the falsifier but guarantees a second pass and doesn't meet the fidelity bar of the other three adapters. Survives as milestone 1 of B.
 
 ### Approach B: Full adapter + harness layer at Cursor-grade fidelity (ideal architecture) — CHOSEN
-`adapters/github-copilot` on the proven multi-channel pattern (events.jsonl primary with offset-as-change-detector ingest, shape probe day one, live-watch registration, pricing rows with premium-request handling, `cost:approx` tagging), schema v6 lineage, sub-agent carving via per-event id-correlation (see Constraints), squad enrichment as its own module, VS Code + billing puller phased. Effort M (human ~2 wks / CC ~2-3 days), risk Med (alpha vendor; migration touches collector, postgres mirror, fork/replay).
+`adapters/github-copilot` on the proven multi-channel pattern (events.jsonl primary with offset-as-change-detector ingest, shape probe day one, live-watch registration, pricing rows with premium-request handling, v0.6 cost-honesty tagging — `cost:approx`/`cost:actual`/`cost:unpriced`), schema v7 lineage, sub-agent carving via per-event id-correlation (see Constraints), squad enrichment as its own module, VS Code + billing puller phased. Effort M (human ~2 wks / CC ~2-3 days), risk Med (alpha vendor; migration touches collector, postgres mirror, fork/replay).
 
 ### Approach C: Harness-first, vendor-second (creative/lateral)
 Generic lineage layer built against existing Claude Code data first (fixes the acknowledged Task-attribution punt for all vendors), Copilot second. Effort M, risk Med. Not chosen: the Brady checkpoint needs Copilot ingest regardless, so C delays the one validation moment. Its genericity requirement is folded into B's schema design.
@@ -71,29 +74,119 @@ Generic lineage layer built against existing Claude Code data first (fixes the a
 
 **Approach B with A as milestone 1 and C's vendor-agnostic schema constraint.** Build order:
 
-0. **Phase 0 entry gate for M1:** capture real fixtures (self-generated squad session, see Dependencies) and confirm firsthand: token/cost event shape, per-event correlation ids for sub-agents, and the file-mutation tool vocabulary. The parser spec is unwritable before this; open questions 1, 2, and 5 resolve here.
-1. **Milestone 1 — the checkpoint artifact (A's slice inside B):** shape probe (day one, per Constraints — it protects the earliest parser against the alpha-velocity format); discover/parser for `events.jsonl`; schema v6 migration; minimal ingest producing parent run + child runs per agent (spawn-prompt identity parsing in the adapter core, tokens/cost fields as present, `partial_diff` file rows from tool events). **Deterministic run/step ids ship here, not M2** — the child-run id recipe is also the dedupe key (carved children have no `source_session_id` for the existing `getRunBySessionId` lookup), and since ingest re-carves the whole file on every change under a live poll, non-deterministic ids would duplicate children on the first re-ingest. The M1 fleet report renders per-agent runs plus a display-time fleet rollup line (parent + children summed). **Ships to Brady with the falsifier attached.** (M1 is demo-grade: byte-identical re-ingest is not yet *verified*.)
-2. **Milestone 2 — adapter completion:** re-ingest idempotency verified (byte-identical DB state on second ingest — the ids already exist from M1; M2 delivers the guarantee and its tests); run-status inference (mirror claude-code's `inferRunStatus`: last event type + `session.error` + staleness window → ok/error/abandoned/in_progress); `session.model_change` handling (each step carries the model in effect from the most recent change event) and compaction events recorded as run annotations (requires a new `AnnotationKind` value, e.g. `context_compaction` — a shared-types touch); parent/child lineage indication in run list + run detail, CLI and web; pricing rows + premium-request cost; registration checklist (CLI, live.ts, web.ts, schemas, unions); tests picked up by scripts/run-tests.ts.
+0. **Phase 0 entry gate for M1 (hard gate — M1's promised artifact is contingent on these facts):** capture real fixtures (self-generated squad session, see Dependencies) and confirm firsthand: token/cost event shape and attribution granularity, per-event correlation ids for sub-agents, and the file-mutation tool vocabulary. Fixture set must include the real-world cases (outside voice, accepted): parallel agents, failed/interrupted agents, model changes mid-session, interrupted sessions, premium-request usage. The parser spec is unwritable before this; open questions 1, 2, and 5 resolve here.
+1. **Milestone 1 — the checkpoint artifact (A's slice inside B):** shape probe (day one, per Constraints — it protects the earliest parser against the alpha-velocity format); **`diffLines` moves from `@meterbility/claude-code-adapter` to `@meterbility/shared`** before the new adapter consumes it (eng review 3A — cursor/file_changes.ts:5 and TODOS.md:248 already flag the wrong dependency direction; repoint cursor + claude-code in the same change); discover/parser for `events.jsonl`; schema v7 migration; minimal ingest producing parent run + child runs per agent (spawn-prompt identity parsing in the adapter core, tokens/cost fields as present, `partial_diff` file rows from tool events), the whole carve inside **one transaction** per Constraints. **Deterministic run/step ids ship here, not M2** — the child-run id recipe is also the dedupe key (carved children have no `source_session_id` for the existing `getRunBySessionId` lookup), and since ingest re-carves the whole file on every change under a live poll, non-deterministic ids would duplicate children on the first re-ingest. The M1 fleet report renders per-agent runs plus a display-time fleet rollup line (agent-attributed + unallocated, per Cost semantics). **Ships to Brady with the falsifier attached.** (M1 is demo-grade: byte-identical re-ingest is not yet *verified*.)
+2. **Milestone 2 — adapter completion:** re-ingest idempotency verified (byte-identical DB state on second ingest — the ids already exist from M1; M2 delivers the guarantee and its tests, including the changed-live-file re-carve regression below); run-status inference (mirror claude-code's `inferRunStatus`: last event type + `session.error` + staleness window → ok/error/abandoned/in_progress); `session.model_change` handling (each step carries the model in effect from the most recent change event) and compaction events recorded as run annotations (requires a new `AnnotationKind` value, e.g. `context_compaction` — a shared-types touch in packages/shared); **run list default + expand (eng review 2A):** `getRuns` defaults to `parent_run_id IS NULL`, children render nested under the parent (CLI indent, web expand) with the fleet rollup on the parent row; **aggregation-consumer audit (T3):** every getRuns/aggregate/export consumer checked against the children-aggregation policy; **version-guard verification:** older builds fail cleanly against a v7 DB; **pricing (v0.6 honesty convention):** premium-request-derived cost preferred when events carry it; models resolvable in `PRICING` price via `costCents` with `cost:approx`→`cost:actual` as usual; unresolvable/opaque Copilot model ids get **`cost:unpriced`** (cost 0, UI renders "unpriced", never $0.00) — the Opus-rate fallback is dead per v0.6 (it overstates open models ~100x); registration checklist (CLI, live.ts, web.ts, schemas, unions); tests picked up by scripts/run-tests.ts.
 3. **Milestone 3 — squad enrichment (falsifier-gated):** `.squad/team.md` detection + agent/role tags only.
 4. **Phased follow-ons (explicitly deferred):** squad sidecar annotations (orchestration-log, sessions, history.md as corroborating evidence) and watch-mode wave grouping (tag runs sharing a dispatched issue `squad:issue:N`, parsed from the dispatch prompt) — both promoted only after the checkpoint passes; VS Code chatSessions channel; org/enterprise billing puller with day-level reconciliation annotations; Claude Code `Task` carving retrofit on the same lineage; OTLP receiver for squad's own spans; replay over carved child runs (see below).
 
-Replayability decision: **v6 child runs are lineage-only, not replayable.** Fork/replay assumes a run maps to a session file; a carved child is a slice of a shared file. Mechanism: fork.ts (packages/server/src/fork.ts) rejects runs where `parent_run_id` is set — a derived rule, no third column; replaying carved children is a deferred follow-on with its own design.
+Replayability decision: **v7 child runs are lineage-only, not replayable.** Fork/replay assumes a run maps to a session file; a carved child is a slice of a shared file. Mechanism: fork.ts (packages/server/src/fork.ts) rejects runs where `parent_run_id` is set — a derived rule, no extra column; replaying carved children is a deferred follow-on with its own design.
 
 Scope-review trigger: premise 5's falsifier failing at milestone 1 gates milestone 3 and the squad-specific follow-ons before they start; M2 completes regardless.
+
+### Carve pipeline (data flow)
+
+```
+~/.copilot/session-state/{id}/
+  ├── workspace.yaml ──────────► cwd ─► upsertProjectByCwd ─► Project/Agent
+  └── events.jsonl
+        │  (offset = change detector only; any growth ⇒ whole-file re-read)
+        ▼
+   parseBuffer ──► shape probe (warn, never crash)
+        │
+        ▼
+   ┌─ carve (pure, in-memory) ─────────────────────────────────────────┐
+   │ session.start ──► parent Run (source_session_id = dir id)         │
+   │ subagent.started ─► child Run (run_${hash(parentSession,eventId)})│
+   │ │                   + parent sub_agent_dispatch step              │
+   │ ├─ events routed by id/parentId ─► child Steps (det. step ids)    │
+   │ ├─ parentId matches nothing ─► parent step + tag copilot:unrouted │
+   │ └─ no correlation ids at all ─► NO children (parent-only + tags)  │
+   │ subagent.completed ─► close child; missing ⇒ abandoned at EOF     │
+   │ tool events (edit/create/…) ─► partial_diff FileChange rows       │
+   │ usage events ─► child-attributed OR parent "unallocated" bucket   │
+   └───────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+   store.db.transaction( parent + children + steps + files + offset )  ◄─ all-or-nothing
+        │
+        ▼
+   updateRunTotals per run (exclusive) ─► display-time fleet rollup
+   getRuns default: parent_run_id IS NULL ─► children expand under parent
+```
+
+Inline-diagram targets for implementation: `adapters/github-copilot/src/ingest.ts` (this pipeline), `packages/collector/src/schema.ts` (fork lineage vs delegation lineage relationship).
+
+## Test Matrix (eng review 5A — ships with implementation, not after)
+
+Unit (bun, auto-discovered by scripts/run-tests.ts):
+1. discover: session-state + legacy history-session-state probing; both/either/neither present
+2. discover: workspace.yaml cwd resolution; missing/malformed yaml
+3. parser: offset realignment + malformed-line skip-with-warning
+4. parser: shape-probe drift fixture warns, never crashes
+5. carve: correlation routing across interleaved children
+6. carve: no-correlation-ids session → parent-only, dispatch steps + tags, zero children (T1)
+7. carve: orphan subagent.started → child abandoned at session end
+8. carve: unroutable parentId → parent step + copilot:unrouted tag, probe counter (1A)
+9. carve: atomicity — injected mid-carve failure rolls back everything (4A)
+10. carve: byte-identical DB state on second ingest (M2 gate)
+11. model_change → per-step model correctness
+12. compaction event → context_compaction annotation
+13. run-status inference: ok / error / abandoned / in_progress
+14. usage: child-attributed vs unallocated-on-parent bucketing (T2)
+15. pricing: premium-request → costCents with cost:approx tagging; unresolvable model id → cost 0 + cost:unpriced (v0.6 convention), never the Opus fallback
+15b. provider identity: runs and steps carry provider "github"; upstream_host stays null
+16. file_changes: partial_diff rows from tool events
+17. file_changes: sensitive-path suppression + redactString on payloads
+18. store-postgres: lineage columns round-trip (v5→v6 mirror)
+
+Integration / E2E:
+19. [→E2E] full fixture carve: 1 parent + N children, names, tokens, files (success criterion 1)
+20. [→E2E] live watch: growing events.jsonl across ticks, no duplicate children, run:created/updated events
+21. [→E2E] torn mid-write read → clean retry, no partial state
+22. plain-Copilot session (zero subagents) → single run, no squad tags
+23. empty/truncated events.jsonl → status "empty", no crash
+
+Regression-CRITICAL (existing behavior modified — mandatory, per the iron rule):
+24. v6→v7 migration on an existing populated DB (incl. one carrying v0.6 provider data): opens, preserves all rows, nullable lineage added
+25. getRuns default filter: lineage-free runs list byte-identically to pre-v7 output (2A)
+26. fork.ts: child runs rejected with clear message; normal-run forking unchanged
+27. changed-live-file re-carve: previously emitted child whose boundaries/status shifted converges to correct state, no duplicates (outside voice)
+
+## NOT in scope
+
+- VS Code chatSessions channel — whole-doc JSON, no usage data; phased follow-on.
+- Org/enterprise billing puller + day-level reconciliation — phased follow-on; individuals have no public API.
+- Replay/fork over carved child runs — lineage-only in v7; fork.ts rejects (derived rule); own design later.
+- Squad sidecar annotations + watch-mode wave grouping — falsifier-gated follow-ons.
+- Claude Code `Task` carving retrofit — same lineage, separate change.
+- OTLP receiver for squad's own OTel spans — separate project.
+- Cost allocation heuristics — never (T2: unallocated bucket instead).
+- Full cross-adapter duplication sweep (toRepoRelative/countLines/parseMaybeJson) — only diffLines moves now (3A); the rest stays TODOS.md:239.
+
+## What already exists (reused, not rebuilt)
+
+- Cursor's multi-channel adapter architecture, deterministic step ids, two-phase transactional reconciliation (ingest.ts:561) — the atomicity pattern 4A ports.
+- claude-code's parser/offset skeleton, whole-file re-read semantics (ingest.ts:91-110), shape probe (shape_probe.ts), inferRunStatus.
+- Collector: getRunBySessionId, upsertProjectByCwd, insertRun/insertStep upserts, ingest_progress, updateRunTotals, blob store.
+- Spec: PRICING + costCents + cost:approx/actual tag flip, plus v0.6's cost:unpriced convention and UI "unpriced" rendering.
+- v0.6 provider identity: `Run.provider`/`Step.provider` columns, web UI provider badge, provider-aware grouping — the adapter populates them, no new plumbing needed.
+- fork_origin_* lineage (fork/replay) — deliberately NOT reused for delegation; parallel concept, separate columns.
+- Redaction: sensitive-path suppression + redactString (v0.5.1 conventions) applied as-is.
 
 ## Open Questions
 
 1. Which events carry token/cost payloads in current Copilot CLI builds, exactly (turn-level vs session-level)? Phase 0 fixture capture answers this; community evidence says present but shape unverified firsthand.
 2. Does `create_session` sub-session spawning surface any cross-session linkage in events.jsonl (parent session id in the child)? Determines whether sub-session lineage is derived from squad sidecars or native events.
-3. Premium-request → cents conversion under post-June-2026 AI-credit billing: what multiplier table does Meterbility ship, and is `cost:approx` acceptable indefinitely for individual accounts (no public usage API)?
+3. Premium-request → cents conversion under post-June-2026 AI-credit billing: what multiplier table does Meterbility ship? Per v0.6's honesty convention, anything unmappable renders `cost:unpriced` rather than an approximation — is that acceptable indefinitely for individual accounts (no public usage API)?
 4. Where does squad's Aspire telemetry actually stop, per Brady — his answer may reveal a differentiator or kill one.
-5. Do concurrently running sub-agents interleave events in one `events.jsonl`, and do their events carry per-event correlation ids (`parentId` / subagent id)? Correlation ids present → id-routing (the default design); absent → contiguous-range fallback, which is only correct if the CLI serializes sub-agent event flushes. Phase 0 resolves the fork.
+5. Do sub-agent events carry per-event correlation ids (`parentId` / subagent id)? Ids present → carve children by id-routing; absent → **no carving** (parent-only session with `sub_agent_dispatch` steps + agent tags — resolved by eng review T1, which deleted the contiguous-range fallback as unsafe under concurrency). Phase 0 answers the factual half.
 6. Which tool names in events.jsonl represent file mutations (`edit`, `create`, `str_replace`, …), and do their inputs carry enough to build `partial_diff` rows, or paths only (fact-tier rows)?
 
 ## Success Criteria
 
 - A real squad session ingests to 1 parent run + N child agent runs with correct agent names, per-agent steps/tokens/files (M1); re-ingest is idempotent — byte-identical DB state on second run (M2-gated, not required of the M1 Brady artifact).
-- `meter runs --source github-copilot` and the web UI show lineage; per-agent cost renders with honest `cost:approx`/`cost:actual` tagging.
+- `meter runs --source github-copilot` and the web UI show lineage and the "github" provider badge; per-agent cost renders with honest `cost:approx`/`cost:actual`/`cost:unpriced` tagging (unpriced shows "unpriced", never $0.00).
 - Shape probe warns (not crashes) on a synthetically drifted events.jsonl fixture.
 - Checkpoint outcome recorded: Brady's response classified against the falsifier, and the scope decision that followed written into the decision log.
 
@@ -104,7 +197,7 @@ Ships inside the existing OSS release train: new `@meterbility/github-copilot-ad
 ## Dependencies
 
 - A squad session fixture. **Fallback (unblocks Phase 0 immediately):** squad is OSS — run `squad init --preset default` in a toy repo and drive a real multi-agent session locally to self-generate `.squad/` + `~/.copilot/session-state` fixtures. Brady's real-world session (the assignment) upgrades fidelity but is not blocking. Synthetic fixtures acceptable for unit tests only.
-- Schema v6 migration coordinated with store-postgres mirror and fork/replay assumptions.
+- Schema v7 migration coordinated with store-postgres mirror (v5→v6) and fork/replay assumptions; rebase against any further schema movement on main before implementation starts (v0.6.0 already consumed v6 mid-design).
 - Approved semantic-diff design (2026-08-11) is a consumer, not a blocker: cross-agent/cross-run diff over Copilot runs is the derived workflow this feeds.
 
 ## The Assignment
@@ -119,3 +212,19 @@ Message Brady this week — before milestone 1 lands:
 - You gave the honest answer twice when the polished one was available: "vague interest... a former coworker and friend" and "not entirely sure" about squad's telemetry. Most founders launder friend-interest into "a prospect asked." You didn't — which is why the diagnostic could reframe this as a channel play instead of building on fake demand.
 - "It's the derived workflows that would benefit it" — you compressed the entire product thesis into nine words mid-answer, and an independent model with no context picked the same sentence as the core of the company. Trust that instinct; it's the sentence that should open the Brady conversation.
 - You chose "ship the full adapter first" against the recommendation and held it under two rounds of challenge — but accepted the checkpoint and the falsifier when they didn't shrink the build. Conviction about scope, flexibility about evidence: that's the right way around.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | (scope contested + settled in /office-hours 2026-08-19) |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 (this doc) | CLEAR (PLAN) | 8 issues, 0 critical gaps — all resolved and folded |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | (UI scope limited to run-list expand + rollup) |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **CROSS-MODEL:** Codex outside voice ran (2026-08-19); 3 tensions accepted into the plan (correlation-only carving with parent-only degrade, unallocated cost bucket, global children-aggregation policy), 3 honesty caveats folded, 1 regression test added (changed-live-file re-carve); falsifier-strength and sunk-cost critiques noted but not adopted — they re-litigate office-hours decisions D5/D6/D8.
+- **VERDICT:** ENG CLEARED — ready to implement (Phase 0 fixture capture is the first task).
+- **v0.6.0 REBASE (2026-08-20, post-review):** mechanical rebase after v0.6.0 landed on main — lineage schema renumbered v6→v7 (v0.6 claimed v6 for `runs/steps.provider` + `upstream_host`; postgres mirror v5→v6); adapter adopts v0.6's provider identity (`provider: "github"`, first non-proxy producer) and its cost-honesty convention (`cost:unpriced` for unmappable models replaces the Opus-rate fallback the doc previously assumed); test matrix updated accordingly (items 15/15b/18/24/25). No reviewed decision reversed — the cost change follows the repo convention the original decision was matching.
+
+NO UNRESOLVED DECISIONS

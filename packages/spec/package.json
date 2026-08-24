@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/spec",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -45,6 +45,6 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@meterbility/shared": "^0.5.0"
+    "@meterbility/shared": "^0.6.0"
   }
 }
