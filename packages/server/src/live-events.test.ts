@@ -489,6 +489,215 @@ test("fleet entries ignore synthetic band steps when deriving last activity", as
   store.close();
 });
 
+// ---------------------------------------------------------------------------
+// v0.6.x front-door coexistence: two LiveInspectors (the `meter live`
+// terminal process and the web server) share one store. The ingest
+// offset (`ingest_progress`) is single-consumer, so whichever inspector
+// ingests a session's growth first drains it — the loser's own ingest
+// returns "empty". detectStepArrivals must surface those steps from the
+// store anyway, or the web run page never sees run:updated.
+// ---------------------------------------------------------------------------
+
+/** Assistant record whose action is a tool_use — keeps the run
+ *  in_progress (awaiting the tool result), which is exactly the state
+ *  a live session sits in while the operator watches it. */
+function toolUseRecord(uuid: string, parentUuid: string, sessionId: string, n: number): object {
+  return {
+    type: "assistant",
+    uuid,
+    parentUuid,
+    sessionId,
+    timestamp: `2026-05-12T00:00:0${n}.000Z`,
+    message: {
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [
+        { type: "tool_use", id: `tu${n}`, name: "Bash", input: { command: `echo ${n}` } },
+      ],
+      usage: { input_tokens: 10 + n, output_tokens: 2 },
+    },
+  };
+}
+
+test("shared-store race: losing inspector still emits run:updated via the store-delta detector", async () => {
+  const { claude } = freshHome();
+
+  // Two handles on the same store file — one per simulated process.
+  const storeCli = Store.open();
+  const storeWeb = Store.open();
+  const cli = new LiveInspector(storeCli, { scanIntervalMs: 999_999 });
+  const web = new LiveInspector(storeWeb, { scanIntervalMs: 999_999 });
+  await cli.start(); // silent backfill, nothing on disk
+  await web.start();
+
+  const cliEvents: LiveEvent[] = [];
+  const webEvents: LiveEvent[] = [];
+  cli.on("data", (e: LiveEvent) => cliEvents.push(e));
+  web.on("data", (e: LiveEvent) => webEvents.push(e));
+
+  const u1 = {
+    type: "user",
+    uuid: "u1",
+    parentUuid: null,
+    sessionId: "sess-race",
+    timestamp: "2026-05-12T00:00:00.000Z",
+    cwd: "/tmp/race",
+    message: { role: "user", content: "go" },
+  };
+  const path = writeFakeSession(claude, "race-proj", "sess-race", [
+    u1,
+    toolUseRecord("a1", "u1", "sess-race", 1),
+  ]);
+
+  // CLI ticks first → wins the ingest, advances the shared offset.
+  await cli.tick();
+  assert.equal(
+    cliEvents.filter((e) => e.type === "run:created").length,
+    1,
+    "winner announces the new run from its own ingest",
+  );
+
+  // Web ticks second → its own ingest returns "empty" (offset already
+  // at EOF), but the store-delta detector must still announce the run.
+  await web.tick();
+  assert.equal(
+    webEvents.filter((e) => e.type === "run:created").length,
+    1,
+    "loser announces the run via detectStepArrivals despite an empty ingest",
+  );
+
+  // Grow the session; CLI wins again.
+  appendFileSync(path, JSON.stringify(toolUseRecord("a2", "a1", "sess-race", 2)) + "\n");
+  cliEvents.length = 0;
+  webEvents.length = 0;
+  await cli.tick();
+  const cliUpdated = cliEvents.filter((e) => e.type === "run:updated");
+  assert.equal(
+    cliUpdated.length,
+    1,
+    "winner's own-ingest emit is not duplicated by its own delta detector",
+  );
+
+  await web.tick();
+  const webUpdated = webEvents.filter((e) => e.type === "run:updated") as Array<
+    Extract<LiveEvent, { type: "run:updated" }>
+  >;
+  assert.equal(
+    webUpdated.length,
+    1,
+    "loser emits run:updated for steps another process ingested",
+  );
+  assert.deepEqual(
+    webUpdated[0]!.new_steps.map((s) => s.sequence),
+    [1],
+    "the delta carries the exact new sequence",
+  );
+
+  // Idle ticks on both sides → no re-emission of the same steps.
+  cliEvents.length = 0;
+  webEvents.length = 0;
+  await cli.tick();
+  await web.tick();
+  assert.equal(
+    cliEvents.filter((e) => e.type === "run:updated" || e.type === "run:created").length,
+    0,
+    "winner stays silent on idle ticks",
+  );
+  assert.equal(
+    webEvents.filter((e) => e.type === "run:updated" || e.type === "run:created").length,
+    0,
+    "loser does not re-emit already-announced steps",
+  );
+
+  cli.stop();
+  web.stop();
+  storeCli.close();
+  storeWeb.close();
+});
+
+test("shared-store race: synthetic band steps don't skew the delta detector", async () => {
+  const { claude } = freshHome();
+  const storeCli = Store.open();
+  const storeWeb = Store.open();
+  const cli = new LiveInspector(storeCli, { scanIntervalMs: 999_999 });
+  const web = new LiveInspector(storeWeb, { scanIntervalMs: 999_999 });
+  await cli.start();
+  await web.start();
+
+  const u1 = {
+    type: "user",
+    uuid: "u1",
+    parentUuid: null,
+    sessionId: "sess-race-band",
+    timestamp: "2026-05-12T00:00:00.000Z",
+    cwd: "/tmp/race-band",
+    message: { role: "user", content: "go" },
+  };
+  const path = writeFakeSession(claude, "race-band-proj", "sess-race-band", [
+    u1,
+    toolUseRecord("a1", "u1", "sess-race-band", 1),
+  ]);
+  await cli.tick(); // seq 0 ingested by the winner
+  await web.tick(); // loser catches up (run:created)
+
+  // A synthetic capture-plane step lands out of band at the reserved
+  // band (hook drains do exactly this) — it must never register as
+  // main-band progress or ride a run:updated delta.
+  const { getRunBySessionId, insertStep } = await import("@meterbility/collector");
+  const run = getRunBySessionId(storeCli, "sess-race-band")!;
+  insertStep(storeCli, {
+    step_id: "stp_band_race",
+    run_id: run.run_id,
+    sequence: 100_000,
+    timestamp: "2026-05-12T01:00:00.000Z",
+    model: "claude-opus-4-7",
+    context_snapshot_id: "ctx",
+    decision_ref: "dec",
+    action: { kind: "tool_call", tool_name: "afterFileEdit", tool_input: {} },
+    outcome: { status: "ok" },
+    tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+    latency_ms: 0,
+    cost_cents: 0,
+    tags: ["cursor-hook"],
+    status: "ok",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any);
+
+  const webEvents: LiveEvent[] = [];
+  web.on("data", (e: LiveEvent) => webEvents.push(e));
+  await web.tick();
+  assert.equal(
+    webEvents.filter((e) => e.type === "run:updated").length,
+    0,
+    "a band-only arrival is not main-band progress",
+  );
+
+  // Real growth after the band step: the delta must be exactly the new
+  // main-band sequence — not the band step, and not a count-derived
+  // sequence inflated past the walk range.
+  appendFileSync(
+    path,
+    JSON.stringify(toolUseRecord("a2", "a1", "sess-race-band", 2)) + "\n",
+  );
+  await cli.tick(); // winner drains the offset
+  webEvents.length = 0;
+  await web.tick();
+  const updated = webEvents.filter((e) => e.type === "run:updated") as Array<
+    Extract<LiveEvent, { type: "run:updated" }>
+  >;
+  assert.equal(updated.length, 1, "loser emits the out-of-band main-band step");
+  assert.deepEqual(
+    updated[0]!.new_steps.map((s) => s.sequence),
+    [1],
+    "delta carries exact main-band sequences only — the 100000 band step never rides",
+  );
+
+  cli.stop();
+  web.stop();
+  storeCli.close();
+  storeWeb.close();
+});
+
 test("rewound transcript resets the append cursor; later steps still emit run:updated", async () => {
   // Regression (G5): lastMaxSeq never rewound. After adapter
   // reconciliation of a rewritten-shorter source trimmed a run's tail,
