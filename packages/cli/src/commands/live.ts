@@ -17,7 +17,7 @@ import {
   listFileChanges,
   listRuns,
   maxMainBandSequence,
-  LIVE_HEARTBEAT_FRESH_MS,
+  isLiveHeartbeatFresh,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import type { FileChange, Run, Step } from "@meterbility/shared";
@@ -73,24 +73,32 @@ const STARTUP_GRACE_MS = 20_000;
 /** Repeat interval for a persisting degraded warning (pretty mode). */
 const DEGRADED_REMIND_MS = 30_000;
 
-/** Tool names whose steps count as potentially file-touching (eng
- *  review 1A). Shell tools count: a Bash step editing files is exactly
- *  what the sentinel exists to capture, and a `ls`-only Bash step can
- *  only ever produce a quiet warn, never a false degraded on its own
- *  (the threshold requires sustained raw-event silence). */
-const FILE_TOUCHING_TOOLS = new Set([
+/** Tools whose steps DEFINITELY write files — these escalate the
+ *  health verdict all the way to degraded when the raw event stream
+ *  goes silent (eng review 1A). */
+const WRITE_TOOLS = new Set([
   "Edit",
   "Write",
   "MultiEdit",
   "NotebookEdit",
   "apply_patch",
-  "Bash",
-  "shell",
-  "run_terminal_cmd",
   "str_replace_editor",
 ]);
 
+/** Tools that only MIGHT write (shell commands). They feed the warn
+ *  tier but never escalate to degraded on their own — a sustained
+ *  read-only Bash loop (grep/test/lint) over an idle tree is normal,
+ *  not capture loss (red-team finding against the original 1A set). */
+const SHELL_TOOLS = new Set(["Bash", "shell", "run_terminal_cmd"]);
+
 type HealthVerdict = "healthy" | "warn" | "degraded";
+
+/** Health-ring entry: arrival time + whether the step's tool
+ *  definitely writes files (vs shell "might"). */
+export interface TouchEntry {
+  t: number;
+  write: boolean;
+}
 
 export function registerLiveCommand(program: Command): void {
   program
@@ -134,8 +142,7 @@ export function registerLiveCommand(program: Command): void {
         let viewerOnly = false;
         if (opts.files) {
           const hb = getSetting(store, "live.heartbeat");
-          const hbAge = hb ? Date.now() - Date.parse(hb) : Infinity;
-          if (Number.isFinite(hbAge) && hbAge < LIVE_HEARTBEAT_FRESH_MS && !opts.forceCapture) {
+          if (hb !== undefined && isLiveHeartbeatFresh(hb) && !opts.forceCapture) {
             viewerOnly = true;
           }
         }
@@ -152,6 +159,18 @@ export function registerLiveCommand(program: Command): void {
           );
         }
         const runsSentinel = opts.files && !viewerOnly && filesRootValid;
+        if (runsSentinel) {
+          // Claim capture IMMEDIATELY (red-team TOCTOU finding): the
+          // evaluator's first write used to come after backfill plus a
+          // 5s tick — a minutes-wide window in which a second instance
+          // would also pass the guard and double-capture. Claiming here
+          // shrinks that window to the check-to-write gap.
+          try {
+            setSetting(store, "live.heartbeat", new Date().toISOString());
+          } catch {
+            // Claim is best-effort; the evaluator re-writes each tick.
+          }
+        }
 
         // ── Startup header (design §1) ─────────────────────────────
         const emitJson = (obj: unknown): void => {
@@ -199,8 +218,12 @@ export function registerLiveCommand(program: Command): void {
 
         // 7A in-memory health numerator: arrival timestamps of
         // file-touching steps for cwd-overlapping runs, post-sync only
-        // (backfill arrivals are historical, not activity).
-        const touchRing: number[] = [];
+        // (backfill arrivals are historical, not activity). Entries
+        // remember whether the tool DEFINITELY writes files (Edit/
+        // Write/apply_patch) or only MIGHT (Bash/shell) — shell-only
+        // activity caps at warn, never degraded (red-team finding: a
+        // sustained read-only Bash loop is not capture loss).
+        const touchRing: TouchEntry[] = [];
 
         const live = new LiveInspector(store, {});
         // run_id → provider label for stream-line tags (schema v6).
@@ -262,10 +285,10 @@ export function registerLiveCommand(program: Command): void {
             const now = Date.now();
             for (const s of e.new_steps) {
               if (s.sequence >= RESERVED_SEQUENCE_BASE) continue;
-              if (isFileTouching(s)) touchRing.push(now);
+              if (isFileTouching(s)) touchRing.push({ t: now, write: isWriteTool(s) });
             }
             // Bounded: drop entries older than the window.
-            while (touchRing.length > 0 && now - touchRing[0]! > HEALTH_NUMERATOR_WINDOW_MS) {
+            while (touchRing.length > 0 && now - touchRing[0]!.t > HEALTH_NUMERATOR_WINDOW_MS) {
               touchRing.shift();
             }
           }
@@ -306,40 +329,43 @@ export function registerLiveCommand(program: Command): void {
           printPretty(e);
         });
 
-        await live.start();
-
         // ── File side-effect capture (root pre-validated above) ────
+        // Starts BEFORE the ingest backfill (red-team finding): the
+        // sentinel needs only the store, and starting it after a
+        // minutes-long cold backfill left every side effect in that
+        // window silently uncaptured while the header claimed capture.
         if (runsSentinel) {
-          {
-            sentinel = new FileSentinel(store, {
-              root: filesRoot,
-              attributionWindowMs: opts.attributionWindow * 1000,
-            });
-            sentinel.on("data", (e: FileSentinelEvent) => {
-              if (opts.json) {
-                emitJson(e);
-                return;
-              }
-              printFileEvent(e);
-            });
-            try {
-              await sentinel.start();
-            } catch (err) {
-              console.error(
-                pc.red(
-                  `meter live: file capture failed to start (${String(err)}) — continuing without it`,
-                ),
-              );
-              sentinel.stop();
-              sentinel = undefined;
+          sentinel = new FileSentinel(store, {
+            root: filesRoot,
+            attributionWindowMs: opts.attributionWindow * 1000,
+          });
+          sentinel.on("data", (e: FileSentinelEvent) => {
+            if (opts.json) {
+              emitJson(e);
+              return;
             }
+            printFileEvent(e);
+          });
+          try {
+            await sentinel.start();
+          } catch (err) {
+            console.error(
+              pc.red(
+                `meter live: file capture failed to start (${String(err)}) — continuing without it`,
+              ),
+            );
+            sentinel.stop();
+            sentinel = undefined;
           }
         }
+
+        await live.start();
 
         // ── Heartbeat + capture-health evaluator (design §4) ───────
         let lastVerdict: HealthVerdict = "healthy";
         let lastDegradedPrint = 0;
         let lastLossCount = 0;
+        let orphanWarned = false;
         const startedAt = Date.now();
         evaluator = setInterval(() => {
           // Heartbeat: only the capture-holder writes it (viewer-only
@@ -351,6 +377,40 @@ export function registerLiveCommand(program: Command): void {
             } catch {
               // Store contention is never worth killing the stream.
             }
+          }
+          // Viewer orphan detection (red-team finding): viewerOnly was
+          // decided once at startup — if the capture holder exits or
+          // crashes, the surviving viewer would otherwise sit sentinel-
+          // less forever with zero signal while NOTHING captures.
+          if (viewerOnly && !sentinel) {
+            let holderGone = false;
+            try {
+              const hb = getSetting(store, "live.heartbeat");
+              holderGone = hb === undefined || !isLiveHeartbeatFresh(hb);
+            } catch {
+              // unreadable store — leave state as-is this tick
+            }
+            if (holderGone && !orphanWarned) {
+              orphanWarned = true;
+              if (!opts.json) {
+                console.log(
+                  pc.yellow(
+                    timeHead() +
+                      "capture holder gone — NO file capture on this root; restart meter live (or --force-capture) to take over",
+                  ),
+                );
+              }
+            }
+            if (opts.json) {
+              emitJson({
+                type: "capture:health",
+                mode: holderGone ? "viewer-orphaned" : "viewer-only",
+                file_touching_steps_recent: touchRing.length,
+                degraded: holderGone,
+              });
+              return;
+            }
+            return;
           }
           if (!synced) return; // no verdicts on partial data (T3)
           const h = sentinel?.health();
@@ -432,14 +492,16 @@ function printHeader(args: {
     // v0.6 provider identity (schema v6): proxy-captured runs speak
     // their provider, never a generic "proxy".
     const providerTag = r.provider
-      ? pc.magenta(`[${r.provider}${r.upstream_host ? ` ${r.upstream_host}` : ""}] `)
+      ? pc.magenta(
+          `[${sanitizeTerminal(r.provider)}${r.upstream_host ? ` ${sanitizeTerminal(r.upstream_host)}` : ""}] `,
+        )
       : "";
     console.log(
       "  " +
         pc.cyan(r.run_id.slice(0, 12)) +
         `  ${providerTag}` +
         pc.dim(`${r.source_runtime} · step ${current}`) +
-        (r.title ? `  ${r.title}` : ""),
+        (r.title ? `  ${sanitizeTerminal(r.title)}` : ""),
     );
   }
   console.log(pc.dim("\n  press ctrl-c to stop\n"));
@@ -504,19 +566,22 @@ export function rawEventAgeMs(h: SentinelHealth, startedAt: number): number {
 
 export function evaluateHealth(
   h: SentinelHealth,
-  touchRing: number[],
+  touchRing: TouchEntry[],
   startedAt: number,
 ): HealthVerdict {
   const now = Date.now();
-  const numerator = touchRing.filter((t) => now - t <= HEALTH_NUMERATOR_WINDOW_MS).length;
-  if (numerator === 0) return "healthy"; // idle repo is healthy, not degraded
+  const recent = touchRing.filter((e) => now - e.t <= HEALTH_NUMERATOR_WINDOW_MS);
+  if (recent.length === 0) return "healthy"; // idle repo is healthy, not degraded
+  const definiteWrites = recent.some((e) => e.write);
   const rawAge = rawEventAgeMs(h, startedAt);
   // Startup grace: FSEvents streams come live asynchronously (2s–15s+
   // under load). No degraded verdict until the stream has proven
   // itself once, or the grace period after ready has elapsed.
   const graceElapsed =
     h.raw_event_count > 0 || now - (h.ready_at ?? startedAt) > STARTUP_GRACE_MS;
-  if (rawAge > HEALTH_DEGRADED_MS && graceElapsed) return "degraded";
+  // Degraded needs DEFINITE write evidence; shell-only activity caps
+  // at warn (see WRITE_TOOLS/SHELL_TOOLS).
+  if (rawAge > HEALTH_DEGRADED_MS && graceElapsed && definiteWrites) return "degraded";
   if (rawAge > HEALTH_WARN_MS) return "warn";
   return "healthy";
 }
@@ -563,7 +628,16 @@ export function isFileTouching(s: Step): boolean {
   return (
     s.action.kind === "tool_call" &&
     s.action.tool_name !== undefined &&
-    FILE_TOUCHING_TOOLS.has(s.action.tool_name)
+    (WRITE_TOOLS.has(s.action.tool_name) || SHELL_TOOLS.has(s.action.tool_name))
+  );
+}
+
+/** True when the step's tool DEFINITELY writes files. */
+export function isWriteTool(s: Step): boolean {
+  return (
+    s.action.kind === "tool_call" &&
+    s.action.tool_name !== undefined &&
+    WRITE_TOOLS.has(s.action.tool_name)
   );
 }
 

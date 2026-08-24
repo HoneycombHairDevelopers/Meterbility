@@ -79,6 +79,21 @@ export const SETTING_KEYS: readonly SettingKey[] = [
  */
 export const LIVE_HEARTBEAT_FRESH_MS = 2 * 60_000;
 
+/**
+ * The one freshness predicate for `live.heartbeat` — used by the
+ * viewer-guard, the watch guard, and the nudge. Future-dated
+ * heartbeats beyond a small skew tolerance are treated as STALE:
+ * a backward clock step (NTP correction) after a holder crash must
+ * not wedge every new instance into viewer-only mode (red-team
+ * finding — the naive `age < FRESH` passes for any negative age).
+ */
+export function isLiveHeartbeatFresh(iso: string, now = Date.now()): boolean {
+  const age = now - Date.parse(iso);
+  if (!Number.isFinite(age)) return false;
+  const SKEW_TOLERANCE_MS = 10_000;
+  return age >= -SKEW_TOLERANCE_MS && age < LIVE_HEARTBEAT_FRESH_MS;
+}
+
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db
     .prepare("SELECT value FROM settings WHERE key = ?")

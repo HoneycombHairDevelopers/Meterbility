@@ -20,8 +20,12 @@ import type {
  * sequences into filenames — spoofed lines, title/clipboard writes.
  */
 export function sanitizeTerminal(text: string): string {
+  // Full C0 (incl. TAB/LF — newlines in filenames forge whole spoofed
+  // stream lines), DEL, and the full C1 range (8-bit CSI/OSC/DCS —
+  // red-team finding: stripping only \u009b left the 8-bit OSC
+  // title/clipboard vector open on C1-honoring terminals).
   // eslint-disable-next-line no-control-regex
-  return text.replace(/[\x00-\x08\x0b-\x1f\x7f\u009b]/g, "");
+  return text.replace(/[\x00-\x1f\x7f\u0080-\u009f]/g, "");
 }
 
 /** Single-letter op badge shared by watch's file events and live's
@@ -112,7 +116,9 @@ export function printPretty(e: LiveEvent): void {
           pc.yellow(`alert[${e.kind}] `) +
           pc.cyan(e.run_id.slice(0, 12)) +
           "  " +
-          e.message,
+          // Alert messages embed tool_input previews — agent-controlled
+          // text (red-team finding).
+          sanitizeTerminal(e.message),
       );
       return;
     case "fleet:snapshot": {

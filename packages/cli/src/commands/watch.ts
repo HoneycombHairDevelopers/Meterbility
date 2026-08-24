@@ -8,7 +8,12 @@ import {
   type LiveEvent,
   type FileSentinelEvent,
 } from "@meterbility/server";
-import { getSetting } from "@meterbility/collector";
+import {
+  getSetting,
+  setSetting,
+  deleteSetting,
+  isLiveHeartbeatFresh,
+} from "@meterbility/collector";
 import { openStore } from "../util.ts";
 import { printPretty, printFileEvent } from "../render_events.ts";
 
@@ -170,7 +175,25 @@ export function registerWatchCommand(program: Command): void {
         // the live inspector in the same process: the inspector keeps
         // runs/steps fresh via incremental ingest, the sentinel attributes
         // filesystem events against them.
+        //
+        // One-sentinel-per-root guard (red-team finding): watch --files
+        // participates in the same live.heartbeat protocol meter live
+        // uses — two sentinels on one root double-capture every event
+        // into duplicate rows, and the attach nudge would otherwise
+        // steer a watch --files user straight into that collision.
         let sentinel: FileSentinel | undefined;
+        let heartbeat: NodeJS.Timeout | undefined;
+        if (opts.files) {
+          const hb = getSetting(store, "live.heartbeat");
+          if (hb !== undefined && isLiveHeartbeatFresh(hb)) {
+            console.error(
+              pc.yellow(
+                "meter watch: another instance already holds file capture on this machine — skipping a duplicate sentinel (rows would double). `meter live` attaches as a viewer.",
+              ),
+            );
+            opts.files = false;
+          }
+        }
         if (opts.files) {
           // Validate up front and guard start(): fs.watch throws
           // synchronously on a bad root, which would otherwise kill
@@ -197,6 +220,17 @@ export function registerWatchCommand(program: Command): void {
             });
             try {
               await sentinel.start();
+              // Hold the capture claim while this sentinel runs, same
+              // contract as meter live's evaluator tick.
+              setSetting(store, "live.heartbeat", new Date().toISOString());
+              heartbeat = setInterval(() => {
+                try {
+                  setSetting(store, "live.heartbeat", new Date().toISOString());
+                } catch {
+                  // best-effort — staleness self-expires
+                }
+              }, 5_000);
+              heartbeat.unref?.();
             } catch (err) {
               console.error(
                 pc.red(
@@ -212,8 +246,20 @@ export function registerWatchCommand(program: Command): void {
         // Keep alive — LiveInspector polls in the background.
         const stop = (): void => {
           live.stop();
+          if (heartbeat) clearInterval(heartbeat);
           sentinel?.stop();
-          store.close();
+          if (sentinel) {
+            try {
+              deleteSetting(store, "live.heartbeat");
+            } catch {
+              // best-effort — staleness self-expires
+            }
+          }
+          try {
+            store.close();
+          } catch {
+            // already closed — exiting regardless
+          }
           process.exit(0);
         };
         process.on("SIGINT", stop);

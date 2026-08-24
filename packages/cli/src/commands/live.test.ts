@@ -21,9 +21,11 @@ import type { Step } from "@meterbility/shared";
 import {
   evaluateHealth,
   isFileTouching,
+  isWriteTool,
   printStepFileDelta,
   printHealthLine,
   rawEventAgeMs,
+  type TouchEntry,
 } from "./live.ts";
 import { cwdOverlapsRoot } from "@meterbility/server";
 
@@ -50,8 +52,13 @@ function h(over: Partial<Parameters<typeof evaluateHealth>[0]> = {}) {
   };
 }
 
+const touch = (ageMs: number, write = true): TouchEntry => ({
+  t: Date.now() - ageMs,
+  write,
+});
+
 test("health: fresh raw events + recent file-touching steps → healthy", () => {
-  assert.equal(evaluateHealth(h(), [Date.now() - 1_000], Date.now() - 60_000), "healthy");
+  assert.equal(evaluateHealth(h(), [touch(1_000)], Date.now() - 60_000), "healthy");
 });
 
 test("health: idle repo (no file-touching steps) is healthy even with stale events", () => {
@@ -63,14 +70,14 @@ test("health: idle repo (no file-touching steps) is healthy even with stale even
 
 test("health: raw events lagging >5s with recent file-touching steps → warn", () => {
   assert.equal(
-    evaluateHealth(h({ last_raw_event_at: Date.now() - 8_000 }), [Date.now() - 1_000], Date.now() - 60_000),
+    evaluateHealth(h({ last_raw_event_at: Date.now() - 8_000 }), [touch(1_000)], Date.now() - 60_000),
     "warn",
   );
 });
 
 test("health: raw events silent >15s with recent file-touching steps → degraded", () => {
   assert.equal(
-    evaluateHealth(h({ last_raw_event_at: Date.now() - 20_000 }), [Date.now() - 1_000], Date.now() - 60_000),
+    evaluateHealth(h({ last_raw_event_at: Date.now() - 20_000 }), [touch(1_000)], Date.now() - 60_000),
     "degraded",
   );
 });
@@ -79,17 +86,29 @@ test("health: startup grace suppresses degraded until the stream proves itself",
   // No raw event ever, ready 10s ago (inside the 20s grace): the 10s
   // silence reads warn, never degraded.
   const noEvents = h({ raw_event_count: 0, last_raw_event_at: undefined, ready_at: Date.now() - 10_000 });
-  assert.equal(evaluateHealth(noEvents, [Date.now() - 1_000], Date.now() - 10_000), "warn");
+  assert.equal(evaluateHealth(noEvents, [touch(1_000)], Date.now() - 10_000), "warn");
   // Grace elapsed (ready 30s ago, still zero events): now it's real.
   const graceOver = h({ raw_event_count: 0, last_raw_event_at: undefined, ready_at: Date.now() - 30_000 });
-  assert.equal(evaluateHealth(graceOver, [Date.now() - 1_000], Date.now() - 30_000), "degraded");
+  assert.equal(evaluateHealth(graceOver, [touch(1_000)], Date.now() - 30_000), "degraded");
 });
 
 test("health: numerator only counts entries inside the 15s window", () => {
   // Only stale touch entries → numerator 0 → healthy despite silence.
   assert.equal(
-    evaluateHealth(h({ last_raw_event_at: Date.now() - 60_000 }), [Date.now() - 60_000], Date.now() - 120_000),
+    evaluateHealth(h({ last_raw_event_at: Date.now() - 60_000 }), [touch(60_000)], Date.now() - 120_000),
     "healthy",
+  );
+});
+
+test("health: shell-only activity caps at warn — a read-only Bash loop is not capture loss", () => {
+  // 20s of raw silence + recent Bash-only steps: degraded conditions
+  // hold EXCEPT there is no definite write evidence (red-team finding).
+  const silent = h({ last_raw_event_at: Date.now() - 20_000 });
+  assert.equal(evaluateHealth(silent, [touch(1_000, false)], Date.now() - 60_000), "warn");
+  // One definite write in the ring escalates.
+  assert.equal(
+    evaluateHealth(silent, [touch(1_000, false), touch(2_000, true)], Date.now() - 60_000),
+    "degraded",
   );
 });
 
@@ -120,6 +139,9 @@ test("1A predicate: file-mutating and shell tools count; messages and read-only 
   assert.equal(isFileTouching(step({ kind: "tool_call", tool_name: "apply_patch" })), true);
   assert.equal(isFileTouching(step({ kind: "tool_call", tool_name: "Read" })), false);
   assert.equal(isFileTouching(step({ kind: "message", text: "hi" })), false);
+  // Write/shell tiering (degraded escalation evidence):
+  assert.equal(isWriteTool(step({ kind: "tool_call", tool_name: "Edit" })), true);
+  assert.equal(isWriteTool(step({ kind: "tool_call", tool_name: "Bash" })), false);
 });
 
 // ─── 3A delta display ────────────────────────────────────────────────

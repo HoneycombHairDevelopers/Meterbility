@@ -164,3 +164,17 @@ test("4A budget: a slow store open aborts the nudge silently", () => {
   const out = captureStderr(() => maybePrintAttachNudge("list", {}, { openBudgetMs: -1 }));
   assert.equal(out, "", "over-budget open must abort the decoration");
 });
+
+test("clock-skew: a future-dated heartbeat is treated as stale — the nudge still fires", () => {
+  const home = freshHome();
+  seedCaptureActivity(home);
+  const store = Store.open({ path: join(home, "meterbility.db") });
+  // Holder crashed, then the clock stepped backward: the heartbeat now
+  // sits in the future. Naive `age < FRESH` would suppress the nudge
+  // (and wedge new instances into viewer-only) until the wall clock
+  // catches up (red-team finding).
+  setSetting(store, "live.heartbeat", new Date(Date.now() + 60 * 60_000).toISOString());
+  store.close();
+  const out = captureStderr(() => maybePrintAttachNudge("list", {}, { openBudgetMs: Infinity }));
+  assert.match(out, /capture active on/);
+});

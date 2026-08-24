@@ -293,8 +293,13 @@ async function runRangeMode(
   const inWindowMain = mainSteps.filter(
     (s) => s.sequence >= fromSeq && s.sequence <= toSeq,
   );
-  const lowerTs = inWindowMain[0]?.timestamp;
-  const upperTs = inWindowMain[inWindowMain.length - 1]?.timestamp;
+  // Epoch millis, not lexicographic strings: mixed timestamp precision
+  // ("…:56Z" vs "…:56.999Z") breaks string ordering at the '.' vs 'Z'
+  // boundary (red-team finding).
+  const lowerMs = inWindowMain[0] ? Date.parse(inWindowMain[0].timestamp) : undefined;
+  const upperMs = inWindowMain[inWindowMain.length - 1]
+    ? Date.parse(inWindowMain[inWindowMain.length - 1]!.timestamp)
+    : undefined;
 
   const stepById = new Map<string, Step>();
   for (const s of steps) stepById.set(s.step_id, s);
@@ -313,11 +318,13 @@ async function runRangeMode(
     }
     // Synthetic band. No main-band steps in the window → no wall-clock
     // span → band rows can never map in.
+    const stMs = Date.parse(st.timestamp);
     const inWall =
-      lowerTs !== undefined &&
-      upperTs !== undefined &&
-      st.timestamp >= lowerTs &&
-      st.timestamp <= upperTs;
+      lowerMs !== undefined &&
+      upperMs !== undefined &&
+      Number.isFinite(stMs) &&
+      stMs >= lowerMs &&
+      stMs <= upperMs;
     if (!inWall) continue;
     if (opts.mainBandOnly) {
       bandExcluded += 1;
@@ -693,7 +700,21 @@ function resolveStep(
     console.error(pc.red(`step not found: ${needle}`));
     process.exit(1);
   }
+  assertStepBelongsToRun(step, run);
   return step;
+}
+
+/** A step-id from a DIFFERENT run silently yields a confidently wrong
+ *  window (red-team finding) — error instead. */
+function assertStepBelongsToRun(step: Step, run: Run): void {
+  if (step.run_id !== run.run_id) {
+    console.error(
+      pc.red(
+        `step ${step.step_id.slice(0, 12)} belongs to run ${step.run_id.slice(0, 12)}, not ${run.run_id.slice(0, 12)}`,
+      ),
+    );
+    process.exit(1);
+  }
 }
 
 /**
@@ -715,6 +736,7 @@ function resolveStepSeqLoose(
     console.error(pc.red(`step not found: ${needle}`));
     process.exit(1);
   }
+  assertStepBelongsToRun(step, run);
   return step.sequence;
 }
 

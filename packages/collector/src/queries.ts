@@ -585,6 +585,7 @@ export function latestRecentWatchCaptureRunId(
     .prepare(
       `SELECT run_id FROM file_change
        WHERE derived_from = 'filesystem_watch' AND created_at > ?
+       ORDER BY created_at DESC
        LIMIT 1`,
     )
     .get(cutoffIso) as { run_id: string } | undefined;
