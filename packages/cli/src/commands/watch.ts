@@ -7,10 +7,10 @@ import {
   FileSentinel,
   type LiveEvent,
   type FileSentinelEvent,
-  type FleetEntry,
 } from "@meterbility/server";
 import { getSetting } from "@meterbility/collector";
 import { openStore } from "../util.ts";
+import { printPretty, printFileEvent } from "../render_events.ts";
 
 /**
  * `meter watch` — terminal counterpart to the web UI's live SSE stream.
@@ -39,7 +39,7 @@ export function registerWatchCommand(program: Command): void {
   program
     .command("watch")
     .description(
-      "Stream live agent activity from ~/.claude/projects to the terminal",
+      "Raw live event stream from ~/.claude/projects (scripting/JSON). Humans: `meter live` is the friendlier front door",
     )
     .option(
       "--watch-tool <name>",
@@ -220,104 +220,4 @@ export function registerWatchCommand(program: Command): void {
         process.on("SIGTERM", stop);
       },
     );
-}
-
-function printFileEvent(e: FileSentinelEvent): void {
-  const ts = new Date().toISOString().slice(11, 19);
-  const head = pc.dim(ts) + "  ";
-  switch (e.type) {
-    case "sentinel:ready":
-      console.log(
-        head +
-          pc.dim(
-            `watching files under ${e.root} (${e.primed_files} files primed)`,
-          ),
-      );
-      return;
-    case "file:captured": {
-      const c = e.change;
-      const opBadge =
-        c.op === "create" ? "A" : c.op === "delete" ? "D" : "M";
-      const stat = c.partial_diff
-        ? pc.dim("(partial)")
-        : pc.dim(`+${c.lines_added} −${c.lines_removed}`);
-      console.log(
-        head +
-          pc.green("file:captured") +
-          "  " +
-          pc.cyan(e.run_id.slice(0, 12)) +
-          `  ${opBadge} ${c.path}  ` +
-          stat,
-      );
-      return;
-    }
-    case "file:unattributed":
-      console.log(
-        head + pc.dim(`file:unattributed  ${e.op} ${e.path} (${e.reason})`),
-      );
-      return;
-    case "file:skipped":
-      if (e.reason === "unchanged") return; // pure noise
-      console.log(
-        head + pc.dim(`file:skipped  ${e.path} (${e.reason})`),
-      );
-      return;
-    case "sentinel:error":
-      console.log(head + pc.red("sentinel:error") + "  " + e.message);
-      return;
-  }
-}
-
-function printPretty(e: LiveEvent): void {
-  const ts = new Date().toISOString().slice(11, 19);
-  const head = pc.dim(ts) + "  ";
-  switch (e.type) {
-    case "run:created":
-      console.log(
-        head +
-          pc.blue("run:created  ") +
-          pc.cyan(e.run.run_id.slice(0, 12)) +
-          (e.run.title ? "  " + e.run.title : ""),
-      );
-      return;
-    case "run:updated":
-      console.log(
-        head +
-          pc.dim("run:updated  ") +
-          pc.cyan(e.run.run_id.slice(0, 12)) +
-          pc.dim(`  +${e.new_steps.length} step${e.new_steps.length === 1 ? "" : "s"}`),
-      );
-      return;
-    case "run:completed":
-      console.log(
-        head +
-          pc.green("run:completed") +
-          "  " +
-          pc.cyan(e.run.run_id.slice(0, 12)) +
-          pc.dim(`  status=${e.run.status}`),
-      );
-      return;
-    case "alert":
-      console.log(
-        head +
-          pc.yellow(`alert[${e.kind}] `) +
-          pc.cyan(e.run_id.slice(0, 12)) +
-          "  " +
-          e.message,
-      );
-      return;
-    case "fleet:snapshot": {
-      const counts = e.entries.reduce<Record<string, number>>((acc, x: FleetEntry) => {
-        acc[x.status] = (acc[x.status] ?? 0) + 1;
-        return acc;
-      }, {});
-      const summary = Object.entries(counts)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(" ");
-      console.log(
-        head + pc.dim(`fleet:snapshot ${e.entries.length} runs · ${summary}`),
-      );
-      return;
-    }
-  }
 }
