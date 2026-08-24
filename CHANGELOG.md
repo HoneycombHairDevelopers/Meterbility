@@ -18,9 +18,10 @@ Notable changes to Meterbility. Versions are lockstep across the
   degraded instead of silently missing changes: warn at >5s of filesystem
   event silence, degraded at >15s (only with definite write activity — a
   read-only Bash loop never false-alarms), a loss counter for events that
-  arrived too late to attribute, and a `coalesced_events` badge on rows
-  that net several filesystem events into one diff. `--json` streams a
-  typed `capture:health` event.
+  arrived too late to attribute, and a `coalesced_events` count recorded
+  on rows that net several filesystem events into one diff (rendered as
+  `net of N events` on step-attributed rows). `--json` streams a typed
+  `capture:health` event.
 - **Step-range file summary.** `meter files <run> --from X [--to Y]` now
   works without `--diff`: a git-status-style summary of everything that
   changed in a step window, across all files. `--to` omitted means "to the
@@ -32,9 +33,9 @@ Notable changes to Meterbility. Versions are lockstep across the
   double-capture the same tree; a second instance attaches as a viewer
   (`--force-capture` overrides), and an orphaned viewer warns loudly when
   its capture holder disappears.
-- **Attach hints.** When capture is running with no viewer attached, the
-  next `meter` command prints a one-line hint to attach; `meter run`
-  prints its own hint the moment its proxy starts.
+- **Attach hints.** When recent file capture has landed with no live
+  viewer attached, the next `meter` command prints a one-line hint to
+  attach; `meter run` prints its own hint the moment its proxy starts.
 
 ### Changed
 
