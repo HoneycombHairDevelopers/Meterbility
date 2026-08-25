@@ -67,3 +67,25 @@ scopes the OIDC claim.
 The distribution version lives in `packages/agent-py/pyproject.toml` and
 `src/meterbility_agent/__init__.py` (`__version__`) — bump both in lockstep with
 the npm packages.
+
+## Adding a new workspace package
+
+Registration points beyond the package directory itself — miss any and it
+fails somewhere non-local:
+
+1. **Root `tsconfig.json` `paths`** — maps `@meterbility/<name>` to
+   `<dir>/src/index.ts`. This is how `tsx` resolves workspace imports from
+   source in unbuilt checkouts; without it, fresh-laptop CI (which runs
+   `npm install` → `npm test` with no build step) dies with
+   `ERR_MODULE_NOT_FOUND` on `<pkg>/dist/index.js`. It never reproduces on a
+   dev machine because local builds leave `dist/` behind — verify by deleting
+   every adapter's `dist/` and running `./bin/meter --version`.
+2. **Root `package.json` `build` script** — the `-w` list is ordered by
+   dependency topology; insert the package after its dependencies.
+3. **[publish.yml](../.github/workflows/publish.yml)** — the publish loop is a
+   hard-coded ordered list, same topology.
+4. **npmjs.com trusted publisher** — register the new package name with
+   `publish.yml` as its trusted publisher before the next release, or its
+   `npm publish` 404s.
+5. The usual in-repo surfaces: version lockstep with the other manifests,
+   `docs/architecture.md` package tree, README capability matrix.
