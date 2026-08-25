@@ -34,7 +34,8 @@ done
 
 ## Version bumps
 
-Package versions are kept in lockstep with the repo version (`0.3.0`).
+Package versions are kept in lockstep with the repo version (the root
+`VERSION` file).
 When cutting a new release, bump `version` in every workspace `package.json`
 plus the CLI's `.version()` string in `packages/cli/src/index.ts`, tag, and
 publish. Inter-package ranges (`^0.3.0`) only need touching on a major bump.
