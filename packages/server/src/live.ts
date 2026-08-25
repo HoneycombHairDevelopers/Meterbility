@@ -599,7 +599,13 @@ export class LiveInspector extends EventEmitter {
    */
   private detectStepArrivals(silent: boolean): void {
     const now = Date.now();
-    for (const run of listRuns(this.store, { limit: ARRIVAL_SCAN_RUN_LIMIT })) {
+    // includeChildren: carved agent runs receive out-of-band steps too
+    // (v8 aggregation policy — children are real activity for live
+    // bookkeeping; the default child-exclusion is for listings only).
+    for (const run of listRuns(this.store, {
+      limit: ARRIVAL_SCAN_RUN_LIMIT,
+      includeChildren: true,
+    })) {
       const recentTerminal =
         run.ended_at !== undefined &&
         now - new Date(run.ended_at).getTime() < RECENT_TERMINAL_WINDOW_MS;

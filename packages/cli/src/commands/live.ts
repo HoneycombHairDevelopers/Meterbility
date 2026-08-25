@@ -197,7 +197,13 @@ export function registerLiveCommand(program: Command): void {
         const emitJson = (obj: unknown): void => {
           process.stdout.write(JSON.stringify(obj) + "\n");
         };
-        const active = listRuns(store, { limit: HEADER_RUN_SCAN_LIMIT }).filter(
+        // includeChildren: a live squad session's agents are the
+        // activity — the header must count them, not just the parent
+        // (v8 aggregation policy for live surfaces).
+        const active = listRuns(store, {
+          limit: HEADER_RUN_SCAN_LIMIT,
+          includeChildren: true,
+        }).filter(
           (r) => r.status === "in_progress" && matchesRun(r.run_id),
         );
         if (!opts.json) {
