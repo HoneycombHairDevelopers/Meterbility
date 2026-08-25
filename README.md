@@ -10,9 +10,15 @@ Meterbility turns AI agent runs into a queryable, replayable, forkable corpus an
 
 ## Status
 
-**v0.6.1 — stream capture fidelity.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
+**v0.6.2 — the live front door.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
-Latest milestones (v0.6.1):
+Latest milestones (v0.6.2):
+
+- **`meter live` — the front door** — one command starts session ingest and file side-effect capture together: a self-explaining header, an honest `SYNCING → SYNCED` backfill state, a live `step 42 · Edit src/foo.ts · +12 −3` stream, and a capture-health line that reports watcher degradation instead of silently missing changes.
+- **Step-range file summary** — `meter files <run> --from X [--to Y]` without `--diff`: a git-status-style view of everything a step window changed, re-runnable against a live session; synthetic bands (hook/admin/checkpoint) are mapped in by wall clock, `--main-band-only` opts out.
+- **One sentinel per root** — `meter live` and `meter watch --files` share a per-root, owner-identified heartbeat so two watchers never double-capture the same tree; a second instance attaches as a viewer, and an attach hint points you at recent capture nobody is watching.
+
+Earlier milestones (v0.6.1):
 
 - **Reasoning text parity** — streamed `reasoning_content` deltas (NVIDIA NIM-style reasoning models) now fold into the captured decision blob, matching what non-streamed responses already carried. The model's thinking is no longer lost the moment it streams.
 - **Time-to-first-token** — the proxy tee stamps per-chunk arrival marks; every streamed step records `ttft_ms` (first delta of any kind — when thinking began) and `ttft_visible_ms` (first token a user sees). The gap is the invisible **reasoning burn**, now visible in the proxy log line, the step card's Cost tab, and the store.
@@ -88,6 +94,7 @@ Requires **Node 24+** (rebuilds `better-sqlite3` natively). Python SDK additiona
 npm install -g @meterbility/cli
 
 meter doctor                 # verify the Claude Code surface
+meter live                   # watch sessions + file side effects (foreground — run in a second terminal)
 meter ingest claude-code --limit 5
 meter list
 meter inspect <run-id> --at 5 --show context   # exactly what the model saw at step 5
@@ -95,6 +102,23 @@ meter web                    # open the inspector at http://127.0.0.1:4317
 ```
 
 Instrumenting your own agent? Add the SDK to your project instead: `npm install @meterbility/agent` (TypeScript) or `pip install meterbility-agent` (Python).
+
+### The flow — two front doors
+
+Everything in Meterbility hangs off two commands. Pick by where your agent runs:
+
+- **`meter run -- <cmd>`** — *launch and capture.* Wraps any script or agent with the capture proxy auto-wired (Anthropic, OpenAI, or any OpenAI-compatible upstream via `--upstream nvidia=…`). API traffic becomes runs with first-class provider identity. Zero code change.
+- **`meter live`** — *watch and capture.* For sessions Meterbility observes from the outside (Claude Code, Codex CLI — Cursor persists to SQLite, so it joins via `meter ingest cursor` or `meter init --cursor-hooks` instead): one command starts session ingest **and** file side-effect capture together, streams `step 42 · Edit src/foo.ts · +12 −3` lines as they happen, and prints a capture-health line that tells you honestly when the filesystem watcher is degraded. Run it in your repo before (or during — it attaches) an agent session.
+
+Then interrogate what happened:
+
+```bash
+meter files <run-id> --at 5          # what did step 5 change?
+meter files <run-id> --from 3        # everything changed from step 3 to now (live runs too)
+meter files <run-id> --diff src/x.ts --from 3 --to 7   # one file's diffs across a window
+```
+
+One-time setup for exact (hook-based) Bash capture in a repo: `meter init --hooks`. Without it, `meter live`'s filesystem sentinel is the cross-vendor fallback.
 
 ### From a clone
 
@@ -136,7 +160,9 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Multi-upstream proxy capture (`--upstream <name>[:<dialect>]=<url>` — any OpenAI/Anthropic-dialect host behind a `/<name>/` prefix, concurrent on one port, first-class `provider` on runs/steps; verified: NVIDIA `integrate.api.nvidia.com`) | ✅ v0.6 |
 | Proxy edge metadata (`x-meterbility-cwd` / `x-meterbility-git-branch` headers) | ✅ v0.5.1 |
 | Claude Code file-change capture (Write/Edit/MultiEdit/Bash-rm) | ✅ v0.3 |
-| Bash side-effect capture — `meter capture` hooks (exact) + `meter watch --files` FileSentinel (fallback) | ✅ v0.5 |
+| Bash side-effect capture — `meter capture` hooks (exact) + FileSentinel (fallback) | ✅ v0.5 |
+| `meter live` — one-command ingest + file capture, capture-health line, viewer guard | ✅ v0.6 |
+| Step-range file summary (`meter files --from/--to`, band-aware) + attach nudge | ✅ v0.6 |
 | Sensitive-path content redaction (`.env` / keys record fact, not contents) | ✅ v0.5 |
 | **SDK** | |
 | TypeScript SDK (`@meterbility/agent`) | ✅ v0.1 |
@@ -232,6 +258,7 @@ docs/
 | [Trace format](docs/trace-format.md) | Wire-format spec (export/import) |
 | [Roadmap follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
 | [Capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
+| [CHANGELOG](CHANGELOG.md) | What shipped in each release |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, PR conventions |
 | [SECURITY](SECURITY.md) | Vulnerability disclosure |
 | [Third-party licenses](LICENSES-third-party.md) | Dependency audit |

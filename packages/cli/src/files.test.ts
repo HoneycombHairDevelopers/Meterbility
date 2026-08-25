@@ -374,3 +374,324 @@ test("meter files <run> on a baseline-less run with no FileChanges gives a helpf
   // which is also true here.
   assert.match(r.stdout, /meter init/);
 });
+
+// ─── Range summary mode: --from/--to without --diff ──────────────────
+//
+// meter-live design §5 (docs/designs/meter-live-front-door.md): the
+// all-files step-window summary. Fixture is built directly against the
+// store — range semantics need multiple steps plus a synthetic-band
+// step at a controlled timestamp, which is awkward to stage through a
+// transcript.
+
+async function setupRangeFixture(): Promise<{
+  home: string;
+  runId: string;
+  claudeHome: string;
+}> {
+  const { home, store } = freshStore();
+  const { upsertProjectByCwd, upsertAgent, insertRun, insertStep, insertFileChange } =
+    await import("@meterbility/collector");
+  const { randomUUID } = await import("node:crypto");
+
+  const cwd = mkdtempSync(join(tmpdir(), "meter-files-range-cwd-"));
+  const project = upsertProjectByCwd(store, cwd, "range-test");
+  const agent = upsertAgent(store, project.project_id, "claude-code");
+  const runId = `run_${randomUUID()}`;
+  insertRun(store, {
+    run_id: runId,
+    agent_id: agent.agent_id,
+    project_id: project.project_id,
+    source_runtime: "claude-code",
+    status: "in_progress",
+    started_at: "2026-08-19T10:00:00Z",
+    cwd,
+    tokens_total_input: 0,
+    tokens_total_output: 0,
+    tokens_total_cached: 0,
+    cost_cents: 0,
+    step_count: 4,
+    tags: [],
+  });
+
+  const mkStep = (sequence: number, timestamp: string, tool: string): string => {
+    const id = `stp_${randomUUID()}`;
+    insertStep(store, {
+      step_id: id,
+      run_id: runId,
+      sequence,
+      timestamp,
+      model: "claude-opus-4-7",
+      context_snapshot_id: "snap_r",
+      decision_ref: "blob_dec",
+      action: { kind: "tool_call", tool_name: tool },
+      outcome: { status: "ok" },
+      tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+      latency_ms: 0,
+      cost_cents: 0,
+      tags: [],
+      status: "ok",
+    });
+    return id;
+  };
+
+  // Main band: steps 1..3, one minute apart. Synthetic hook band: seq
+  // 100000, timestamped BETWEEN steps 2 and 3 so a [2,3] window maps
+  // it in by wall clock and a [1,1] window maps it out.
+  const s1 = mkStep(1, "2026-08-19T10:00:00Z", "Write");
+  const s2 = mkStep(2, "2026-08-19T10:01:00Z", "Write");
+  const s3 = mkStep(3, "2026-08-19T10:02:00Z", "Edit");
+  const sBand = mkStep(100_000, "2026-08-19T10:01:30Z", "Bash");
+
+  const blob = async (content: string): Promise<string> =>
+    store.blobs.putBuffer(Buffer.from(content, "utf-8"));
+
+  const aV1 = await blob("a1\na2\n");
+  const aV2 = await blob("a1\nA2!\n");
+  const bV1 = await blob("b1\nb2\nb3\n");
+  const cV1 = await blob("c1\nc2\nc3\nc4\nc5\n");
+
+  const base = {
+    run_id: runId,
+    gitignored: false,
+    bom: false,
+    redacted: false,
+    partial_diff: false,
+    encoding: "utf-8" as const,
+    patch_format: "unified" as const,
+  };
+  insertFileChange(store, {
+    ...base, step_id: s1, sequence: 0, derived_from: "tool_call",
+    path: "src/a.ts", op: "create", after_blob_ref: aV1,
+    lines_added: 2, lines_removed: 0, patch_text: "+a1\n+a2\n",
+    source_tool_name: "Write",
+  });
+  insertFileChange(store, {
+    ...base, step_id: s2, sequence: 0, derived_from: "tool_call",
+    path: "src/b.ts", op: "create", after_blob_ref: bV1,
+    lines_added: 3, lines_removed: 0, patch_text: "+b1\n+b2\n+b3\n",
+    source_tool_name: "Write",
+  });
+  insertFileChange(store, {
+    ...base, step_id: s3, sequence: 0, derived_from: "tool_call",
+    path: "src/a.ts", op: "modify", before_blob_ref: aV1, after_blob_ref: aV2,
+    lines_added: 1, lines_removed: 1, patch_text: "-a2\n+A2!\n",
+    source_tool_name: "Edit",
+  });
+  insertFileChange(store, {
+    ...base, step_id: sBand, sequence: 1000, derived_from: "filesystem_watch",
+    path: "scripts/c.sh", op: "create", after_blob_ref: cV1,
+    lines_added: 5, lines_removed: 0, patch_text: "+c1\n+c2\n+c3\n+c4\n+c5\n",
+  });
+
+  store.close();
+  const claudeHome = mkdtempSync(join(tmpdir(), "meter-files-range-claude-"));
+  return { home, runId, claudeHome };
+}
+
+test("files --from N: window runs to the latest main-band step and includes band rows by wall clock", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--from", "2"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /RANGE {2}steps 2–3/);
+  assert.match(r.stdout, /to current step/);
+  // In window: b.ts (step 2), a.ts modify (step 3), c.sh (hook band at
+  // 10:01:30, inside the [10:01:00, 10:02:00] wall-clock span).
+  assert.match(r.stdout, /src\/b\.ts/);
+  assert.match(r.stdout, /src\/a\.ts/);
+  assert.match(r.stdout, /scripts\/c\.sh/);
+  assert.match(r.stdout, /\(hook\)/);
+  assert.match(r.stdout, /1 band-attributed change included/);
+  // a.ts shows only the step-3 modify (+1 −1), not the step-1 create.
+  assert.match(r.stdout, /M {2}src\/a\.ts/);
+  // Totals: 3+1+5 added, 1 removed.
+  assert.match(r.stdout, /Window \+9 −1/);
+});
+
+test("files --from/--to: a [1,1] window excludes later steps and wall-clock-excludes the band row", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--from", "1", "--to", "1"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /src\/a\.ts/);
+  assert.doesNotMatch(r.stdout, /src\/b\.ts/);
+  assert.doesNotMatch(r.stdout, /scripts\/c\.sh/);
+  assert.match(r.stdout, /A {2}src\/a\.ts/); // step-1 create, not the later modify
+  assert.match(r.stdout, /Window \+2 −0/);
+});
+
+test("files --from N --main-band-only: band row excluded with a visible footer count", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--from", "2", "--main-band-only"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /scripts\/c\.sh/);
+  assert.match(r.stdout, /1 band-attributed change excluded \(--main-band-only\)/);
+  assert.match(r.stdout, /Window \+4 −1/);
+});
+
+test("files --at combined with --from/--to errors with exit 2", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--at", "2", "--from", "1"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--at cannot be combined with --from\/--to/);
+});
+
+test("files --from greater than --to errors with exit 2", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--from", "3", "--to", "1"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--from \(3\) must be <= --to \(1\)/);
+});
+
+test("files --from past the end of the run yields an empty window, not an error", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--from", "50"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /no captured changes in this step window/);
+});
+
+test("files --from 1 (whole run) --json emits the range structure with band_sources", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--from", "1", "--json"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout) as {
+    from: number;
+    to: number;
+    to_is_current: boolean;
+    main_band_only: boolean;
+    band_changes_included: number;
+    band_changes_excluded: number;
+    files_touched: number;
+    lines_added_total: number;
+    lines_removed_total: number;
+    files: Array<{ path: string; band_sources?: string[]; change_count: number }>;
+  };
+  assert.equal(parsed.from, 1);
+  assert.equal(parsed.to, 3);
+  assert.equal(parsed.to_is_current, true);
+  assert.equal(parsed.main_band_only, false);
+  assert.equal(parsed.band_changes_included, 1);
+  assert.equal(parsed.band_changes_excluded, 0);
+  assert.equal(parsed.files_touched, 3);
+  assert.equal(parsed.lines_added_total, 11);
+  assert.equal(parsed.lines_removed_total, 1);
+  const cRow = parsed.files.find((f) => f.path === "scripts/c.sh");
+  assert.deepEqual(cRow?.band_sources, ["hook"]);
+  const aRow = parsed.files.find((f) => f.path === "src/a.ts");
+  assert.equal(aRow?.change_count, 2, "both a.ts changes collapse into one path row");
+});
+
+test("files --to only: window starts at 0; band row outside the wall-clock span is excluded", async () => {
+  const fx = await setupRangeFixture();
+  const r = runCli(["files", fx.runId, "--to", "2"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    NO_COLOR: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /RANGE {2}steps 0–2/);
+  assert.match(r.stdout, /src\/a\.ts/);
+  assert.match(r.stdout, /src\/b\.ts/);
+  // Band step at 10:01:30 sits after the [10:00:00, 10:01:00] span.
+  assert.doesNotMatch(r.stdout, /scripts\/c\.sh/);
+});
+
+test("files range: admin and checkpoint bands render their own labels; band-only runs yield an empty window", async () => {
+  const { home, store } = freshStore();
+  const { upsertProjectByCwd, upsertAgent, insertRun, insertStep, insertFileChange } =
+    await import("@meterbility/collector");
+  const { randomUUID } = await import("node:crypto");
+  const cwd = mkdtempSync(join(tmpdir(), "meter-files-bands-cwd-"));
+  const project = upsertProjectByCwd(store, cwd, "bands-test");
+  const agent = upsertAgent(store, project.project_id, "cursor");
+  const mkRun = (): string => {
+    const id = `run_${randomUUID()}`;
+    insertRun(store, {
+      run_id: id, agent_id: agent.agent_id, project_id: project.project_id,
+      source_runtime: "cursor", status: "in_progress",
+      started_at: "2026-08-19T10:00:00Z", cwd,
+      tokens_total_input: 0, tokens_total_output: 0, tokens_total_cached: 0,
+      cost_cents: 0, step_count: 0, tags: [],
+    });
+    return id;
+  };
+  const mkStep = (runId: string, sequence: number, timestamp: string): string => {
+    const id = `stp_${randomUUID()}`;
+    insertStep(store, {
+      step_id: id, run_id: runId, sequence, timestamp, model: "m",
+      context_snapshot_id: "c", decision_ref: "d",
+      action: { kind: "tool_call", tool_name: "Bash" },
+      outcome: { status: "ok" },
+      tokens: { input: 0, output: 0, cached_read: 0, cache_creation: 0 },
+      latency_ms: 0, cost_cents: 0, tags: [], status: "ok",
+    });
+    return id;
+  };
+  const mkStub = (runId: string, stepId: string, path: string): void => {
+    insertFileChange(store, {
+      run_id: runId, step_id: stepId, sequence: 1000,
+      derived_from: "filesystem_watch", path, op: "create",
+      partial_diff: true, gitignored: false, bom: false,
+      lines_added: 0, lines_removed: 0, redacted: false,
+    });
+  };
+
+  // Run A: main steps bracketing admin + checkpoint band steps.
+  const runA = mkRun();
+  mkStep(runA, 1, "2026-08-19T10:00:00Z");
+  mkStep(runA, 2, "2026-08-19T10:02:00Z");
+  const admin = mkStep(runA, 200_000, "2026-08-19T10:00:30Z");
+  const checkpoint = mkStep(runA, 300_000, "2026-08-19T10:01:00Z");
+  mkStub(runA, admin, "admin.txt");
+  mkStub(runA, checkpoint, "checkpoint.txt");
+
+  // Run B: ONLY band steps — no main band at all.
+  const runB = mkRun();
+  const bandOnly = mkStep(runB, 100_000, "2026-08-19T10:00:30Z");
+  mkStub(runB, bandOnly, "orphan.txt");
+  store.close();
+
+  const claudeHome = mkdtempSync(join(tmpdir(), "meter-files-bands-claude-"));
+  const env = { METERBILITY_HOME: home, CLAUDE_HOME: claudeHome, NO_COLOR: "1" };
+
+  const a = runCli(["files", runA, "--from", "1"], env);
+  assert.equal(a.status, 0, a.stderr);
+  assert.match(a.stdout, /admin\.txt/);
+  assert.match(a.stdout, /\(admin\)/);
+  assert.match(a.stdout, /checkpoint\.txt/);
+  assert.match(a.stdout, /\(checkpoint\)/);
+  assert.match(a.stdout, /2 band-attributed changes included/);
+
+  // Band-only run: no main-band steps → no wall-clock span → empty
+  // window, not a crash, and the band row cannot map in.
+  const b = runCli(["files", runB, "--from", "1"], env);
+  assert.equal(b.status, 0, b.stderr);
+  assert.match(b.stdout, /no captured changes in this step window/);
+  assert.doesNotMatch(b.stdout, /orphan\.txt/);
+});

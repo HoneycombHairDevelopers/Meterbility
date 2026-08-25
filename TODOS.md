@@ -200,13 +200,15 @@ heartbeat; viewers attach). Constraints to solve before building: hook
 timeout budget (never block the agent's tool call), orphan-process cleanup,
 multi-project contention. Depends on: `meter live` shipped and dogfooded.
 
-### Nudge-query covering index (conditional)
+### LiveOptions.projectsRoot is a dead option
 **Priority:** P3
-The hook-nudge existence check filters `file_change` by
-`derived_from` + `created_at` (`LIMIT 1`) on every human CLI invocation with
-no covering index. Deliberately deferred: cheap at current scale. Trigger:
-add the index if the check exceeds ~10ms in CLI startup profiling at scale.
-Depends on: nudge shipped.
+`LiveInspector` accepts `projectsRoot` in its options (and
+`POST /api/live/start` forwards it), but the tick's discovery calls
+`discoverSessions()` bare, which reads `claudeProjectsRoot()` from env —
+the option is silently ignored. Found writing the web SSE proof test
+(web-live-proxy.test.ts), which had to fall back to CLAUDE_HOME env
+isolation. Either thread `this.opts.projectsRoot` through discovery or
+delete the option from LiveOptions and the API body.
 
 ## Live Probe (cross-runtime pause)
 
@@ -351,3 +353,10 @@ Playwright e2e, `capture post/drain` + garbage-stdin CLI tests,
 blockquote/hr markdown styling.
 
 ## Completed
+
+### Nudge-query covering index
+`idx_fc_derived_created` added in ensureSchema — the ship review showed
+the per-invocation probe scanning outside its time budget on large
+stores, so the conditional trigger fired at review time rather than in
+profiling.
+**Completed:** v0.6.2 (2026-08-24)

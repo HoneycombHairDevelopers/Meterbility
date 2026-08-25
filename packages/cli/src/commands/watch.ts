@@ -1,4 +1,5 @@
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -7,10 +8,15 @@ import {
   FileSentinel,
   type LiveEvent,
   type FileSentinelEvent,
-  type FleetEntry,
 } from "@meterbility/server";
-import { getSetting } from "@meterbility/collector";
+import {
+  getSetting,
+  liveCaptureHeldFor,
+  writeLiveHeartbeat,
+  clearLiveHeartbeat,
+} from "@meterbility/collector";
 import { openStore } from "../util.ts";
+import { printPretty, printFileEvent } from "../render_events.ts";
 
 /**
  * `meter watch` — terminal counterpart to the web UI's live SSE stream.
@@ -39,7 +45,7 @@ export function registerWatchCommand(program: Command): void {
   program
     .command("watch")
     .description(
-      "Stream live agent activity from ~/.claude/projects to the terminal",
+      "Raw live event stream from ~/.claude/projects (scripting/JSON). Humans: `meter live` is the friendlier front door",
     )
     .option(
       "--watch-tool <name>",
@@ -170,14 +176,40 @@ export function registerWatchCommand(program: Command): void {
         // the live inspector in the same process: the inspector keeps
         // runs/steps fresh via incremental ingest, the sentinel attributes
         // filesystem events against them.
+        //
+        // One-sentinel-per-root guard (red-team finding): watch --files
+        // participates in the same live.heartbeat protocol meter live
+        // uses — two sentinels on one root double-capture every event
+        // into duplicate rows, and the attach nudge would otherwise
+        // steer a watch --files user straight into that collision.
         let sentinel: FileSentinel | undefined;
+        let heartbeat: NodeJS.Timeout | undefined;
+        let watchRoot: string | undefined;
+        const ownerId = `${process.pid}-${randomUUID().slice(0, 8)}`;
+        if (opts.files) {
+          watchRoot = resolve(opts.filesDir ?? process.cwd());
+          if (liveCaptureHeldFor(store, watchRoot)) {
+            console.error(
+              pc.yellow(
+                `meter watch: another instance already holds file capture on ${watchRoot} — skipping a duplicate sentinel (rows would double). \`meter live\` attaches as a viewer.`,
+              ),
+            );
+            opts.files = false;
+          }
+        }
         if (opts.files) {
           // Validate up front and guard start(): fs.watch throws
           // synchronously on a bad root, which would otherwise kill
           // the whole watch session (live stream included) with an
           // unhandled rejection mid-stream.
           const filesRoot = resolve(opts.filesDir ?? process.cwd());
-          if (!existsSync(filesRoot) || !statSync(filesRoot).isDirectory()) {
+          let rootOk = false;
+          try {
+            rootOk = statSync(filesRoot).isDirectory();
+          } catch {
+            rootOk = false; // missing or vanished — same answer
+          }
+          if (!rootOk) {
             console.error(
               pc.red(
                 `meter watch: --files-dir is not a directory: ${filesRoot} — continuing without file capture`,
@@ -195,6 +227,26 @@ export function registerWatchCommand(program: Command): void {
               }
               printFileEvent(e);
             });
+            // Claim BEFORE start(): prime() walks the whole tree and
+            // can take minutes on a big repo — an unclaimed prime
+            // window let a concurrent instance start a second sentinel
+            // and double-capture every event (adversarial 2). The
+            // claim write sits OUTSIDE the start try so a transient
+            // SQLITE_BUSY can't be misreported as a capture failure
+            // that tears down a healthy sentinel (adversarial 5b).
+            try {
+              writeLiveHeartbeat(store, watchRoot!, ownerId);
+            } catch {
+              // best-effort — refresher below re-writes
+            }
+            heartbeat = setInterval(() => {
+              try {
+                writeLiveHeartbeat(store, watchRoot!, ownerId);
+              } catch {
+                // best-effort — staleness self-expires
+              }
+            }, 5_000);
+            heartbeat.unref?.();
             try {
               await sentinel.start();
             } catch (err) {
@@ -205,6 +257,13 @@ export function registerWatchCommand(program: Command): void {
               );
               sentinel.stop();
               sentinel = undefined;
+              if (heartbeat) clearInterval(heartbeat);
+              heartbeat = undefined;
+              try {
+                clearLiveHeartbeat(store, watchRoot!, ownerId);
+              } catch {
+                // staleness self-expires
+              }
             }
           }
         }
@@ -212,112 +271,24 @@ export function registerWatchCommand(program: Command): void {
         // Keep alive — LiveInspector polls in the background.
         const stop = (): void => {
           live.stop();
+          if (heartbeat) clearInterval(heartbeat);
           sentinel?.stop();
-          store.close();
+          if (heartbeat && watchRoot) {
+            try {
+              clearLiveHeartbeat(store, watchRoot, ownerId);
+            } catch {
+              // best-effort — staleness self-expires
+            }
+          }
+          try {
+            store.close();
+          } catch {
+            // already closed — exiting regardless
+          }
           process.exit(0);
         };
         process.on("SIGINT", stop);
         process.on("SIGTERM", stop);
       },
     );
-}
-
-function printFileEvent(e: FileSentinelEvent): void {
-  const ts = new Date().toISOString().slice(11, 19);
-  const head = pc.dim(ts) + "  ";
-  switch (e.type) {
-    case "sentinel:ready":
-      console.log(
-        head +
-          pc.dim(
-            `watching files under ${e.root} (${e.primed_files} files primed)`,
-          ),
-      );
-      return;
-    case "file:captured": {
-      const c = e.change;
-      const opBadge =
-        c.op === "create" ? "A" : c.op === "delete" ? "D" : "M";
-      const stat = c.partial_diff
-        ? pc.dim("(partial)")
-        : pc.dim(`+${c.lines_added} −${c.lines_removed}`);
-      console.log(
-        head +
-          pc.green("file:captured") +
-          "  " +
-          pc.cyan(e.run_id.slice(0, 12)) +
-          `  ${opBadge} ${c.path}  ` +
-          stat,
-      );
-      return;
-    }
-    case "file:unattributed":
-      console.log(
-        head + pc.dim(`file:unattributed  ${e.op} ${e.path} (${e.reason})`),
-      );
-      return;
-    case "file:skipped":
-      if (e.reason === "unchanged") return; // pure noise
-      console.log(
-        head + pc.dim(`file:skipped  ${e.path} (${e.reason})`),
-      );
-      return;
-    case "sentinel:error":
-      console.log(head + pc.red("sentinel:error") + "  " + e.message);
-      return;
-  }
-}
-
-function printPretty(e: LiveEvent): void {
-  const ts = new Date().toISOString().slice(11, 19);
-  const head = pc.dim(ts) + "  ";
-  switch (e.type) {
-    case "run:created":
-      console.log(
-        head +
-          pc.blue("run:created  ") +
-          pc.cyan(e.run.run_id.slice(0, 12)) +
-          (e.run.title ? "  " + e.run.title : ""),
-      );
-      return;
-    case "run:updated":
-      console.log(
-        head +
-          pc.dim("run:updated  ") +
-          pc.cyan(e.run.run_id.slice(0, 12)) +
-          pc.dim(`  +${e.new_steps.length} step${e.new_steps.length === 1 ? "" : "s"}`),
-      );
-      return;
-    case "run:completed":
-      console.log(
-        head +
-          pc.green("run:completed") +
-          "  " +
-          pc.cyan(e.run.run_id.slice(0, 12)) +
-          pc.dim(`  status=${e.run.status}`),
-      );
-      return;
-    case "alert":
-      console.log(
-        head +
-          pc.yellow(`alert[${e.kind}] `) +
-          pc.cyan(e.run_id.slice(0, 12)) +
-          "  " +
-          e.message,
-      );
-      return;
-    case "fleet:snapshot": {
-      const counts = e.entries.reduce<Record<string, number>>((acc, x: FleetEntry) => {
-        acc[x.status] = (acc[x.status] ?? 0) + 1;
-        return acc;
-      }, {});
-      const summary = Object.entries(counts)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(" ");
-      console.log(
-        head + pc.dim(`fleet:snapshot ${e.entries.length} runs · ${summary}`),
-      );
-      return;
-    }
-  }
 }

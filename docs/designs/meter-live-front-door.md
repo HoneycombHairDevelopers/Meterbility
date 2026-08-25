@@ -136,6 +136,27 @@ Rebased after v0.6.0 (proxy multi-upstream, PR #31) landed. Core surfaces the pl
 3. **Nudge exclusions widened** (spec §6): `run` excluded from the generic pre-command nudge (child-stdio purity); `run` prints its own post-proxy-start attach hint (suppressed by `--quiet`).
 4. **Version/wording**: freeze rationale updated (capture planes untouched through v0.6.0); ships on the v0.6.x line. Test plan gains three rebase cases (provider render, run hint, run nudge-exclusion).
 
+## Ship Review Hardening (2026-08-24, /ship pre-landing review + red team)
+
+Four specialists + a red-team pass over the implementation produced two fix rounds, all landed with tests:
+
+1. **rawPerPath leak killed** (triple-confirmed): per-path coalescing accounting moved post-ignore; global liveness counters stay pre-ignore.
+2. **Guard protocol hardened**: capture claim written IMMEDIATELY at startup (TOCTOU window shrunk from minutes to ms); `meter watch --files` now participates in the same `live.heartbeat` protocol (skips a duplicate sentinel, holds the claim while capturing); future-dated heartbeats treated as stale via a shared `isLiveHeartbeatFresh` predicate (clock-skew wedge); viewer-only instances detect an orphaned state (holder gone) and warn loudly / report `viewer-orphaned` in JSON health instead of sitting sentinel-less in silence.
+3. **Sentinel starts before the ingest backfill** — a cold-store sync no longer leaves a minutes-wide uncaptured window while the header claims capture.
+4. **Degraded requires definite write evidence**: WRITE_TOOLS escalate to degraded; SHELL_TOOLS cap at warn (a sustained read-only Bash loop is not capture loss). §4's numerator set is now two-tiered.
+5. **Terminal-injection surface closed**: sanitizer strips full C0 (incl. TAB/LF) + DEL + full C1; applied to alert messages, header title/provider/upstream_host, and all path/title/message render sites.
+6. **Range/query correctness**: band wall-clock mapping compares epoch millis (mixed-precision ISO strings broke lexicographic order); step-id bounds error when the step belongs to a different run; the nudge helper orders by `created_at DESC` so it names the latest capture.
+7. Maintainability: shared sources of truth for heartbeat freshness (collector), cwd-overlap predicate + SentinelHealth (server), band floors (shared), op-badge/line-stat/sanitize (render_events); nudge SQL owned by a collector helper with an injectable time budget; header uses a MAX-sequence query; per-run stream state evicted on run:completed.
+
+Accepted residuals (documented, not fixed): announced-map re-insert on post-completion late events (bounded, conf 4); countSessionFiles one-time sync walk; test-fixture triplication in test files.
+
+### Cycle 3 (Codex + Claude adversarial passes, same day)
+
+8. **Per-root, owner-identified claims**: `live.heartbeat` becomes a JSON map of watched-root → {ts, owner} (legacy plain-ISO reads as a wildcard claim until it expires). A repoA holder no longer disables capture for repoB machine-wide; shutdown releases only its own root; a simultaneous-start race is resolved within one tick — the loser sees a foreign owner and downgrades to viewer with a warning. Claims are written BEFORE `sentinel.start()` in both `live` and `watch --files` (prime can take minutes) and refreshed from the moment of claiming (a cold backfill can outlive the 2-minute freshness window). A failed sentinel start releases the claim.
+9. **Sentinel flush serialization**: overlapping `flushNow` loops shared instance state (snapshot map, coalesced counts) — flushes now queue on a promise chain.
+10. **Query/display correctness**: nudge probe gets a covering index (`idx_fc_derived_created`) and honest wording ("recent file capture", not "capture active"); a sentinel-printed row no longer prints a second time via `files:changed`; JSON/warn "recent steps" counts are window-pruned in the evaluator; `--main-band-only` without a range and `--diff --at` are hard errors; unparseable window boundaries disable band mapping visibly; "to current" windows include trailing band rows (upper bound = now); empty step bounds error; Cursor's `edit_file_v2`/`search_replace`/`delete_file` join WRITE_TOOLS; sanitizer also strips bidi/zero-width characters; root validation is a single `statSync` in try (no TOCTOU crash).
+11. Cycle-3 residuals (accepted): `watch --files` skipped-by-guard has no orphan re-check (meter live is the blessed path); nudge's `Store.open` runs idempotent migrations from a decoration path; publish-time sibling dep ranges bumped at the version step.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |

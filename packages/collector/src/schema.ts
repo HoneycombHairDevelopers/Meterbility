@@ -361,6 +361,14 @@ export function ensureSchema(db: Database.Database): void {
     "CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind)",
   );
 
+  // v0.6.x — covering index for the CLI nudge's per-invocation probe
+  // (derived_from + created_at): the probe runs before every human
+  // command, and an unindexed scan on a large file_change table would
+  // sit outside the nudge's time budget (codex adversarial P2).
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_fc_derived_created ON file_change(derived_from, created_at)",
+  );
+
   // v6 — Upstream provider identity for proxy multi-upstream capture.
   // Nullable: legacy rows and transcript-adapter runs have no provider;
   // the display layer falls back to nothing. One provider per run —

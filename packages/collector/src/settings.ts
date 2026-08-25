@@ -37,7 +37,15 @@ export type SettingKey =
   // The api_key is team-scoped (Basic auth); base override is for tests
   // and self-hosted gateways. isSecret() masks the key via `api_key`.
   | "cursor.admin_api_key"
-  | "cursor.admin_api_base";
+  | "cursor.admin_api_base"
+  // meter live (v0.6.x) — capture-attachment heartbeat. ISO timestamp
+  // written every evaluator tick by the `meter live` instance that
+  // holds the FileSentinel; deleted on clean shutdown. Consumers: the
+  // second-instance viewer-guard (fresh heartbeat → new instance runs
+  // viewer-only) and the CLI nudge (stale heartbeat + recent capture
+  // rows → "meter live to attach" hint). A crashed holder's heartbeat
+  // self-expires via staleness — no lock, no pidfile.
+  | "live.heartbeat";
 
 /**
  * Runtime enumeration of every SettingKey — keep in sync with the union
@@ -60,7 +68,131 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   "capture.files.max_skip_bytes",
   "cursor.admin_api_key",
   "cursor.admin_api_base",
+  "live.heartbeat",
 ];
+
+/**
+ * Freshness contract for the `live.heartbeat` setting — the single
+ * source both the `meter live` viewer-guard and the CLI nudge compare
+ * against. A heartbeat younger than this means a live viewer holds
+ * capture; older self-expires (crashed holder).
+ */
+export const LIVE_HEARTBEAT_FRESH_MS = 2 * 60_000;
+
+/**
+ * The one freshness predicate for `live.heartbeat` — used by the
+ * viewer-guard, the watch guard, and the nudge. Future-dated
+ * heartbeats beyond a small skew tolerance are treated as STALE:
+ * a backward clock step (NTP correction) after a holder crash must
+ * not wedge every new instance into viewer-only mode (red-team
+ * finding — the naive `age < FRESH` passes for any negative age).
+ */
+export function isLiveHeartbeatFresh(iso: string, now = Date.now()): boolean {
+  const age = now - Date.parse(iso);
+  if (!Number.isFinite(age)) return false;
+  const SKEW_TOLERANCE_MS = 10_000;
+  return age >= -SKEW_TOLERANCE_MS && age < LIVE_HEARTBEAT_FRESH_MS;
+}
+
+/**
+ * Per-ROOT capture claims (codex adversarial P1: a single global
+ * heartbeat let a `meter live` in repoA silently disable file capture
+ * for every other repo on the machine, and shutdown deleted another
+ * process's claim). The `live.heartbeat` setting value is a JSON map
+ * of watched-root → ISO timestamp. A legacy plain-ISO value (written
+ * by pre-fix builds) reads as a wildcard claim under "*" that matches
+ * any root until it expires.
+ *
+ * Concurrency: writers re-read + rewrite the whole map each tick,
+ * pruning stale entries. Two holders racing a write can clobber each
+ * other's entry for one tick — harmless, because each rewrites within
+ * 5s and freshness tolerates 2 minutes.
+ */
+export interface LiveClaim {
+  ts: string;
+  /** Holder identity (pid + entropy). Lets a holder detect it LOST a
+   *  simultaneous-start race and downgrade, instead of two sentinels
+   *  refreshing each other's freshness forever (adversarial finding). */
+  owner?: string;
+}
+
+export function readLiveHeartbeats(store: Store): Record<string, LiveClaim> {
+  const raw = getSetting(store, "live.heartbeat");
+  if (raw === undefined) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, LiveClaim> = {};
+      for (const [r, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === "string") out[r] = { ts: v };
+        else if (v && typeof v === "object" && typeof (v as LiveClaim).ts === "string") {
+          out[r] = v as LiveClaim;
+        }
+      }
+      return out;
+    }
+  } catch {
+    // legacy plain-ISO value
+  }
+  return { "*": { ts: raw } };
+}
+
+export function writeLiveHeartbeat(store: Store, root: string, owner?: string): void {
+  const next: Record<string, LiveClaim> = {};
+  for (const [r, claim] of Object.entries(readLiveHeartbeats(store))) {
+    if (r !== root && r !== "*" && isLiveHeartbeatFresh(claim.ts)) next[r] = claim;
+  }
+  next[root] = { ts: new Date().toISOString(), ...(owner ? { owner } : {}) };
+  setSetting(store, "live.heartbeat", JSON.stringify(next));
+}
+
+/**
+ * Release ONLY this root's claim; other roots' holders are untouched.
+ * With `expectedOwner`, the entry is removed only when it is ownerless
+ * or owned by the caller — a race LOSER exiting must not erase the
+ * WINNER's live claim (codex structured review P2).
+ */
+export function clearLiveHeartbeat(
+  store: Store,
+  root: string,
+  expectedOwner?: string,
+): void {
+  const next: Record<string, LiveClaim> = {};
+  for (const [r, claim] of Object.entries(readLiveHeartbeats(store))) {
+    const keepForeign =
+      r === root &&
+      expectedOwner !== undefined &&
+      claim.owner !== undefined &&
+      claim.owner !== expectedOwner;
+    if ((r !== root || keepForeign) && isLiveHeartbeatFresh(claim.ts)) next[r] = claim;
+  }
+  if (Object.keys(next).length === 0) {
+    deleteSetting(store, "live.heartbeat");
+  } else {
+    setSetting(store, "live.heartbeat", JSON.stringify(next));
+  }
+}
+
+/** Is capture held for THIS root (or by a legacy wildcard claim)? */
+export function liveCaptureHeldFor(store: Store, root: string): boolean {
+  for (const [r, claim] of Object.entries(readLiveHeartbeats(store))) {
+    if ((r === root || r === "*") && isLiveHeartbeatFresh(claim.ts)) return true;
+  }
+  return false;
+}
+
+/** Current owner of this root's fresh claim, if any. */
+export function liveClaimOwner(store: Store, root: string): string | undefined {
+  const claim = readLiveHeartbeats(store)[root];
+  return claim && isLiveHeartbeatFresh(claim.ts) ? claim.owner : undefined;
+}
+
+/** Is ANY live viewer holding capture (nudge suppression)? */
+export function anyLiveCaptureHeld(store: Store): boolean {
+  return Object.values(readLiveHeartbeats(store)).some((c) =>
+    isLiveHeartbeatFresh(c.ts),
+  );
+}
 
 export function getSetting(store: Store, key: SettingKey): string | undefined {
   const row = store.db
