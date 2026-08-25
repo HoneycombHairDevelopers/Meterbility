@@ -3,6 +3,21 @@
 Notable changes to Meterbility. Versions are lockstep across the
 `@meterbility/*` npm packages and `meterbility-agent` on PyPI.
 
+## [0.6.3] - 2026-08-24
+
+### Fixed
+
+- **Test runs no longer fill your disk.** Every test file created throwaway
+  fixture stores (SQLite DB + blob store) in the OS temp dir and never
+  removed them — months of `npm test` runs could accumulate gigabytes and
+  eventually fail mid-run with ENOSPC. The runner now redirects the whole
+  run into one temp root and deletes it when the run passes; on failure the
+  root is kept (and named in the output) so fixtures stay inspectable, then
+  reclaimed after 24h. The Playwright fixture server likewise reaps its
+  leftover temp homes: each is tagged with its owner pid, dead owners are
+  swept at the next boot, and a live server's home is left alone (up to a
+  24-hour ceiling that guards against pid reuse).
+
 ## [0.6.2] - 2026-08-24
 
 ### Added

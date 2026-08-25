@@ -16,7 +16,13 @@
  * port + run_id so the spec can look them up at runtime instead of
  * relying on hardcoded values.
  */
-import { mkdtempSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -37,8 +43,59 @@ import type { LiveEvent } from "../live.ts";
 const PORT = Number(process.env.METERBILITY_E2E_PORT ?? "4318");
 const HOST = "127.0.0.1";
 
+// Owner pid is encoded in the dir name so the sweep can tell a dead server's
+// leftover home from one still in use (a manually started server under
+// reuseExistingServer can outlive any age threshold).
+const E2E_HOME_PREFIX = "meter-e2e-";
+
+// EPERM means the pid exists but belongs to another user — that is alive,
+// not gone. Only ESRCH proves the owner is dead. A sibling copy lives in
+// scripts/run-tests.ts; keep their behavior aligned.
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 async function main() {
-  const home = mkdtempSync(join(tmpdir(), "meter-e2e-"));
+  // Playwright tears the webServer down with SIGKILL, so the SIGTERM
+  // cleanup below never fires for normal runs — sweep prior runs' homes
+  // here instead. A sibling sweep with the same shape lives in
+  // scripts/run-tests.ts (RUN_ROOT_PREFIX); keep their behavior aligned.
+  const STALE_MS = 15 * 60 * 1000;
+  // Ceiling on the "owner is alive" pass: pid recycling can make an unrelated
+  // long-lived process look like the owner, which would leak the dir forever.
+  const LIVE_MAX_MS = 24 * 60 * 60 * 1000;
+  try {
+    for (const entry of readdirSync(tmpdir())) {
+      if (!entry.startsWith(E2E_HOME_PREFIX)) continue;
+      const full = join(tmpdir(), entry);
+      try {
+        const pidMatch = /^(\d+)-/.exec(entry.slice(E2E_HOME_PREFIX.length));
+        const ageMs = Date.now() - statSync(full).mtimeMs;
+        if (pidMatch) {
+          if (isProcessAlive(Number(pidMatch[1])) && ageMs < LIVE_MAX_MS) {
+            continue; // owner still running — never sweep a live server's home
+          }
+          rmSync(full, { recursive: true, force: true });
+        } else if (ageMs > STALE_MS) {
+          // legacy dir without a pid — age is the only signal we have
+          rmSync(full, { recursive: true, force: true });
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          console.warn(`e2e home sweep: could not clean ${full}:`, err);
+        }
+      }
+    }
+  } catch {
+    // tmpdir unreadable — the sweep is best-effort, never blocks the server
+  }
+
+  const home = mkdtempSync(join(tmpdir(), `${E2E_HOME_PREFIX}${process.pid}-`));
   process.env.METERBILITY_HOME = home;
 
   const store = Store.open({ path: join(home, "meterbility.db") });
@@ -157,6 +214,11 @@ async function main() {
   const shutdown = () => {
     server.close();
     store.close();
+    try {
+      rmSync(home, { recursive: true, force: true });
+    } catch {
+      // e.g. EBUSY on the open db file — the startup sweep will reap it
+    }
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

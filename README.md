@@ -10,9 +10,9 @@ Meterbility turns AI agent runs into a queryable, replayable, forkable corpus an
 
 ## Status
 
-**v0.6.2 — the live front door.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
+**v0.6.3.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
-Latest milestones (v0.6.2):
+Latest milestones (v0.6.2 — the live front door):
 
 - **`meter live` — the front door** — one command starts session ingest and file side-effect capture together: a self-explaining header, an honest `SYNCING → SYNCED` backfill state, a live `step 42 · Edit src/foo.ts · +12 −3` stream, and a capture-health line that reports watcher degradation instead of silently missing changes.
 - **Step-range file summary** — `meter files <run> --from X [--to Y]` without `--diff`: a git-status-style view of everything a step window changed, re-runnable against a live session; synthetic bands (hook/admin/checkpoint) are mapped in by wall clock, `--main-band-only` opts out.
