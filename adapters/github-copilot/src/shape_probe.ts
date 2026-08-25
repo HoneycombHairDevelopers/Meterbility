@@ -50,8 +50,6 @@ const REQUIRED_ENVELOPE_KEYS = ["type", "timestamp"] as const;
 
 export class CopilotShapeProbe {
   private warnings = new Map<string, CopilotShapeWarning>();
-  /** Count of events whose parentId matched no known event/child. */
-  unroutedCount = 0;
 
   probe(event: CopilotEvent): void {
     const eventType =
@@ -72,7 +70,7 @@ export class CopilotShapeProbe {
   }
 
   noteUnrouted(eventType: string): void {
-    this.unroutedCount += 1;
+    // Per-type totals live on the deduped warning's `count`.
     this.record(eventType, [], "parentId matched no known event or sub-agent");
   }
 

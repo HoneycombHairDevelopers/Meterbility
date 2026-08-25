@@ -13,7 +13,7 @@ import {
 } from "@meterbility/shared";
 import {
   getBaselineTree,
-  getChildRuns,
+  getDescendantRuns,
   getFileChange,
   getRun,
   getStep,
@@ -37,7 +37,7 @@ import {
   SETTING_KEYS,
   type SettingKey,
 } from "@meterbility/collector";
-import type { Store } from "@meterbility/collector";
+import type { DescendantRun, Store } from "@meterbility/collector";
 import { TRACE_FORMAT_VERSION } from "@meterbility/spec";
 import { diffRuns } from "./diff.ts";
 import { recordProbeIntervention } from "./probe_annotations.ts";
@@ -234,13 +234,14 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
         (r.cwd ?? "").toLowerCase().includes(project),
       );
     }
-    // v8 — nest carved agent runs under their parent (2A). Children are
-    // excluded from the default listing itself; the indexed per-parent
-    // lookup fills them in for display.
-    const childrenByParent = new Map<string, Run[]>();
+    // v8 — nest the whole lineage tree under each top-level run (2A).
+    // Children are excluded from the default listing itself; the
+    // indexed per-parent lookup fills them in for display (DFS order,
+    // depth for indent — nested delegation renders too).
+    const childrenByParent = new Map<string, DescendantRun[]>();
     for (const r of runs) {
-      const kids = getChildRuns(store, r.run_id);
-      if (kids.length > 0) childrenByParent.set(r.run_id, kids);
+      const tree = getDescendantRuns(store, r.run_id);
+      if (tree.length > 0) childrenByParent.set(r.run_id, tree);
     }
     return c.html(
       renderShell(
@@ -351,10 +352,11 @@ export function buildApp(store: Store, opts: BuildAppOptions = {}) {
       }
     }
     // v8 — delegation lineage for the header (parent link on carved
-    // agent runs; agent list + display-time fleet rollup on parents).
+    // agent runs; agent list + display-time fleet rollup on parents —
+    // descendants, so nested delegation sums and links completely).
     const lineage = {
       parent: run.parent_run_id ? getRun(store, run.parent_run_id) : undefined,
-      children: getChildRuns(store, run.run_id),
+      children: getDescendantRuns(store, run.run_id).map((d) => d.run),
     };
     const shell = renderShell(
       run.title ?? run.run_id,

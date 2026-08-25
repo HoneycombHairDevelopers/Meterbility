@@ -162,6 +162,32 @@ export function toolInputOf(e: CopilotEvent): unknown {
   return e.data?.arguments ?? e.data?.input ?? e.data?.args;
 }
 
+/** Prompt-ish text of a spawn event, with alias fallback. */
+function promptTextOf(e: CopilotEvent): string | undefined {
+  return (
+    strOf(e.data?.prompt) ?? strOf(e.data?.description) ?? strOf(e.data?.content)
+  );
+}
+
+/** Squad spawn prompts open with "You are {Name}, the {Role} on this
+ *  project" — ONE regex parses both halves so name and role can never
+ *  desync (adapter-core responsibility per the design doc; the squad
+ *  enrichment layer only adds detection + tags). */
+const SQUAD_IDENTITY_RE =
+  /You are ([^,\n]{1,60}), the ([^,\n]{1,80}?)(?: on| for|[.,\n])/;
+
+function parseSquadPromptIdentity(promptText: string): {
+  name?: string;
+  role?: string;
+} {
+  const m = SQUAD_IDENTITY_RE.exec(promptText);
+  if (m?.[1]) return { name: m[1].trim(), role: m[2]?.trim() };
+  // "🔧 EECOM: Refactoring auth" style descriptions.
+  const d = /^[^\w]*([A-Z][\w-]{1,30}):\s/.exec(promptText);
+  if (d?.[1]) return { name: d[1] };
+  return {};
+}
+
 /** Sub-agent display name with alias fallback + spawn-prompt parsing. */
 export function subagentNameOf(e: CopilotEvent): string | undefined {
   const explicit =
@@ -170,33 +196,14 @@ export function subagentNameOf(e: CopilotEvent): string | undefined {
     strOf(e.data?.name) ??
     strOf(e.data?.agentType);
   if (explicit) return explicit;
-  // Squad spawn prompts open with "You are {Name}, the {Role} on this
-  // project" — parse identity out of the prompt/description when no
-  // explicit field carries it (adapter-core responsibility per the
-  // design doc; the squad enrichment layer only adds detection + tags).
-  const promptText =
-    strOf(e.data?.prompt) ?? strOf(e.data?.description) ?? strOf(e.data?.content);
-  if (promptText) {
-    const m = /You are ([^,\n]{1,60}), the ([^,\n]{1,80}?)(?: on| for|[.,\n])/.exec(
-      promptText,
-    );
-    if (m?.[1]) return m[1].trim();
-    // "🔧 EECOM: Refactoring auth" style descriptions.
-    const d = /^[^\w]*([A-Z][\w-]{1,30}):\s/.exec(promptText);
-    if (d?.[1]) return d[1];
-  }
-  return undefined;
+  const promptText = promptTextOf(e);
+  return promptText ? parseSquadPromptIdentity(promptText).name : undefined;
 }
 
 /** Sub-agent role parsed from a squad-style spawn prompt, if present. */
 export function subagentRoleOf(e: CopilotEvent): string | undefined {
-  const promptText =
-    strOf(e.data?.prompt) ?? strOf(e.data?.description) ?? strOf(e.data?.content);
-  if (!promptText) return undefined;
-  const m = /You are [^,\n]{1,60}, the ([^,\n]{1,80}?)(?: on| for|[.,\n])/.exec(
-    promptText,
-  );
-  return m?.[1]?.trim();
+  const promptText = promptTextOf(e);
+  return promptText ? parseSquadPromptIdentity(promptText).role : undefined;
 }
 
 /** Sub-agent correlation id (distinct from the event's own id). */

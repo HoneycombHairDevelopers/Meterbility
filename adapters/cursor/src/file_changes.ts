@@ -1,8 +1,5 @@
 import type { FileChange } from "@meterbility/shared";
-import { hashJson, redactString } from "@meterbility/shared";
-// Reusing the CC adapter's line differ until it moves to shared — see
-// TODOS.md "Shared helpers for the two capture paths".
-import { diffLines } from "@meterbility/shared";
+import { diffLines, hashJson, redactString } from "@meterbility/shared";
 import { insertFileChange } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import type { CursorDb } from "./parser.ts";

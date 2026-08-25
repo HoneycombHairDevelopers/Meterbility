@@ -48,10 +48,22 @@ function ev(
   return {
     type,
     id: extra.id ?? `ev-${evCounter}`,
-    timestamp: extra.timestamp ?? `2026-08-20T10:00:${String(evCounter % 60).padStart(2, "0")}.000Z`,
+    // Monotonic regardless of counter value (no mod-60 wrap) so
+    // started_at / child ordering / latency math never see time going
+    // backwards within a fixture.
+    timestamp:
+      extra.timestamp ??
+      new Date(Date.UTC(2026, 7, 20, 10, 0, evCounter)).toISOString(),
     parentId: extra.parentId ?? null,
     data,
   };
+}
+
+/** Recent timestamps (relative to now) for live-tail fixtures — status
+ *  inference treats sessions silent past the staleness window as
+ *  abandoned, so "still running" fixtures must look recent. */
+function recentTs(secondsAgo: number): string {
+  return new Date(Date.now() - secondsAgo * 1000).toISOString();
 }
 
 /** A squad-style two-agent session with correlated sub-agent events. */
@@ -176,13 +188,15 @@ test("squad session carves into parent + child runs with agent identity", async 
   const gnc = children.find((c) => c.tags.includes("agent:gnc"))!;
   assert.equal(gnc.status, "abandoned");
 
-  // File change: partial_diff row with patch text, on the child.
-  const fcs = listFileChanges(store, eecom.run_id);
+  // File change: partial_diff row with patch text, on the child. The
+  // absolute tool-input path relativizes against the workspace cwd.
+  const fcs = listFileChanges(store, { runId: eecom.run_id });
   assert.equal(fcs.length, 1);
   assert.equal(fcs[0]!.op, "modify");
   assert.equal(fcs[0]!.partial_diff, true);
-  assert.equal(fcs[0]!.path, "repo/src/auth.ts");
+  assert.equal(fcs[0]!.path, "src/auth.ts");
   assert.ok(fcs[0]!.patch_text?.includes("+return session"));
+  assert.equal(fcs[0]!.redacted, false, "no secrets in fixture → not redacted");
 });
 
 test("re-ingest is a no-op on unchanged file and duplicates nothing on growth", async () => {
@@ -272,14 +286,25 @@ test("vendor-namespaced model gets cost:unpriced, premium requests recorded", as
   assert.ok(usageStep.tags.includes("premium_requests:2"));
 });
 
-test("status inference: user-last is in_progress, session.error-last is error", async () => {
+test("status inference: recent user-last is in_progress, stale user-last is abandoned, session.error-last is error", async () => {
   const store = freshStore();
+  // Recent activity + mid-turn last event → still in progress.
   const inProgress = writeSession([
-    ev("session.start", { sessionId: "s-ip" }, { id: "p1" }),
-    ev("user.message", { content: "still typing?" }, { id: "p2", parentId: "p1" }),
+    ev("session.start", { sessionId: "s-ip" }, { id: "p1", timestamp: recentTs(120) }),
+    ev("user.message", { content: "still typing?" }, { id: "p2", parentId: "p1", timestamp: recentTs(60) }),
   ]);
   const r1 = await ingestCopilotSession(store, inProgress);
   assert.equal(getRun(store, r1.run_id)!.status, "in_progress");
+
+  // Same shape but silent past the staleness window (fixture dates are
+  // days old) → the session died mid-turn → abandoned, not a forever
+  // in_progress row polluting the fleet.
+  const staleMidTurn = writeSession([
+    ev("session.start", { sessionId: "s-stale" }, { id: "s1" }),
+    ev("user.message", { content: "crashed after this" }, { id: "s2", parentId: "s1" }),
+  ]);
+  const r3 = await ingestCopilotSession(store, staleMidTurn);
+  assert.equal(getRun(store, r3.run_id)!.status, "abandoned");
 
   const errored = writeSession([
     ev("session.start", { sessionId: "s-err" }, { id: "q1" }),
@@ -288,6 +313,27 @@ test("status inference: user-last is in_progress, session.error-last is error", 
   ]);
   const r2 = await ingestCopilotSession(store, errored);
   assert.equal(getRun(store, r2.run_id)!.status, "error");
+});
+
+test("live squad tail: uncompleted children stay in_progress while the session is fresh", async () => {
+  const store = freshStore();
+  // Parent dispatched an agent and went quiet; the agent is streaming
+  // (recent events) but has not completed. The old parent-terminal rule
+  // flipped such children to abandoned every tick (adversarial review
+  // finding); session-level freshness keeps them honest.
+  const path = writeSession([
+    ev("session.start", { sessionId: "s-live" }, { id: "l1", timestamp: recentTs(300) }),
+    ev("user.message", { content: "build it" }, { id: "l2", parentId: "l1", timestamp: recentTs(290) }),
+    ev(
+      "subagent.started",
+      { prompt: "You are Ripley, the Builder on this project.", subagentId: "sa-l1" },
+      { id: "l3", parentId: "l2", timestamp: recentTs(280) },
+    ),
+    ev("assistant.message", { content: "working…" }, { id: "l4", parentId: "l3", timestamp: recentTs(10) }),
+  ]);
+  const r = await ingestCopilotSession(store, path);
+  const child = getChildRuns(store, r.run_id)[0]!;
+  assert.equal(child.status, "in_progress", "streaming child must not read abandoned");
 });
 
 test("malformed lines are skipped; compaction becomes an idempotent annotation", async () => {
@@ -433,4 +479,242 @@ test("REGRESSION v8: fresh schema has lineage columns; lineage-free runs list id
   assert.equal(run.parent_run_id, undefined);
   assert.equal(run.parent_run_step_id, undefined);
   assert.equal(getChildRuns(store, r.run_id).length, 0);
+});
+
+test("REVIEW: cyclic/self-referential parentId does not hang; events land unrouted on parent", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    ev("session.start", { sessionId: "s-cycle" }, { id: "c1" }),
+    // Self-referential chain — a corrupted or adversarial line must not
+    // spin the ancestry walk forever (event-loop DoS in the live poll).
+    ev("assistant.message", { content: "loop" }, { id: "c2", parentId: "c2" }),
+    // Two-node cycle referencing each other.
+    ev("assistant.message", { content: "a" }, { id: "c3", parentId: "c4" }),
+    ev("assistant.message", { content: "b" }, { id: "c4", parentId: "c3" }),
+  ]);
+  const r = (await Promise.race([
+    ingestCopilotSession(store, path),
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error("ingest hung on parentId cycle")), 5000),
+    ),
+  ])) as { run_id: string; status: string };
+  assert.equal(r.status, "ok");
+  const steps = listSteps(store, r.run_id);
+  const cyclic = steps.filter((s) => s.tags.includes("copilot:unrouted"));
+  assert.ok(cyclic.length >= 2, "cyclic events tagged unrouted, never dropped");
+});
+
+test("REVIEW: file shrink/rewrite re-carves instead of reporting empty forever", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    ev("session.start", { sessionId: "s-shrink" }, { id: "h1" }),
+    ev("user.message", { content: "one" }, { id: "h2", parentId: "h1" }),
+    ev("assistant.message", { content: "two" }, { id: "h3", parentId: "h2" }),
+    ev("assistant.message", { content: "three" }, { id: "h4", parentId: "h3" }),
+  ]);
+  const r1 = await ingestCopilotSession(store, path);
+  assert.equal(listSteps(store, r1.run_id).length, 3);
+
+  // The CLI rewrites the file smaller (compaction / reset).
+  writeFileSync(
+    path,
+    [
+      ev("session.start", { sessionId: "s-shrink" }, { id: "h1" }),
+      ev("assistant.message", { content: "compacted" }, { id: "h9", parentId: "h1" }),
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n") + "\n",
+  );
+  const r2 = await ingestCopilotSession(store, path);
+  assert.equal(r2.status, "ok", "smaller file must re-carve, not report empty");
+  const steps = listSteps(store, r2.run_id);
+  assert.equal(steps.length, 1, "stale steps from the pre-rewrite carve removed");
+  assert.equal(steps[0]!.action.text, "compacted");
+});
+
+test("REVIEW: trailing torn line does not force perpetual re-carves", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    ev("session.start", { sessionId: "s-torn" }, { id: "t1" }),
+    ev("assistant.message", { content: "done" }, { id: "t2", parentId: "t1" }),
+  ]);
+  appendFileSync(path, '{"type":"assistant.mess'); // torn mid-write, no newline
+  const r1 = await ingestCopilotSession(store, path);
+  assert.equal(r1.status, "ok");
+  const r2 = await ingestCopilotSession(store, path);
+  assert.equal(
+    r2.status,
+    "empty",
+    "unchanged file (torn tail included) must be a no-op on the next poll",
+  );
+});
+
+test("REVIEW: secrets in tool inputs are redacted before persistence; FileChange.redacted is honest", async () => {
+  const store = freshStore();
+  const secret = "sk-abc123def456ghi789jkl012mno345pqr";
+  const path = writeSession(
+    [
+      ev("session.start", { sessionId: "s-red" }, { id: "r1" }),
+      ev(
+        "tool.execution_start",
+        {
+          name: "create",
+          toolCallId: "call-red",
+          arguments: { path: "/repo/.env", content: `OPENAI_API_KEY=${secret}\n` },
+        },
+        { id: "r2", parentId: "r1" },
+      ),
+      ev("tool.execution_complete", { toolCallId: "call-red", success: true }, { id: "r3", parentId: "r2" }),
+    ],
+    { workspaceYaml: "cwd: /repo\n" },
+  );
+  const r = await ingestCopilotSession(store, path);
+  const step = listSteps(store, r.run_id).find((s) => s.action.kind === "tool_call")!;
+  assert.ok(
+    !JSON.stringify(step.action).includes(secret),
+    "raw secret must not reach steps.action_json",
+  );
+  const fc = listFileChanges(store, { runId: r.run_id })[0]!;
+  assert.ok(
+    !JSON.stringify(fc.source_tool_input ?? "").includes(secret),
+    "raw secret must not reach file_change.source_tool_input",
+  );
+  assert.equal(fc.redacted, true, "row must report that redaction happened");
+});
+
+test("REVIEW: per-agent toolCallId collisions resolve to the right child run", async () => {
+  const store = freshStore();
+  const path = writeSession([
+    ev("session.start", { sessionId: "s-collide" }, { id: "k1" }),
+    ev("user.message", { content: "two agents, same call id" }, { id: "k2", parentId: "k1" }),
+    ev(
+      "subagent.started",
+      { prompt: "You are Alpha, the Left Hand on this project.", subagentId: "sa-a" },
+      { id: "k3", parentId: "k2" },
+    ),
+    ev(
+      "subagent.started",
+      { prompt: "You are Beta, the Right Hand on this project.", subagentId: "sa-b" },
+      { id: "k4", parentId: "k2" },
+    ),
+    // Copilot may scope call ids per agent subprocess: both agents
+    // legally use "call_1".
+    ev(
+      "tool.execution_start",
+      { name: "bash", toolCallId: "call_1", arguments: { command: "echo alpha" } },
+      { id: "k5", parentId: "k3" },
+    ),
+    ev(
+      "tool.execution_start",
+      { name: "bash", toolCallId: "call_1", arguments: { command: "echo beta" } },
+      { id: "k6", parentId: "k4" },
+    ),
+    ev(
+      "tool.execution_complete",
+      { toolCallId: "call_1", result: "alpha-result", success: true },
+      { id: "k7", parentId: "k5" },
+    ),
+    ev(
+      "tool.execution_complete",
+      { toolCallId: "call_1", result: "beta-result", success: true },
+      { id: "k8", parentId: "k6" },
+    ),
+    ev("subagent.completed", { subagentId: "sa-a" }, { id: "k9", parentId: "k7" }),
+    ev("subagent.completed", { subagentId: "sa-b" }, { id: "k10", parentId: "k8" }),
+  ]);
+  const r = await ingestCopilotSession(store, path);
+  const kids = getChildRuns(store, r.run_id);
+  const alpha = kids.find((c) => c.tags.includes("agent:alpha"))!;
+  const beta = kids.find((c) => c.tags.includes("agent:beta"))!;
+  const alphaTool = listSteps(store, alpha.run_id).find((s) => s.action.kind === "tool_call")!;
+  const betaTool = listSteps(store, beta.run_id).find((s) => s.action.kind === "tool_call")!;
+  assert.equal(alphaTool.outcome.summary, "alpha-result");
+  assert.equal(betaTool.outcome.summary, "beta-result");
+  assert.equal(alphaTool.outcome.status, "ok");
+  assert.equal(betaTool.outcome.status, "ok");
+});
+
+test("REVIEW: re-carve refreshes run metadata (title arrives after first carve)", async () => {
+  const store = freshStore();
+  // First carve happens before the first user message exists (live
+  // tail): the run has no title yet.
+  const path = writeSession([
+    ev("session.start", { sessionId: "s-title" }, { id: "m1" }),
+  ]);
+  const r1 = await ingestCopilotSession(store, path);
+  assert.equal(getRun(store, r1.run_id)!.title, undefined);
+
+  appendFileSync(
+    path,
+    JSON.stringify(
+      ev("user.message", { content: "Fix the login bug" }, { id: "m2", parentId: "m1" }),
+    ) + "\n",
+  );
+  const r2 = await ingestCopilotSession(store, path);
+  assert.equal(r2.status, "ok");
+  assert.equal(
+    getRun(store, r1.run_id)!.title,
+    "Fix the login bug",
+    "re-carve must refresh carve-derived metadata on the existing row",
+  );
+});
+
+test("REVIEW: routing drift across re-carves does not double-count steps (torn subagent.started completes)", async () => {
+  const store = freshStore();
+  const startLine = JSON.stringify(
+    ev(
+      "subagent.started",
+      { prompt: "You are Gamma, the Fixer on this project.", subagentId: "sa-g" },
+      { id: "d3", parentId: "d2" },
+    ),
+  );
+  const sessionHead = [
+    ev("session.start", { sessionId: "s-drift" }, { id: "d1" }),
+    ev("user.message", { content: "dispatch" }, { id: "d2", parentId: "d1" }),
+  ];
+  const childEvents = [
+    ev("assistant.message", { content: "gamma working" }, { id: "d4", parentId: "d3" }),
+    ev(
+      "assistant.turn_end",
+      { usage: { input_tokens: 500, output_tokens: 100 } },
+      { id: "d5", parentId: "d4" },
+    ),
+  ];
+  // Tick 1: the subagent.started line is torn (unparsable) — gamma's
+  // events walk a broken chain and land on the parent, tagged unrouted.
+  const path = writeSession(sessionHead);
+  appendFileSync(
+    path,
+    startLine.slice(0, 40) + "\n" + childEvents.map((e) => JSON.stringify(e)).join("\n") + "\n",
+  );
+  const r1 = await ingestCopilotSession(store, path);
+  assert.equal(r1.child_run_ids.length, 0, "torn start line → no child yet");
+  const parentTokensT1 = getRun(store, r1.run_id)!.tokens_total_input;
+  assert.equal(parentTokensT1, 500, "usage landed on parent while unrouted");
+
+  // Tick 2: the line completes (the CLI finished its write) — rewrite
+  // the file with the intact line in place.
+  writeFileSync(
+    path,
+    sessionHead
+      .map((e) => JSON.stringify(e))
+      .concat([startLine])
+      .concat(childEvents.map((e) => JSON.stringify(e)))
+      .join("\n") + "\n",
+  );
+  const r2 = await ingestCopilotSession(store, path);
+  assert.equal(r2.child_run_ids.length, 1, "child carved once the line parses");
+  const parent = getRun(store, r2.run_id)!;
+  const child = getRun(store, r2.child_run_ids[0]!)!;
+  assert.equal(child.tokens_total_input, 500, "usage moved to the child");
+  assert.equal(
+    parent.tokens_total_input,
+    0,
+    "stale parent-side steps deleted — tokens must not exist in both runs",
+  );
+  const parentSteps = listSteps(store, parent.run_id);
+  assert.ok(
+    !parentSteps.some((s) => s.action.text === "gamma working"),
+    "relocated step no longer on the parent",
+  );
 });

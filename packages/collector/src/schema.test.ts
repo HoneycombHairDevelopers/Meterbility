@@ -57,7 +57,7 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
   return cols.some((c) => c.name === column);
 }
 
-test("fresh apply lands schema v6 with all new tables + columns", () => {
+test("fresh apply lands the current schema version with all new tables + columns", () => {
   const db = freshDb();
   ensureSchema(db);
   assert.equal(SCHEMA_VERSION, 8, "SCHEMA_VERSION constant must be 8");
@@ -115,6 +115,54 @@ test("fresh apply lands schema v6 with all new tables + columns", () => {
   db.close();
 });
 
+test("v8 migration rebuilds the annotations kind-CHECK on fresh-at-v5–v7 databases", () => {
+  // A database created FRESH at v5–v7 has the 4-value CHECK baked into
+  // the annotations table; CREATE TABLE IF NOT EXISTS never updates it,
+  // so without the rebuild a context_compaction insert would throw
+  // SQLITE_CONSTRAINT_CHECK and abort the whole copilot carve.
+  const db = freshDb();
+  db.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE annotations (
+      annotation_id TEXT PRIMARY KEY,
+      target_kind TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      author TEXT NOT NULL,
+      verdict TEXT,
+      note TEXT,
+      kind TEXT NOT NULL DEFAULT 'comment'
+        CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped')),
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO meta(key, value) VALUES ('schema_version', '7');
+    INSERT INTO annotations(annotation_id, target_kind, target_id, author, kind, created_at)
+      VALUES ('ann_legacy', 'run', 'run_x', 'tester', 'comment', '2026-01-01T00:00:00Z');
+  `);
+  ensureSchema(db);
+  // Legacy row survived the rebuild…
+  const legacy = db
+    .prepare("SELECT kind FROM annotations WHERE annotation_id='ann_legacy'")
+    .get() as { kind: string };
+  assert.equal(legacy.kind, "comment");
+  // …and the widened CHECK now admits the v8 kind.
+  assert.doesNotThrow(() =>
+    db
+      .prepare(
+        "INSERT INTO annotations(annotation_id, target_kind, target_id, author, kind, created_at) VALUES (?,?,?,?,?,?)",
+      )
+      .run("ann_v8", "run", "run_x", "tester", "context_compaction", "2026-01-01T00:00:01Z"),
+  );
+  // Unknown kinds are still rejected (the CHECK is intact, not dropped).
+  assert.throws(() =>
+    db
+      .prepare(
+        "INSERT INTO annotations(annotation_id, target_kind, target_id, author, kind, created_at) VALUES (?,?,?,?,?,?)",
+      )
+      .run("ann_bad", "run", "run_x", "tester", "random_kind", "2026-01-01T00:00:02Z"),
+  );
+  db.close();
+});
+
 test("v8 forward-compat guard: refuses to open a database written by a newer build", () => {
   const db = freshDb();
   ensureSchema(db);
@@ -150,7 +198,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
   db.close();
 });
 
-test("v3 → v6 migration: hand-built v3 db gets ALTER'd to the current version without data loss", () => {
+test("v3 → current migration: hand-built v3 db gets ALTER'd to the current version without data loss", () => {
   const db = freshDb();
   // Hand-shape a v3 database: enable WAL + FKs (production parity),
   // create the v3 subset of tables (projects, agents, runs without the

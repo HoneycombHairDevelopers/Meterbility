@@ -366,7 +366,12 @@ export class LiveInspector extends EventEmitter {
     type IngestFn = (
       store: Store,
       path: string,
-    ) => Promise<{ run_id: string; status: "ok" | "empty" }>;
+    ) => Promise<{
+      run_id: string;
+      status: "ok" | "empty";
+      /** Carved child runs of a multi-agent session (copilot adapter). */
+      child_run_ids?: string[];
+    }>;
     const candidates: Array<{ path: string; size_bytes: number; ingest: IngestFn }> =
       [];
     const sessions = await discoverSessions();
@@ -439,10 +444,7 @@ export class LiveInspector extends EventEmitter {
         // v8 — a multi-agent (squad) session fans one ingest into a
         // parent run plus carved child runs; each gets its own event
         // stream so live squad sessions render per-agent activity.
-        const fanout = [
-          result.run_id,
-          ...((result as { child_run_ids?: string[] }).child_run_ids ?? []),
-        ];
+        const fanout = [result.run_id, ...(result.child_run_ids ?? [])];
         for (const fanRunId of fanout) {
           const run = getRun(this.store, fanRunId);
           if (!run) continue;

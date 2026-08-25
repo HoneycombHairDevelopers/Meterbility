@@ -22,17 +22,10 @@ export async function readEvents(path: string): Promise<ParsedEvent[]> {
   return parseEventsBuffer(buf);
 }
 
-export function parseEventsBuffer(
-  buf: Buffer,
-  startOffset = 0,
-): ParsedEvent[] {
+export function parseEventsBuffer(buf: Buffer): ParsedEvent[] {
   const events: ParsedEvent[] = [];
-  let offset = startOffset;
-  if (startOffset > 0) {
-    while (offset < buf.length && buf[offset - 1] !== 0x0a) offset += 1;
-  }
-  let lineStart = offset;
-  for (let i = offset; i <= buf.length; i++) {
+  let lineStart = 0;
+  for (let i = 0; i <= buf.length; i++) {
     if (i === buf.length || buf[i] === 0x0a) {
       const line = buf.subarray(lineStart, i).toString("utf-8").trim();
       if (line.length > 0) {
@@ -54,11 +47,4 @@ export function parseEventsBuffer(
     }
   }
   return events;
-}
-
-/** Byte offset just past the last parsed event (change-detector checkpoint). */
-export function endOffset(events: ParsedEvent[], fallback = 0): number {
-  if (events.length === 0) return fallback;
-  const last = events[events.length - 1]!;
-  return last.offset + last.length;
 }

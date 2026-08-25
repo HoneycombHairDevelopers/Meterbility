@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import pc from "picocolors";
-import { getChildRuns, listRuns } from "@meterbility/collector";
+import { getDescendantRuns, listRuns } from "@meterbility/collector";
 import { fmtCents, openStore, runSummaryLine, statusColor } from "../util.ts";
 
 export function registerListCommand(program: Command): void {
@@ -40,19 +40,21 @@ export function registerListCommand(program: Command): void {
         );
         for (const r of runs) {
           console.log(runSummaryLine(r));
-          // v8 — carved agent runs nest under their parent with a
-          // display-time fleet rollup (never stored).
-          const children = getChildRuns(store, r.run_id);
-          if (children.length > 0) {
-            for (const ch of children) {
-              console.log(`  ${pc.dim("↳")} ${runSummaryLine(ch)}`);
+          // v8 — carved agent runs nest under their parent (DFS, depth
+          // indent) with a display-time fleet rollup over the WHOLE
+          // lineage tree (never stored).
+          const descendants = getDescendantRuns(store, r.run_id);
+          if (descendants.length > 0) {
+            for (const d of descendants) {
+              const indent = "  ".repeat(d.depth);
+              console.log(`${indent}${pc.dim("↳")} ${runSummaryLine(d.run)}`);
             }
             const fleetCents =
               r.cost_cents +
-              children.reduce((acc, ch) => acc + ch.cost_cents, 0);
+              descendants.reduce((acc, d) => acc + d.run.cost_cents, 0);
             console.log(
               pc.dim(
-                `    fleet: ${children.length} agent(s) · ${fmtCents(fleetCents)}`,
+                `    fleet: ${descendants.length} agent(s) · ${fmtCents(fleetCents)}`,
               ),
             );
           }

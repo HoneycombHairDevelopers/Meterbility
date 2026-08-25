@@ -248,6 +248,38 @@ export function getChildRuns(store: Store, parentRunId: string): Run[] {
   return rows.map(rowToRun);
 }
 
+/** One run in a lineage tree, with its nesting depth (1 = direct child). */
+export interface DescendantRun {
+  run: Run;
+  depth: number;
+}
+
+/**
+ * v8 — the full lineage tree under a run, DFS order (each run's subtree
+ * immediately follows it), so display surfaces can indent by `depth`
+ * and fleet rollups can sum ALL descendant spend — an agent that
+ * dispatches its own sub-agent (nested delegation) must not silently
+ * drop the grandchild from listings or cost sums. Cycle-safe against
+ * corrupt lineage rows.
+ */
+export function getDescendantRuns(
+  store: Store,
+  rootRunId: string,
+): DescendantRun[] {
+  const out: DescendantRun[] = [];
+  const seen = new Set<string>([rootRunId]);
+  const walk = (id: string, depth: number): void => {
+    for (const child of getChildRuns(store, id)) {
+      if (seen.has(child.run_id)) continue;
+      seen.add(child.run_id);
+      out.push({ run: child, depth });
+      walk(child.run_id, depth + 1);
+    }
+  };
+  walk(rootRunId, 1);
+  return out;
+}
+
 export function updateRunTotals(store: Store, runId: string): void {
   store.db
     .prepare(
@@ -413,7 +445,10 @@ export interface ListRunsOpts {
    * {@link getChildRuns}. Aggregation, exports, live bookkeeping,
    * sentinel attribution, and batch operations set this to true —
    * children hold real, exclusive spend and activity (design doc
-   * aggregation policy, eng review T3/2A).
+   * aggregation policy, eng review T3/2A). NOTE: with the default,
+   * status/containsTool filters apply to TOP-LEVEL runs only — a match
+   * that exists only on a carved child will not surface its parent;
+   * pass includeChildren for flat filtered sets.
    */
   includeChildren?: boolean;
 }

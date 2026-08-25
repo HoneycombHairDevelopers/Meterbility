@@ -11,6 +11,7 @@ import type {
   Step,
 } from "@meterbility/shared";
 import {
+  RESERVED_SEQUENCE_BASE,
   deterministicStepId,
   diffLines,
   hashJson,
@@ -33,7 +34,7 @@ import {
   upsertProjectByCwd,
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
-import { readEvents, endOffset, type ParsedEvent } from "./parser.ts";
+import { readEvents } from "./parser.ts";
 import { workspaceCwd } from "./discover.ts";
 import { CopilotShapeProbe } from "./shape_probe.ts";
 import {
@@ -55,6 +56,24 @@ const SOURCE_RUNTIME = "github-copilot" as const;
  *  field carries the model. First non-proxy producer of the column. */
 const PROVIDER = "github";
 const ADAPTER_AUTHOR = "meter/github-copilot";
+
+/** Session-level events that mean "the conversation is at rest" — the
+ *  session infers `ok` when the file ends on one of these. */
+const SESSION_AT_REST_EVENTS = new Set([
+  "assistant.message",
+  "assistant.turn_end",
+  "subagent.completed",
+  "session.info",
+  "session.end",
+]);
+/** A session whose newest event is older than this and not at rest is
+ *  inferred `abandoned` (crashed / killed mid-turn). Mirrors the design
+ *  doc's staleness-window requirement for run-status inference. */
+const STALE_SESSION_MS = 30 * 60_000;
+/** Combined old+new size above which str_replace-style inputs get
+ *  whole-block line counts instead of a real diff — diffLines is
+ *  O(n*m) in lines and session files are untrusted input. */
+const DIFF_INPUT_CAP_BYTES = 512_000;
 
 /** Tool names whose execution mutates files → partial_diff FileChange
  *  rows (fact/partial tier — events.jsonl carries tool inputs, not
@@ -146,7 +165,10 @@ export async function ingestCopilotSession(
 ): Promise<CopilotIngestResult> {
   const knownOffset = getIngestOffset(store, SOURCE_RUNTIME, path);
   const fileStat = await stat(path);
-  if (fileStat.size <= knownOffset) {
+  // Equal size = unchanged = no-op. A SMALLER file means the CLI
+  // truncated/rewrote it (compaction, session reset) — fall through and
+  // re-carve the new content rather than reporting "empty" forever.
+  if (fileStat.size === knownOffset) {
     return {
       run_id: "",
       child_run_ids: [],
@@ -206,8 +228,10 @@ export async function ingestCopilotSession(
 
   const childByStartEventId = new Map<string, RunCtx>();
   const childBySubagentId = new Map<string, RunCtx>();
-  /** Memoized event-id → owning ctx (null = walks cleanly to root). */
-  const ownerMemo = new Map<string, RunCtx | null>();
+  /** Memoized event-id → routing result (ctx null = walks cleanly to
+   *  root). Carries the unrouted flag so every sibling on a broken
+   *  chain gets the copilot:unrouted tag, not just the first walker. */
+  const ownerMemo = new Map<string, { ctx: RunCtx | null; unrouted: boolean }>();
   const pendingTools = new Map<string, PendingTool>();
   const snapshots = new Map<string, { blob_ref: string; components: number }>();
   const compactionEventIds: string[] = [];
@@ -239,14 +263,23 @@ export async function ingestCopilotSession(
       const bySid = childBySubagentId.get(sid);
       if (bySid) return { ctx: bySid, unrouted: false };
     }
-    const visited: string[] = [];
+    const visited = new Set<string>();
     let cursor = event.parentId ?? undefined;
     let result: RunCtx | null = null;
     let unrouted = false;
     while (typeof cursor === "string") {
+      if (visited.has(cursor)) {
+        // Cyclic parentId chain (self-referential or A→B→A) — corrupted
+        // or adversarial file. Treat like a broken chain: parent + tag.
+        // Without this check the walk spins forever on the event loop.
+        unrouted = true;
+        result = null;
+        break;
+      }
       const memo = ownerMemo.get(cursor);
       if (memo !== undefined) {
-        result = memo;
+        result = memo.ctx;
+        unrouted = memo.unrouted;
         break;
       }
       const child = childByStartEventId.get(cursor);
@@ -254,7 +287,7 @@ export async function ingestCopilotSession(
         result = child;
         break;
       }
-      visited.push(cursor);
+      visited.add(cursor);
       const parentEvent = eventIndex.get(cursor);
       if (!parentEvent) {
         // Chain references an event we never parsed — drift, truncation,
@@ -265,7 +298,7 @@ export async function ingestCopilotSession(
       }
       cursor = parentEvent.parentId ?? undefined;
     }
-    for (const id of visited) ownerMemo.set(id, result);
+    for (const id of visited) ownerMemo.set(id, { ctx: result, unrouted });
     return { ctx: result ?? parent, unrouted };
   };
 
@@ -463,22 +496,36 @@ export async function ingestCopilotSession(
           { status: "pending" },
           unroutedTags,
         );
-        pendingTools.set(callId, { ctx, stepIdx: idx, startTs: event.timestamp });
-        maybeFileChange(ctx, ctx.steps[idx]!, toolName, rawInput, callId);
+        // Key scoped by owning run: Copilot may scope call ids per
+        // agent subprocess, so two agents can legally reuse "call_1" —
+        // a bare-callId key would silently attribute one agent's result
+        // to the other's step (codex adversarial finding).
+        pendingTools.set(`${ctx.runId}\u001f${callId}`, {
+          ctx,
+          stepIdx: idx,
+          startTs: event.timestamp,
+        });
+        maybeFileChange(ctx, ctx.steps[idx]!, toolName, rawInput, callId, cwd);
         break;
       }
       case type === "tool.execution_complete": {
         const callId = toolCallIdOf(event);
-        let pending = callId ? pendingTools.get(callId) : undefined;
+        // Resolve in the completion's own routed run first; a bare
+        // cross-run callId match is never trusted (see the scoped-key
+        // note on tool.execution_start).
+        let pendingKey = callId ? `${ctx.runId}\u001f${callId}` : undefined;
+        let pending = pendingKey ? pendingTools.get(pendingKey) : undefined;
         if (!pending) {
-          // No correlation on the completion — resolve the ctx's oldest
+          // No correlation on the completion (or it routed to a ctx that
+          // never started this callId) — resolve the ctx's oldest
           // unresolved tool step so a lone drift doesn't strand it.
+          pendingKey = undefined;
           pending = [...pendingTools.values()].find(
             (p) => p.ctx === ctx && p.ctx.steps[p.stepIdx]!.outcome.status === "pending",
           );
         }
         if (!pending) break;
-        if (callId) pendingTools.delete(callId);
+        if (pendingKey) pendingTools.delete(pendingKey);
         else {
           for (const [k, v] of pendingTools) {
             if (v === pending) {
@@ -510,7 +557,7 @@ export async function ingestCopilotSession(
       case type === "subagent.started": {
         const name = subagentNameOf(event) ?? "subagent";
         const role = subagentRoleOf(event);
-        const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+        const slug = slugify(name);
         const dispatchIdx = await addStep(
           ctx,
           event,
@@ -552,7 +599,7 @@ export async function ingestCopilotSession(
         childByStartEventId.set(event.id, child);
         const sid = subagentIdOf(event);
         if (sid) childBySubagentId.set(sid, child);
-        ownerMemo.set(event.id, child);
+        ownerMemo.set(event.id, { ctx: child, unrouted: false });
         break;
       }
       case type === "subagent.completed": {
@@ -587,15 +634,32 @@ export async function ingestCopilotSession(
   const children = [...new Set(childByStartEventId.values())];
   const allCtx = [parent, ...children];
 
-  // Terminal-status inference per run.
-  const parentStatus = inferStatus(parent);
-  const parentTerminal = parentStatus === "ok" || parentStatus === "error";
+  // Terminal-status inference. Terminality is a SESSION-level property:
+  // the last event in the whole file (regardless of which run it routed
+  // to) plus a staleness window — a parent that went quiet after
+  // dispatching agents is not "done" while its children still stream,
+  // and a session whose last event is a child's completion must not
+  // leave the parent in_progress forever. The staleness window covers
+  // sessions that died mid-turn (crash, kill): once the file has been
+  // silent past the window, non-terminal runs resolve to abandoned
+  // instead of polluting the fleet as in_progress forever.
+  const lastParsed = parsed[parsed.length - 1]!.event;
+  const sessionLastType = lastParsed.type ?? "";
+  const sessionLastTs = parent.lastTs ?? lastParsed.timestamp;
+  const lastMs = sessionLastTs ? Date.parse(sessionLastTs) : NaN;
+  const sessionStale =
+    Number.isFinite(lastMs) && Date.now() - lastMs > STALE_SESSION_MS;
+  const parentStatus: Run["status"] = (() => {
+    if (parent.sawError && sessionLastType === "session.error") return "error";
+    if (SESSION_AT_REST_EVENTS.has(sessionLastType)) return "ok";
+    return sessionStale ? "abandoned" : "in_progress";
+  })();
   const statusOf = (ctx: RunCtx): Run["status"] => {
     if (!ctx.isChild) return parentStatus;
     if (ctx.completed) return ctx.sawError ? "error" : "ok";
-    // Orphan child: abandoned once the parent session is over, still
-    // in_progress while the parent is live (live tail case).
-    return parentTerminal ? "abandoned" : "in_progress";
+    // No subagent.completed recorded: still in flight while the session
+    // shows recent activity (live tail), abandoned once it goes stale.
+    return sessionStale ? "abandoned" : "in_progress";
   };
 
   probe.report(sessionId);
@@ -635,12 +699,50 @@ export async function ingestCopilotSession(
           parent_run_step_id: ctx.parentRunStepId,
         };
         insertRun(store, run);
+      } else {
+        // Re-carve of a known run: title/tags/lineage are carve-derived
+        // and can gain information as the live file grows (first user
+        // message arrives after run creation, an agent's role parses on
+        // a later tick). Steps upsert below; refresh the metadata too.
+        store.db
+          .prepare("UPDATE runs SET title = ?, tags = ? WHERE run_id = ?")
+          .run(
+            ctx.title ?? titleOf(ctx) ?? already.title ?? null,
+            JSON.stringify(ctx.tags),
+            ctx.runId,
+          );
       }
     }
     for (const [snapId, s] of snapshots) {
       recordContextSnapshot(store, snapId, s.blob_ref, s.components);
     }
     for (const ctx of allCtx) {
+      // Routing can legitimately change across re-carves of a growing
+      // file (a torn subagent.started completes and its events move
+      // from the parent to a freshly carved child; a rewritten file
+      // shrinks). Deterministic ids include the run id, so relocated
+      // steps get NEW ids — the stale rows under the old run must go,
+      // or tokens/cost double-count. This MUST run BEFORE the upserts:
+      // insertStep's (run_id, sequence) conflict arm reuses the
+      // existing row's step_id, so a post-insert sweep would delete
+      // rows that just absorbed new content. The reserved band
+      // (hook/admin/checkpoint steps) is never ours to delete.
+      const keepIds = JSON.stringify(ctx.steps.map((s) => s.step_id));
+      store.db
+        .prepare(
+          `DELETE FROM file_change WHERE step_id IN (
+             SELECT step_id FROM steps
+             WHERE run_id = ? AND sequence < ?
+               AND step_id NOT IN (SELECT value FROM json_each(?)))`,
+        )
+        .run(ctx.runId, RESERVED_SEQUENCE_BASE, keepIds);
+      store.db
+        .prepare(
+          `DELETE FROM steps
+           WHERE run_id = ? AND sequence < ?
+             AND step_id NOT IN (SELECT value FROM json_each(?))`,
+        )
+        .run(ctx.runId, RESERVED_SEQUENCE_BASE, keepIds);
       for (const step of ctx.steps) {
         insertStep(store, step);
         stepsAdded += 1;
@@ -650,8 +752,12 @@ export async function ingestCopilotSession(
           insertFileChange(store, fc);
           fileChangesAdded += 1;
         } catch (err) {
-          const msg = (err as Error).message ?? "";
-          if (!msg.includes("UNIQUE constraint failed")) throw err;
+          const code = (err as { code?: string }).code ?? "";
+          if (
+            code !== "SQLITE_CONSTRAINT_UNIQUE" &&
+            code !== "SQLITE_CONSTRAINT_PRIMARYKEY"
+          )
+            throw err;
         }
       }
       setRunStatus(store, ctx.runId, statusOf(ctx), ctx.lastTs);
@@ -676,7 +782,12 @@ export async function ingestCopilotSession(
         });
       }
     }
-    setIngestOffset(store, SOURCE_RUNTIME, path, endOffset(parsed, fileStat.size));
+    // Watermark = the byte size we read, NOT endOffset(parsed): a
+    // trailing torn line would leave endOffset short of the size and
+    // force a full re-carve on every poll tick forever. When the torn
+    // line completes, the file grows past this watermark and the
+    // re-carve fires as intended.
+    setIngestOffset(store, SOURCE_RUNTIME, path, fileStat.size);
   });
   commit();
 
@@ -699,21 +810,6 @@ function titleOf(ctx: RunCtx): string | undefined {
   return text.split("\n")[0]!.slice(0, 80);
 }
 
-function inferStatus(ctx: RunCtx): Run["status"] {
-  if (ctx.sawError && ctx.lastEventType === "session.error") return "error";
-  switch (ctx.lastEventType) {
-    case "assistant.message":
-    case "assistant.turn_end":
-    case "subagent.completed":
-    case "session.info":
-      return "ok";
-    case "session.error":
-      return "error";
-    default:
-      return "in_progress";
-  }
-}
-
 function summarize(payload: unknown): string | undefined {
   if (payload === undefined || payload === null) return undefined;
   const text =
@@ -733,17 +829,28 @@ function safeStringify(v: unknown): string | undefined {
 
 /** Redact tool inputs before they land in steps.action_json (matches
  *  the v0.5.1 inline-capture convention). Structure survives; string
- *  payloads run through redactString. */
-function redactToolInput(input: unknown): unknown {
-  if (input === undefined || input === null) return undefined;
+ *  payloads run through redactString. `redacted` reports whether any
+ *  replacement actually happened — consumers surface it honestly
+ *  (FileChange.redacted). */
+function redactToolInputVerbose(input: unknown): {
+  value: unknown;
+  redacted: boolean;
+} {
+  if (input === undefined || input === null)
+    return { value: undefined, redacted: false };
   const raw = safeStringify(input);
-  if (raw === undefined) return undefined;
-  const { text } = redactString(raw);
+  if (raw === undefined) return { value: undefined, redacted: false };
+  const { text, redactions } = redactString(raw);
+  const redacted = redactions.length > 0;
   try {
-    return JSON.parse(text);
+    return { value: JSON.parse(text), redacted };
   } catch {
-    return text;
+    return { value: text, redacted };
   }
+}
+
+function redactToolInput(input: unknown): unknown {
+  return redactToolInputVerbose(input).value;
 }
 
 /** Emit a fact/partial-tier FileChange row for a mutating tool call.
@@ -756,6 +863,7 @@ function maybeFileChange(
   toolName: string,
   rawInput: unknown,
   callId: string,
+  cwd?: string,
 ): void {
   const op = MUTATING_TOOLS.get(toolName.toLowerCase());
   if (!op) return;
@@ -772,20 +880,34 @@ function maybeFileChange(
   let patchText: string | undefined;
   let linesAdded = 0;
   let linesRemoved = 0;
+  let redacted = false;
   const oldStr = firstString(input.old_str, input.oldText, input.old_string);
   const newStr = firstString(input.new_str, input.newText, input.new_string);
   const createContent = firstString(input.file_text, input.content, input.text);
   if (oldStr !== undefined && newStr !== undefined) {
-    const d = diffLines(oldStr, newStr);
-    patchText = d.unified || undefined;
-    linesAdded = d.stats.added;
-    linesRemoved = d.stats.removed;
+    if (oldStr.length + newStr.length <= DIFF_INPUT_CAP_BYTES) {
+      const d = diffLines(oldStr, newStr);
+      patchText = d.unified || undefined;
+      linesAdded = d.stats.added;
+      linesRemoved = d.stats.removed;
+    } else {
+      // diffLines allocates an O(n*m) table; untrusted session files
+      // must not be able to exhaust memory / block the live poll with
+      // one giant str_replace. Above the cap: whole-block line counts,
+      // no patch text — the row stays honest via partial_diff.
+      linesAdded = newStr.split(/\r?\n/).length;
+      linesRemoved = oldStr.split(/\r?\n/).length;
+    }
   } else if (op === "create" && createContent !== undefined) {
     linesAdded = createContent.split(/\r?\n/).length;
   }
   if (patchText) {
-    patchText = redactString(patchText).text;
+    const r = redactString(patchText);
+    patchText = r.text;
+    redacted ||= r.redactions.length > 0;
   }
+  const redactedInput = redactToolInputVerbose(rawInput);
+  redacted ||= redactedInput.redacted;
 
   const fc: FileChange = {
     file_change_id: `fc_${hashJson([step.step_id, path, callId])}`,
@@ -794,7 +916,7 @@ function maybeFileChange(
     sequence: 0,
     tool_call_id: callId,
     derived_from: "tool_call",
-    path: toRelative(path),
+    path: toRelative(path, cwd),
     op,
     partial_diff: true,
     gitignored: false,
@@ -804,18 +926,23 @@ function maybeFileChange(
     lines_added: linesAdded,
     lines_removed: linesRemoved,
     source_tool_name: toolName,
-    source_tool_input: redactToolInput(rawInput),
-    redacted: false,
+    source_tool_input: redactedInput.value,
+    redacted,
     created_at: step.timestamp,
   };
   ctx.fileChanges.push(fc);
 }
 
-function toRelative(p: string): string {
-  // FileChange.path is repo-relative by contract; without the repo root
-  // (events carry absolute or already-relative paths) we strip a
-  // leading slash rather than guess. M2 aligns this with the shared
-  // repo-relative helper when the duplication cluster moves to shared.
+function toRelative(p: string, cwd?: string): string {
+  // FileChange.path is repo-relative by contract. When the session's
+  // workspace cwd is known (workspace.yaml), absolute paths under it
+  // relativize properly ("/repo/src/x.ts" → "src/x.ts"); otherwise we
+  // strip a leading slash rather than guess a root.
+  if (cwd && cwd.startsWith("/")) {
+    const root = cwd.endsWith("/") ? cwd : `${cwd}/`;
+    if (p.startsWith(root)) return p.slice(root.length);
+    if (p === cwd || p === root) return ".";
+  }
   return p.startsWith("/") ? p.slice(1) : p;
 }
 

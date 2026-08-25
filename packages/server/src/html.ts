@@ -2506,12 +2506,13 @@ export interface RunListOptions {
   totalAvailable?: number;
   filters?: { status?: string; tool?: string; project?: string };
   /**
-   * v8 — carved child runs (per-agent runs of a multi-agent session)
-   * grouped by parent run id. Children render nested under their
-   * parent row; the parent row carries the fleet rollup (agent count +
-   * display-time cost sum — never stored, per the aggregation policy).
+   * v8 — the lineage tree (per-agent runs of a multi-agent session,
+   * DFS order with depth) grouped by top-level run id. Descendants
+   * render nested under the parent row, indented by depth; the parent
+   * row carries the fleet rollup (agent count + display-time cost sum
+   * over the whole tree — never stored, per the aggregation policy).
    */
-  childrenByParent?: Map<string, Run[]>;
+  childrenByParent?: Map<string, Array<{ run: Run; depth: number }>>;
 }
 
 export function renderRunList(
@@ -2579,13 +2580,14 @@ export function renderRunList(
               title="Seal this run as ok (mostly for proxy-captured runs)"
               onclick="closeRun('${esc(r.run_id)}', 'ok')">Seal</button>`
           : "";
-      // v8 — fleet: children (per-agent runs) nest under the parent
-      // row; the parent gets an agent-count badge plus the display-time
-      // fleet cost sum (own + descendants; unpriced legs excluded from
-      // the sum are already 0 by construction).
+      // v8 — fleet: the lineage tree (per-agent runs) nests under the
+      // parent row; the parent gets an agent-count badge plus the
+      // display-time fleet cost sum (own + all descendants; unpriced
+      // legs excluded from the sum are already 0 by construction).
       const children = opts.childrenByParent?.get(r.run_id) ?? [];
       const fleetCents =
-        r.cost_cents + children.reduce((acc, ch) => acc + ch.cost_cents, 0);
+        r.cost_cents +
+        children.reduce((acc, ch) => acc + ch.run.cost_cents, 0);
       const fleetBadge =
         children.length > 0
           ? ` <span class="badge" title="Multi-agent session: ${children.length} carved agent run(s). Fleet cost = parent + agents, summed at display time.">${children.length} agents · fleet $${(fleetCents / 100).toFixed(2)}</span>`
@@ -2604,10 +2606,10 @@ export function renderRunList(
         <td>${actions}</td>
       </tr>`;
       const childRows = children
-        .map((ch) => {
+        .map(({ run: ch, depth }) => {
           const chStatus = `<span class="pill ${esc(ch.status)}">${esc(ch.status)}</span>`;
           return `<tr style="opacity:.85">
-        <td style="padding-left:22px">
+        <td style="padding-left:${depth * 22}px">
           <span style="color:var(--fg-mute)">↳</span> <a href="/runs/${esc(ch.run_id)}">${esc(ch.title ?? ch.run_id)}</a>
         </td>
         <td>${chStatus}</td>
