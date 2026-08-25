@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/server",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -13,16 +13,16 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
     "@hono/node-server": "^1.13.0",
-    "@meterbility/collector": "^0.6.0",
-    "@meterbility/shared": "^0.6.0",
-    "@meterbility/spec": "^0.6.0",
+    "@meterbility/collector": "^0.6.2",
+    "@meterbility/shared": "^0.6.2",
+    "@meterbility/spec": "^0.6.2",
     "hono": "^4.6.0",
     "shiki": "^1.29.2",
-    "@meterbility/claude-code-adapter": "^0.6.0",
-    "@meterbility/codex-cli-adapter": "^0.6.0",
-    "@meterbility/github-copilot-adapter": "^0.6.0",
-    "@meterbility/cursor-adapter": "^0.6.0",
-    "@meterbility/store-postgres": "^0.6.0"
+    "@meterbility/claude-code-adapter": "^0.6.2",
+    "@meterbility/codex-cli-adapter": "^0.6.2",
+    "@meterbility/github-copilot-adapter": "^0.6.2",
+    "@meterbility/cursor-adapter": "^0.6.2",
+    "@meterbility/store-postgres": "^0.6.2"
   },
   "description": "Meterbility web inspector: Hono server, fork/replay engine, live fleet view",
   "repository": {

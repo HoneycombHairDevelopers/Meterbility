@@ -57,7 +57,8 @@ jobs:
         run: |
           for w in packages/shared packages/spec packages/collector \
                    packages/store-postgres adapters/claude-code \
-                   adapters/codex-cli adapters/cursor packages/agent \
+                   adapters/codex-cli adapters/cursor \
+                   adapters/github-copilot packages/agent \
                    packages/proxy packages/server packages/cli; do
             npm publish -w "$w" --provenance --access public
           done

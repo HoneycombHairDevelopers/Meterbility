@@ -433,6 +433,12 @@ export class LiveInspector extends EventEmitter {
       const lastSize = this.lastSizes.get(s.path) ?? 0;
       if (s.size_bytes > lastSize) {
         toProcess.set(s.path, s.ingest);
+        // lastSizes advances even when the ingest below comes back
+        // "empty" (a concurrent `meter live` may have drained the
+        // shared offset first). Deliberate: retrying would re-attempt
+        // an offset-at-EOF file every tick forever, and there's
+        // nothing to recover — the steps are already in the store and
+        // detectStepArrivals surfaces them this same tick.
         this.lastSizes.set(s.path, s.size_bytes);
       }
     }
@@ -440,6 +446,13 @@ export class LiveInspector extends EventEmitter {
     for (const [path, ingest] of toProcess) {
       try {
         const result = await ingest(this.store, path);
+        // "empty" covers two cases: a partial append that parsed to
+        // zero records (the next growth retries it), and a concurrent
+        // consumer — a `meter live` in another process shares the
+        // store's ingest offset and may have drained these bytes
+        // first. Either way any resulting steps are already in the
+        // store; detectStepArrivals below emits them, so this path
+        // has nothing to announce.
         if (result.status === "empty") continue;
         // v8 — a multi-agent (squad) session fans one ingest into a
         // parent run plus carved child runs; each gets its own event
@@ -504,6 +517,12 @@ export class LiveInspector extends EventEmitter {
       }
     }
 
+    // v0.6.x — out-of-band step arrivals (a `meter live` in another
+    // process ingesting into the shared store). Runs before the
+    // file_change pass so its files:changed emissions seed fcCounts
+    // for the steps it announces. Silent boot seeds the cursors.
+    this.detectStepArrivals(silent);
+
     // v0.4 — out-of-band file_change arrivals (hook drain / sentinel
     // insert from other processes). Silent boot seeds the counts.
     this.detectFileChangeArrivals(silent);
@@ -550,6 +569,95 @@ export class LiveInspector extends EventEmitter {
       paths: Array.from(paths),
       partial,
     } satisfies LiveEvent);
+  }
+
+  /**
+   * v0.6.x — detect steps that arrived OUT OF BAND, i.e. not through
+   * this inspector's own ingest. The front door (`meter live`) runs a
+   * second LiveInspector in its own process against the same store,
+   * and the ingest offset (`ingest_progress`) is single-consumer:
+   * whichever process ingests a session's growth first advances it,
+   * and the loser's ingest returns "empty" — so this inspector's
+   * per-run events (run:created / run:updated / run:completed) went
+   * silently dead whenever the other process won. The run detail
+   * page appends steps only on run:updated, so it froze until a
+   * manual refresh while the fleet view (fleet:snapshot, rebuilt from
+   * the store every tick) kept moving. Same blindness — and same
+   * remedy — as detectFileChangeArrivals below.
+   *
+   * Mechanics: per tick, for every recent run that's in progress or
+   * ended within the last hour, probe the store's max main-band
+   * sequence (one indexed aggregate — never a full step
+   * materialization in the steady state) against the lastMaxSeq
+   * cursor. On movement, collectNewSteps materializes just that run's
+   * delta and we emit exactly what the own-ingest path would have.
+   * No double-emit either way: both paths share the lastMaxSeq /
+   * lastStepCounts / lastStatus cursors, and the own-ingest loop runs
+   * earlier in the tick, so whichever path announces first leaves
+   * nothing for the other. The silent boot pass seeds cursors without
+   * emitting.
+   */
+  private detectStepArrivals(silent: boolean): void {
+    const now = Date.now();
+    for (const run of listRuns(this.store, { limit: ARRIVAL_SCAN_RUN_LIMIT })) {
+      const recentTerminal =
+        run.ended_at !== undefined &&
+        now - new Date(run.ended_at).getTime() < RECENT_TERMINAL_WINDOW_MS;
+      if (run.status !== "in_progress" && !recentTerminal) continue;
+
+      const wasKnown = this.lastStepCounts.has(run.run_id);
+      const prevStatus = this.lastStatus.get(run.run_id);
+      const floor = this.lastMaxSeq.get(run.run_id) ?? -1;
+      // Aggregate probe, not listSteps — this runs every tick for up
+      // to ARRIVAL_SCAN_RUN_LIMIT runs. NULL (no main-band steps yet)
+      // maps to -1, matching the cursor's empty sentinel.
+      const row = this.store.db
+        .prepare(
+          "SELECT MAX(sequence) AS m FROM steps WHERE run_id = ? AND sequence < ?",
+        )
+        .get(run.run_id, RESERVED_SEQUENCE_BASE) as { m: number | null };
+      const currentMax = row.m ?? -1;
+
+      // collectNewSteps owns delta + rewind semantics (a trimmed tail
+      // resets the cursor and yields nothing this tick) — only invoke
+      // it when the aggregate says the cursor moved.
+      const newSteps =
+        currentMax !== floor
+          ? collectNewSteps(this.store, run, this.lastMaxSeq)
+          : [];
+
+      const isTerminal = run.status === "ok" || run.status === "error";
+      const wasTerminal = prevStatus === "ok" || prevStatus === "error";
+      if (wasKnown && newSteps.length === 0 && run.status === prevStatus) {
+        continue; // nothing new for this run
+      }
+
+      this.lastStepCounts.set(run.run_id, run.step_count);
+      this.lastStatus.set(run.run_id, run.status);
+      if (newSteps.length > 0) {
+        this.lastMaxSeq.set(
+          run.run_id,
+          newSteps[newSteps.length - 1]!.sequence,
+        );
+      }
+      if (silent) continue;
+
+      if (!wasKnown) {
+        this.emit("data", { type: "run:created", run } satisfies LiveEvent);
+      } else if (newSteps.length > 0) {
+        this.emit("data", {
+          type: "run:updated",
+          run,
+          new_steps: newSteps,
+        } satisfies LiveEvent);
+      }
+      for (const s of newSteps) {
+        this.emitFilesChangedIfAny(run, s);
+      }
+      if (isTerminal && !wasTerminal) {
+        this.emit("data", { type: "run:completed", run } satisfies LiveEvent);
+      }
+    }
   }
 
   /**

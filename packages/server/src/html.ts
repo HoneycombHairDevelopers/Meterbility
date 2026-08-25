@@ -1651,8 +1651,11 @@ function flash(msg, kind) {
  *
  * Strategy: we know the current run's id from a data attribute on
  * the main element (set by renderRun). On run:updated events for
- * this run, fetch the missing step cards via the new
- * GET /api/runs/:id/step-card/:seq fragment endpoint and append.
+ * this run, fetch each new step's card via the
+ * GET /api/runs/:id/step-card/:seq fragment endpoint — driven by the
+ * event's explicit new_steps[].sequence values, never step-count
+ * arithmetic (step_count includes synthetic band steps at sequence
+ * 100000+, so a count-walk asks for sequences that don't exist).
  * The timeline gets a new block in lockstep so the scrubber stays
  * in sync.
  *
@@ -1665,7 +1668,6 @@ function initLiveRunUpdates() {
   const runId = main && main.dataset && main.dataset.runId;
   if (!runId) return;
   let es;
-  let knownStepCount = parseInt(main.dataset.stepCount || '0', 10) || 0;
   function ensureSubscribed() {
     if (es && es.readyState !== 2) return;
     try { es = new EventSource('/api/live'); } catch { return; }
@@ -1673,9 +1675,16 @@ function initLiveRunUpdates() {
       try {
         const data = JSON.parse(ev.data);
         if (!data || !data.run || data.run.run_id !== runId) return;
-        // The server tells us how many steps the run has now; we
-        // fetch any sequences past our last-known count and append.
-        appendStepsUpTo(data.run.step_count || 0);
+        // Append exactly the steps the event announces. The old
+        // count-walk (fetch sequences knownStepCount..step_count-1)
+        // broke on any run with synthetic band steps: step_count
+        // counts ALL steps including the 100000+ band, so the walk
+        // fetched sequences that don't exist, 404'd, and silently
+        // stopped appending for the rest of the page's lifetime.
+        const steps = Array.isArray(data.new_steps) ? data.new_steps : [];
+        for (const s of steps) {
+          if (s && typeof s.sequence === 'number') appendStepCard(s.sequence);
+        }
       } catch (err) { /* ignore parse errors */ }
     });
     es.addEventListener('run:completed', (ev) => {
@@ -1706,23 +1715,18 @@ function initLiveRunUpdates() {
   }
   /* Replace an already-rendered step card with a fresh server-side
    * fragment (same endpoint the live-append path uses). Preserves the
-   * user's active tab and pretty toggle across the swap. No-op when
-   * the card isn't in the DOM yet — the run:updated append path will
-   * fetch it complete. */
+   * user's active tab and pretty toggle across the swap. When the
+   * card isn't in the DOM yet (its run:updated predates this page's
+   * subscription, or rode a dropped SSE connection), fall back to
+   * appending it — this files:changed may be the only signal we get. */
   async function refreshStepCard(seq, stepId) {
     const existing = document.querySelector(
       '.step-card[data-step="' + (window.CSS && CSS.escape ? CSS.escape(stepId) : stepId) + '"]',
     );
-    if (!existing) return;
+    if (!existing) { appendStepCard(seq); return; }
     try {
-      const res = await fetch(
-        '/api/runs/' + encodeURIComponent(runId) + '/step-card/' + seq,
-      );
-      if (!res.ok) return;
-      const html = await res.text();
-      const wrap = document.createElement('div');
-      wrap.innerHTML = html;
-      const fresh = wrap.querySelector('[data-step-fragment] .step-card');
+      const fragment = await fetchStepFragment(seq);
+      const fresh = fragment && fragment.querySelector('.step-card');
       if (!fresh) return;
       // Remember which tab the user had open before the swap.
       let activeTab = null;
@@ -1738,51 +1742,71 @@ function initLiveRunUpdates() {
       }
     } catch { /* transient — next files:changed retries */ }
   }
-  async function appendStepsUpTo(target) {
-    while (knownStepCount < target) {
-      const seq = knownStepCount;
-      try {
-        const res = await fetch(
-          '/api/runs/' + encodeURIComponent(runId) + '/step-card/' + seq,
-        );
-        if (!res.ok) break; // server doesn't have the row yet — retry next event
-        const html = await res.text();
-        const wrap = document.createElement('div');
-        wrap.innerHTML = html;
-        // The fragment endpoint wraps the card + timeline block in a
-        // single <div data-step-fragment="1">. We move each piece to
-        // its real home, then drop the wrapper.
-        const fragment = wrap.querySelector('[data-step-fragment]');
-        if (!fragment) break;
-        const card = fragment.querySelector('.step-card');
-        const tlBlock = fragment.querySelector('[data-timeline-blk]');
-        if (card) {
-          const stepsAnchor = document.getElementById('steps-anchor');
-          if (stepsAnchor) {
-            // Replace the placeholder "no steps" empty state on the
-            // first append.
-            const placeholder = stepsAnchor.querySelector('.empty');
-            if (placeholder) placeholder.remove();
-            stepsAnchor.appendChild(card);
-          } else {
-            main.appendChild(card);
-          }
-          // The freshly-inserted card needs to honor any per-step
-          // pretty toggle the user set on prior cards' siblings via
-          // localStorage. Restore before any user interaction is
-          // possible. (See togglePretty / restorePrettyForCard.)
-          restorePrettyForCard(card);
+  /* Fetch the pre-rendered fragment for one step. The endpoint wraps
+   * the card + timeline block in a single <div data-step-fragment="1">;
+   * callers lift each piece into its real home. Returns null when the
+   * server doesn't have the row (yet). */
+  async function fetchStepFragment(seq) {
+    const res = await fetch(
+      '/api/runs/' + encodeURIComponent(runId) + '/step-card/' + seq,
+    );
+    if (!res.ok) return null;
+    const html = await res.text();
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    return wrap.querySelector('[data-step-fragment]');
+  }
+  /* Insert el into container keeping numeric attr order. Sorted
+   * insertion (not blind append) keeps cards in step order even when
+   * fetches resolve out of order, a files:changed fallback lands
+   * before an earlier step's run:updated append, or synthetic band
+   * cards (sequence 100000+) already sit at the tail. */
+  function insertBySeq(container, el, selector, attr, seq) {
+    const nodes = container.querySelectorAll(selector);
+    for (const n of nodes) {
+      const s = parseInt(n.getAttribute(attr) || '', 10);
+      if (!isNaN(s) && s > seq) { container.insertBefore(el, n); return; }
+    }
+    container.appendChild(el);
+  }
+  const appending = {}; // seq → in-flight guard against duplicate fetches
+  async function appendStepCard(seq) {
+    if (appending[seq]) return;
+    if (document.querySelector('.step-card[data-step-seq="' + seq + '"]')) return;
+    appending[seq] = true;
+    try {
+      const fragment = await fetchStepFragment(seq);
+      // Row not on the server yet, or another path appended while we
+      // fetched — a later event retries / nothing left to do.
+      if (!fragment) return;
+      if (document.querySelector('.step-card[data-step-seq="' + seq + '"]')) return;
+      const card = fragment.querySelector('.step-card');
+      const tlBlock = fragment.querySelector('[data-timeline-blk]');
+      if (card) {
+        const stepsAnchor = document.getElementById('steps-anchor');
+        const host = stepsAnchor || main;
+        if (stepsAnchor) {
+          // Replace the placeholder "no steps" empty state on the
+          // first append.
+          const placeholder = stepsAnchor.querySelector('.empty');
+          if (placeholder) placeholder.remove();
         }
-        if (tlBlock) {
-          const tl = document.querySelector('.timeline');
-          if (tl) tl.appendChild(tlBlock);
-        }
-        knownStepCount = seq + 1;
-        main.dataset.stepCount = String(knownStepCount);
-        flash('step #' + seq + ' captured live', 'info');
-      } catch {
-        break;
+        insertBySeq(host, card, '.step-card[data-step-seq]', 'data-step-seq', seq);
+        // The freshly-inserted card needs to honor any per-step
+        // pretty toggle the user set on prior cards' siblings via
+        // localStorage. Restore before any user interaction is
+        // possible. (See togglePretty / restorePrettyForCard.)
+        restorePrettyForCard(card);
       }
+      if (tlBlock) {
+        const tl = document.querySelector('.timeline');
+        if (tl) insertBySeq(tl, tlBlock, '[data-seq]', 'data-seq', seq);
+      }
+      flash('step #' + seq + ' captured live', 'info');
+    } catch {
+      /* transient — a later run:updated / files:changed retries */
+    } finally {
+      delete appending[seq];
     }
   }
   // Only subscribe when live is on; otherwise wait for the toggle.
@@ -2865,16 +2889,16 @@ export function renderRun(
           </button>
         </div>`
       : "";
-  // Stamp the <main> wrapper with the run id + current step count so
-  // the live-updater JS knows which run is on screen and where to
-  // resume the sequence walk. Plain inline script keeps it CSP-
-  // friendly (no module loader needed).
+  // Stamp the <main> wrapper with the run id so the live-updater JS
+  // knows which run is on screen (appends are driven by run:updated's
+  // explicit new_steps sequences, so no step-count stamp is needed).
+  // Plain inline script keeps it CSP-friendly (no module loader
+  // needed).
   const liveStamp = `<script>
     (function () {
       var m = document.querySelector('main');
       if (!m) return;
       m.dataset.runId = ${JSON.stringify(run.run_id)};
-      m.dataset.stepCount = ${JSON.stringify(String(steps.length))};
     })();
   </script>`;
   // v0.6 — provider badge: only proxy multi-upstream capture sets

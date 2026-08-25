@@ -16,6 +16,8 @@ import { registerDbCommand } from "./commands/db.ts";
 import { registerSlackCommand } from "./commands/slack.ts";
 import { registerConfigCommand } from "./commands/config.ts";
 import { registerWatchCommand } from "./commands/watch.ts";
+import { registerLiveCommand } from "./commands/live.ts";
+import { maybePrintAttachNudge } from "./nudge.ts";
 import { registerOpenCommand } from "./commands/open.ts";
 import { registerProxyCommand } from "./commands/proxy.ts";
 import { registerRunCommand } from "./commands/run.ts";
@@ -60,6 +62,7 @@ registerDbCommand(program);
 registerSlackCommand(program);
 registerConfigCommand(program);
 registerWatchCommand(program);
+registerLiveCommand(program);
 registerCaptureCommand(program);
 registerCursorHookCommand(program);
 registerCursorUsageCommand(program);
@@ -70,6 +73,13 @@ registerRunsCommand(program);
 registerInitCommand(program);
 registerFilesCommand(program);
 registerProbeCommand(program);
+
+// meter-live design §6 — the "capture active, no viewer attached"
+// nudge. Runs before every human command; the guard/swallow contract
+// (eng review 4A) lives inside maybePrintAttachNudge.
+program.hook("preAction", (_thisCommand, actionCommand) => {
+  maybePrintAttachNudge(actionCommand.name(), actionCommand.opts());
+});
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red("error: ") + (err as Error).message);

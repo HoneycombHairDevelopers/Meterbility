@@ -192,7 +192,7 @@ Eliminate the forgetting failure entirely: the already-installed hook plane
 auto-spawns a detached ingest+sentinel process on the first tool call of a
 session; `meter live` becomes a pure viewer attaching to capture that is
 already happening. Deferred twice (office-hours D9, eng review D1) to stay
-out of the sell-track demo window. Consent posture settled: explicit consent
+out of the current release window. Consent posture settled: explicit consent
 at `meter init --hooks` time, automation at run-time — no silent always-on
 daemon. The `live.heartbeat` settings row + viewer-guard shipped with
 `meter live` is the designed insertion point (auto-spawned capture holds the
@@ -200,13 +200,15 @@ heartbeat; viewers attach). Constraints to solve before building: hook
 timeout budget (never block the agent's tool call), orphan-process cleanup,
 multi-project contention. Depends on: `meter live` shipped and dogfooded.
 
-### Nudge-query covering index (conditional)
+### LiveOptions.projectsRoot is a dead option
 **Priority:** P3
-The hook-nudge existence check filters `file_change` by
-`derived_from` + `created_at` (`LIMIT 1`) on every human CLI invocation with
-no covering index. Deliberately deferred: cheap at current scale. Trigger:
-add the index if the check exceeds ~10ms in CLI startup profiling at scale.
-Depends on: nudge shipped.
+`LiveInspector` accepts `projectsRoot` in its options (and
+`POST /api/live/start` forwards it), but the tick's discovery calls
+`discoverSessions()` bare, which reads `claudeProjectsRoot()` from env —
+the option is silently ignored. Found writing the web SSE proof test
+(web-live-proxy.test.ts), which had to fall back to CLAUDE_HOME env
+isolation. Either thread `this.opts.projectsRoot` through discovery or
+delete the option from LiveOptions and the API body.
 
 ## Live Probe (cross-runtime pause)
 
@@ -336,7 +338,7 @@ its "Phased follow-ons" + "NOT in scope" sections for rationale:
 - Replay/fork over carved child runs (lineage-only in v7; fork.ts
   rejects via derived rule)
 - Squad sidecar annotations + watch-mode wave grouping — gated on the
-  Brady falsifier checkpoint outcome (premise 5 of the design doc)
+  ecosystem-validation checkpoint outcome (premise 5 of the design doc)
 These are intentional deferrals, not omissions; split into own entries
 when picked up.
 
@@ -380,3 +382,10 @@ Playwright e2e, `capture post/drain` + garbage-stdin CLI tests,
 blockquote/hr markdown styling.
 
 ## Completed
+
+### Nudge-query covering index
+`idx_fc_derived_created` added in ensureSchema — the ship review showed
+the per-invocation probe scanning outside its time budget on large
+stores, so the conditional trigger fired at review time rather than in
+profiling.
+**Completed:** v0.6.2 (2026-08-24)

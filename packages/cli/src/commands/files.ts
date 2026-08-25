@@ -9,6 +9,11 @@ import {
   listSteps,
 } from "@meterbility/collector";
 import type { FileChange, FileOp, Run, Step } from "@meterbility/shared";
+import {
+  RESERVED_SEQUENCE_BASE,
+  ADMIN_SEQUENCE_BASE,
+  CHECKPOINT_SEQUENCE_BASE,
+} from "@meterbility/shared";
 import { openStore } from "../util.ts";
 
 /**
@@ -53,11 +58,15 @@ export function registerFilesCommand(program: Command): void {
     )
     .option(
       "--from <seq-or-step-id>",
-      "Lower step bound for --diff (inclusive). Defaults to start of run.",
+      "Lower step bound (inclusive). Without --diff: all-files range summary. Defaults to start of run.",
     )
     .option(
       "--to <seq-or-step-id>",
-      "Upper step bound for --diff (inclusive). Defaults to end of run.",
+      "Upper step bound (inclusive). Without --diff: defaults to the latest ingested step — 'to the current step' on a live run.",
+    )
+    .option(
+      "--main-band-only",
+      "Range summary: exclude synthetic-band changes (hook/admin/checkpoint) from the window",
     )
     .option("--json", "Emit JSON instead of human-readable output")
     .action(
@@ -68,9 +77,30 @@ export function registerFilesCommand(program: Command): void {
           diff?: string;
           from?: string;
           to?: string;
+          mainBandOnly?: boolean;
           json?: boolean;
         },
       ) => {
+        // --at answers "what did THIS step change"; --from/--to answers
+        // "what changed across this window". Combining them has no
+        // coherent meaning — error rather than pick a silent precedence
+        // (eng review, meter-live design).
+        if (opts.at !== undefined && (opts.from !== undefined || opts.to !== undefined)) {
+          console.error(
+            pc.red("--at cannot be combined with --from/--to (use one or the other)"),
+          );
+          process.exit(2);
+        }
+        // Consistency with the rule above (adversarial finding: silent
+        // flag-ignoring beside a hard error is worse than either).
+        if (opts.diff && opts.at !== undefined) {
+          console.error(pc.red("--at cannot be combined with --diff (use --from/--to to scope a diff)"));
+          process.exit(2);
+        }
+        if (opts.mainBandOnly && opts.from === undefined && opts.to === undefined && !opts.diff) {
+          console.error(pc.red("--main-band-only applies to --from/--to range summaries"));
+          process.exit(2);
+        }
         const store = openStore();
         try {
           const run = getRun(store, runId);
@@ -79,16 +109,21 @@ export function registerFilesCommand(program: Command): void {
             process.exit(1);
           }
 
-          // Dispatch to one of four shapes based on flag combinations.
+          // Dispatch to one of five shapes based on flag combinations.
           // Order matters: --diff is the most specific, then --at, then
-          // default summary. JSON output happens inside each branch so
-          // each shape can pick its own structure.
+          // the --from/--to range summary, then default summary. JSON
+          // output happens inside each branch so each shape can pick
+          // its own structure.
           if (opts.diff) {
             await runDiffMode(store, run, opts);
             return;
           }
           if (opts.at !== undefined) {
             await runAtMode(store, run, opts);
+            return;
+          }
+          if (opts.from !== undefined || opts.to !== undefined) {
+            await runRangeMode(store, run, opts);
             return;
           }
           await runSummaryMode(store, run, opts);
@@ -226,6 +261,192 @@ async function runAtMode(
   }
 }
 
+// ─── Mode 2.5: --from/--to range summary (no path required) ──────────
+
+/**
+ * "Everything that changed from step X to [Y | current]" — the query
+ * shape the meter-live design (docs/designs/meter-live-front-door.md §5)
+ * identified as missing. Window semantics:
+ *
+ *   - `--from`/`--to` resolve against MAIN-BAND sequences; `--to`
+ *     omitted = the latest ingested main-band step, so re-running
+ *     against a live run means "to the current step".
+ *   - Synthetic-band rows (hooks 100k / admin 200k / checkpoints 300k)
+ *     are INCLUDED by default via wall-clock mapping (outside-voice T1:
+ *     "everything" means everything): a band row counts when its parent
+ *     step's timestamp falls within the boundary steps' timestamps,
+ *     inclusive both ends. `--main-band-only` opts out; the footer
+ *     reports what the opt-out excluded.
+ */
+async function runRangeMode(
+  store: import("@meterbility/collector").Store,
+  run: Run,
+  opts: { from?: string; to?: string; mainBandOnly?: boolean; json?: boolean },
+): Promise<void> {
+  const steps = listSteps(store, run.run_id);
+  const mainSteps = steps.filter((s) => s.sequence < RESERVED_SEQUENCE_BASE);
+  const fromSeq = opts.from ? resolveStepSeqLoose(store, run, opts.from) : 0;
+  const latestMainSeq =
+    mainSteps.length > 0 ? mainSteps[mainSteps.length - 1]!.sequence : 0;
+  const toSeq = opts.to ? resolveStepSeqLoose(store, run, opts.to) : latestMainSeq;
+  // Inverted bounds are a user error only when the user supplied BOTH.
+  // With --to defaulted to the current step, `--from 50` on a 3-step
+  // run is a legitimate empty window (loose-resolution posture, same
+  // as --diff), not a mistake to punish.
+  if (fromSeq > toSeq && opts.to !== undefined) {
+    console.error(pc.red(`--from (${fromSeq}) must be <= --to (${toSeq})`));
+    process.exit(2);
+  }
+
+  // Boundary steps for the wall-clock band mapping. ISO-8601 timestamps
+  // compare lexicographically.
+  const inWindowMain = mainSteps.filter(
+    (s) => s.sequence >= fromSeq && s.sequence <= toSeq,
+  );
+  // Epoch millis, not lexicographic strings: mixed timestamp precision
+  // ("…:56Z" vs "…:56.999Z") breaks string ordering at the '.' vs 'Z'
+  // boundary (red-team finding).
+  // Unparseable boundaries disable band mapping VISIBLY (footer
+  // note), never silently. "To current" means to NOW: band rows
+  // stamped after the last main-band step (trailing hook drains,
+  // checkpoints) are part of the answer when --to was omitted
+  // (adversarial finding — "everything means everything" failed at
+  // the tail).
+  const rawLower = inWindowMain[0] ? Date.parse(inWindowMain[0].timestamp) : NaN;
+  const rawUpper = inWindowMain[inWindowMain.length - 1]
+    ? Date.parse(inWindowMain[inWindowMain.length - 1]!.timestamp)
+    : NaN;
+  const boundariesParseable = Number.isFinite(rawLower) && Number.isFinite(rawUpper);
+  const lowerMs = boundariesParseable ? rawLower : undefined;
+  const upperMs = !boundariesParseable
+    ? undefined
+    : opts.to === undefined
+      ? Number.POSITIVE_INFINITY
+      : rawUpper;
+
+  const stepById = new Map<string, Step>();
+  for (const s of steps) stepById.set(s.step_id, s);
+
+  const fcs = listFileChanges(store, { runId: run.run_id });
+  const included: FileChange[] = [];
+  /** file_change_id → band label, for rows included via wall-clock mapping. */
+  const bandLabelByFcId = new Map<string, string>();
+  let bandExcluded = 0;
+  for (const fc of fcs) {
+    const st = stepById.get(fc.step_id);
+    if (!st) continue;
+    if (st.sequence < RESERVED_SEQUENCE_BASE) {
+      if (st.sequence >= fromSeq && st.sequence <= toSeq) included.push(fc);
+      continue;
+    }
+    // Synthetic band. No main-band steps in the window → no wall-clock
+    // span → band rows can never map in.
+    const stMs = Date.parse(st.timestamp);
+    const inWall =
+      lowerMs !== undefined &&
+      upperMs !== undefined &&
+      Number.isFinite(stMs) &&
+      stMs >= lowerMs &&
+      stMs <= upperMs;
+    if (!inWall) continue;
+    if (opts.mainBandOnly) {
+      bandExcluded += 1;
+      continue;
+    }
+    bandLabelByFcId.set(fc.file_change_id, bandLabel(st.sequence));
+    included.push(fc);
+  }
+
+  const collapsed = collapseByPath(included, bandLabelByFcId);
+  const stats = totalStats(collapsed);
+  const bandIncluded = bandLabelByFcId.size;
+
+  if (opts.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          run_id: run.run_id,
+          from: fromSeq,
+          to: toSeq,
+          to_is_current: opts.to === undefined,
+          main_band_only: opts.mainBandOnly === true,
+          band_changes_included: bandIncluded,
+          band_changes_excluded: bandExcluded,
+          files_touched: collapsed.length,
+          lines_added_total: stats.added,
+          lines_removed_total: stats.removed,
+          files: collapsed.map(rowToJson),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    return;
+  }
+
+  console.log(
+    pc.bold(`RANGE  steps ${fromSeq}–${toSeq}`) +
+      pc.dim(
+        `  (run ${run.run_id.slice(0, 12)}` +
+          (opts.to === undefined ? " · to current step" : "") +
+          ` · ${collapsed.length} file${collapsed.length === 1 ? "" : "s"} touched)`,
+      ),
+  );
+  if (!boundariesParseable && inWindowMain.length > 0 && !opts.mainBandOnly) {
+    console.log(
+      pc.yellow(
+        "note: window boundary timestamps unparseable — band-attributed changes could not be mapped",
+      ),
+    );
+  }
+  if (collapsed.length === 0) {
+    console.log(pc.dim("\n  no captured changes in this step window"));
+    if (bandExcluded > 0) {
+      console.log(
+        pc.dim(
+          `  ${bandExcluded} band-attributed change${bandExcluded === 1 ? "" : "s"} excluded (--main-band-only)`,
+        ),
+      );
+    }
+    return;
+  }
+  console.log("");
+  for (const row of collapsed) {
+    printRow(row);
+  }
+  console.log(
+    pc.bold(`\nWindow ${signedAdd(stats.added)} ${signedRemove(stats.removed)}`) +
+      pc.dim(
+        `  across ${collapsed.length} file${collapsed.length === 1 ? "" : "s"}`,
+      ),
+  );
+  if (opts.mainBandOnly && bandExcluded > 0) {
+    console.log(
+      pc.dim(
+        `${bandExcluded} band-attributed change${bandExcluded === 1 ? "" : "s"} excluded (--main-band-only)`,
+      ),
+    );
+  } else if (bandIncluded > 0) {
+    console.log(
+      pc.dim(
+        `${bandIncluded} band-attributed change${bandIncluded === 1 ? "" : "s"} included (hook/admin) — --main-band-only to exclude`,
+      ),
+    );
+  }
+}
+
+/**
+ * Human label for a synthetic-band sequence. Floors come from
+ * @meterbility/shared (sequence.ts) — the same constants the cursor
+ * adapter's band authority re-exports, so a floor change can't strand
+ * this label.
+ */
+function bandLabel(sequence: number): string {
+  if (sequence >= CHECKPOINT_SEQUENCE_BASE) return "checkpoint";
+  if (sequence >= ADMIN_SEQUENCE_BASE) return "admin";
+  return "hook";
+}
+
 // ─── Mode 3: --diff for one path ─────────────────────────────────────
 
 async function runDiffMode(
@@ -327,6 +548,9 @@ interface CollapsedRow {
   any_binary: boolean;
   /** Count of underlying FileChange rows for this path. */
   change_count: number;
+  /** Synthetic-band sources that contributed rows (range mode): e.g.
+   *  ["hook"]. Empty for pure main-band paths. */
+  band_labels: string[];
 }
 
 /**
@@ -335,12 +559,16 @@ interface CollapsedRow {
  * the last op that hit the path in this view's window — gives the
  * user "what's the final state?" at a glance.
  */
-function collapseByPath(fcs: FileChange[]): CollapsedRow[] {
+function collapseByPath(
+  fcs: FileChange[],
+  bandLabelByFcId?: Map<string, string>,
+): CollapsedRow[] {
   const byPath = new Map<string, CollapsedRow>();
   for (const fc of fcs) {
     // Normalize: rename rows are keyed by the new path; the old path
     // is recorded in `rename_from` for display.
     const key = fc.path;
+    const band = bandLabelByFcId?.get(fc.file_change_id);
     const existing = byPath.get(key);
     if (existing) {
       existing.lines_added += fc.lines_added;
@@ -350,11 +578,16 @@ function collapseByPath(fcs: FileChange[]): CollapsedRow[] {
       existing.any_binary =
         existing.any_binary || fc.patch_format === "binary";
       existing.change_count += 1;
+      if (band && !existing.band_labels.includes(band)) {
+        existing.band_labels.push(band);
+      }
       if (fc.op === "rename" && fc.old_path) {
         existing.rename_from = fc.old_path;
       }
     } else {
-      byPath.set(key, toCollapsedRow(fc));
+      const row = toCollapsedRow(fc);
+      if (band) row.band_labels.push(band);
+      byPath.set(key, row);
     }
   }
   // Sort by path (matches what `git status` does — predictable scan
@@ -374,6 +607,7 @@ function toCollapsedRow(fc: FileChange): CollapsedRow {
     any_partial: fc.partial_diff,
     any_binary: fc.patch_format === "binary",
     change_count: 1,
+    band_labels: [],
   };
 }
 
@@ -399,6 +633,7 @@ function printRow(row: CollapsedRow): void {
   if (row.any_partial) flags.push(pc.yellow("partial"));
   if (row.any_binary) flags.push(pc.dim("binary"));
   if (row.change_count > 1) flags.push(pc.dim(`${row.change_count} changes`));
+  for (const band of row.band_labels) flags.push(pc.magenta(`(${band})`));
   console.log(
     `  ${tag}  ${pathCell}  ${stats}${flags.length ? "  " + flags.join(" ") : ""}`,
   );
@@ -454,6 +689,7 @@ function rowToJson(arg: CollapsedRow | FileChange): unknown {
       change_count: r.change_count,
       partial: r.any_partial,
       binary: r.any_binary,
+      ...(r.band_labels.length > 0 ? { band_sources: r.band_labels } : {}),
     };
   }
   const fc = arg as FileChange;
@@ -494,7 +730,21 @@ function resolveStep(
     console.error(pc.red(`step not found: ${needle}`));
     process.exit(1);
   }
+  assertStepBelongsToRun(step, run);
   return step;
+}
+
+/** A step-id from a DIFFERENT run silently yields a confidently wrong
+ *  window (red-team finding) — error instead. */
+function assertStepBelongsToRun(step: Step, run: Run): void {
+  if (step.run_id !== run.run_id) {
+    console.error(
+      pc.red(
+        `step ${step.step_id.slice(0, 12)} belongs to run ${step.run_id.slice(0, 12)}, not ${run.run_id.slice(0, 12)}`,
+      ),
+    );
+    process.exit(1);
+  }
 }
 
 /**
@@ -509,6 +759,10 @@ function resolveStepSeqLoose(
   run: Run,
   needle: string,
 ): number {
+  if (needle.trim() === "") {
+    console.error(pc.red("empty step bound — pass a sequence number or step id"));
+    process.exit(2);
+  }
   const seq = Number(needle);
   if (Number.isFinite(seq)) return seq;
   const step = getStep(store, needle);
@@ -516,6 +770,7 @@ function resolveStepSeqLoose(
     console.error(pc.red(`step not found: ${needle}`));
     process.exit(1);
   }
+  assertStepBelongsToRun(step, run);
   return step.sequence;
 }
 

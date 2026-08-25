@@ -15,8 +15,10 @@ import type { Store } from "@meterbility/collector";
  * far above every band, so offset rows can never collide with them.
  */
 export const HOOK_SEQUENCE_BASE = RESERVED_SEQUENCE_BASE;
-export const ADMIN_SEQUENCE_BASE = 200_000;
-export const CHECKPOINT_SEQUENCE_BASE = 300_000;
+// Floors are defined in @meterbility/shared (sequence.ts) so non-adapter
+// consumers (CLI band labels) share them; re-exported here as the
+// band-semantics authority.
+export { ADMIN_SEQUENCE_BASE, CHECKPOINT_SEQUENCE_BASE } from "@meterbility/shared";
 export const SEQUENCE_REBUILD_OFFSET = 1_000_000;
 
 /**
