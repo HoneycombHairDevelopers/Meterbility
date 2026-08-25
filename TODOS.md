@@ -271,8 +271,9 @@ Cross-adapter duplication has grown past the original capture-path pair:
   collector capture path).
 - `parseMaybeJson` — duplicated in cursor/file_changes.ts and
   cursor/ingest.ts.
-- `diffLines` — cursor imports it from `@meterbility/claude-code-adapter`,
-  a cross-adapter dependency that belongs in shared.
+- ~~`diffLines`~~ — DONE v0.6.4: moved to `@meterbility/shared`
+  (claude-code re-exports for compat; cursor + github-copilot import
+  from shared).
 - The synthetic-step scaffold (blob snapshot + decision ref +
   nextSequenceInBand + insertStep + tags) is triplicated across cursor
   hooks.ts / admin_api.ts / extras.ts.
