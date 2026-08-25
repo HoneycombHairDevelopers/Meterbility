@@ -112,6 +112,12 @@ To run one test file:
 node --import tsx/esm --test packages/shared/src/probe.test.ts
 ```
 
+`npm test` redirects the run's `TMPDIR` into one run-scoped root and deletes
+it when the run passes; on failure the root is kept and named in the output
+(`test fixtures kept for inspection: …`), then reclaimed after 24 hours.
+Single-file runs bypass the runner, so their fixture dirs land in the real
+OS tmpdir.
+
 ### Python
 
 ```bash

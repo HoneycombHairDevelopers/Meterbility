@@ -19,7 +19,7 @@ Latest milestones (v0.6.4):
 - **Fleet views** — `meter list` and the web run list nest agent runs under their parent with a fleet cost rollup; run detail shows "Agent of" lineage and the agents list; the live fleet covers each agent run individually. `listRuns` and `GET /api/runs` now default to top-level runs — pass `includeChildren` (library) or `?children=1` (API) for the flat set.
 - **Forward-compat guard** — opening a database written by a newer Meterbility build fails with a clear upgrade message instead of silently misreading newer semantics, on both SQLite and Postgres.
 
-Earlier milestones (v0.6.2):
+Earlier milestones (v0.6.2 — the live front door):
 
 - **`meter live` — the front door** — one command starts session ingest and file side-effect capture together: a self-explaining header, an honest `SYNCING → SYNCED` backfill state, a live `step 42 · Edit src/foo.ts · +12 −3` stream, and a capture-health line that reports watcher degradation instead of silently missing changes.
 - **Step-range file summary** — `meter files <run> --from X [--to Y]` without `--diff`: a git-status-style view of everything a step window changed, re-runnable against a live session; synthetic bands (hook/admin/checkpoint) are mapped in by wall clock, `--main-band-only` opts out.

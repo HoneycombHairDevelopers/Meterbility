@@ -127,6 +127,6 @@ Two surfaces care about this:
 
 ## Test strategy
 
-`scripts/run-tests.ts` walks `packages/**` and `adapters/**` for `*.test.ts` and runs each through `tsx`. Node's native `node:test` runner is used inside each file; spec-style output is shown.
+`scripts/run-tests.ts` walks `packages/**` and `adapters/**` for `*.test.ts` and runs each through `tsx`. Node's native `node:test` runner is used inside each file; spec-style output is shown. The runner points the child's `TMPDIR` at a pid-tagged run root, deletes it on success, and keeps it (printed in the output) on failure; stale roots from dead runs are swept after 24h. The Playwright fixture server (`packages/server/src/e2e/serve-fixture.ts`) runs a sibling pid-tagged sweep of its own `meter-e2e-*` homes — the two sweeps are intentionally parallel; change one, check the other.
 
 End-to-end coverage: `scripts/smoke-ingest.ts` ingests a real session and prints the result.
