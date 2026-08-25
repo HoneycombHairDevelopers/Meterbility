@@ -43,6 +43,9 @@
       "@meterbility/codex-cli-adapter": [
         "adapters/codex-cli/src/index.ts"
       ],
+      "@meterbility/github-copilot-adapter": [
+        "adapters/github-copilot/src/index.ts"
+      ],
       "@meterbility/cursor-adapter": [
         "adapters/cursor/src/index.ts"
       ]
