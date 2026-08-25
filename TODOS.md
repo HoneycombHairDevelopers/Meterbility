@@ -200,6 +200,16 @@ heartbeat; viewers attach). Constraints to solve before building: hook
 timeout budget (never block the agent's tool call), orphan-process cleanup,
 multi-project contention. Depends on: `meter live` shipped and dogfooded.
 
+### LiveOptions.projectsRoot is a dead option
+**Priority:** P3
+`LiveInspector` accepts `projectsRoot` in its options (and
+`POST /api/live/start` forwards it), but the tick's discovery calls
+`discoverSessions()` bare, which reads `claudeProjectsRoot()` from env —
+the option is silently ignored. Found writing the web SSE proof test
+(web-live-proxy.test.ts), which had to fall back to CLAUDE_HOME env
+isolation. Either thread `this.opts.projectsRoot` through discovery or
+delete the option from LiveOptions and the API body.
+
 ## Live Probe (cross-runtime pause)
 
 Today only the SDKs acknowledge the probe protocol, so Pause is gated
