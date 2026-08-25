@@ -1,6 +1,6 @@
 # Publishing to npm
 
-All eleven workspace packages publish under the `@meterbility` scope. The CLI
+All twelve workspace packages publish under the `@meterbility` scope. The CLI
 installs the `meter` binary (from `@meterbility/cli`).
 
 ## One-time setup
@@ -26,8 +26,8 @@ npm run build
 npm test
 for w in packages/shared packages/spec packages/collector \
          packages/store-postgres adapters/claude-code adapters/codex-cli \
-         adapters/cursor packages/agent packages/proxy packages/server \
-         packages/cli; do
+         adapters/cursor adapters/github-copilot packages/agent \
+         packages/proxy packages/server packages/cli; do
   npm publish -w "$w" --access public
 done
 ```

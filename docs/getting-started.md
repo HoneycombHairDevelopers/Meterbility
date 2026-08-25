@@ -109,7 +109,7 @@ Disable redaction with `METERBILITY_REDACT=off` (default rules redact known secr
 
 ## What's not in v0
 
-- No live capture in v0 — shipped since: `meter web --live` tail-polls Claude Code and (v0.5.1) Codex CLI sessions as they grow. See [Live inspector](live-inspector.md).
+- No live capture in v0 — shipped since: `meter web --live` tail-polls Claude Code, (v0.5.1) Codex CLI, and (v0.6.4) GitHub Copilot CLI sessions as they grow. See [Live inspector](live-inspector.md).
 - No team / hosted backend.
 - No scheduled regression suite.
 - No sandbox templates.

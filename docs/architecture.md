@@ -112,7 +112,7 @@ This is **structural diff**. v1 adds **semantic diff** — embedding-based align
 - `/` — run list (HTML).
 - `/runs/:id` — run detail with timeline + per-step tabs.
 - `/diff?a=<run>&b=<run>` — trajectory diff.
-- `/api/runs`, `/api/runs/:id/steps`, `/api/steps/:id`, `/api/diff` — JSON API.
+- `/api/runs` (top-level runs by default; `?children=1` includes carved agent child runs), `/api/runs/:id/steps`, `/api/steps/:id`, `/api/diff` — JSON API.
 - `/api/blob/:hash` — fetch a blob (handles snapshot-id → blob-ref translation).
 - `POST /api/annotate` — attach a verdict + note.
 
