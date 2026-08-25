@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -504,4 +504,87 @@ test("live: a claim for a DIFFERENT root does not force viewer-only (per-root gu
   const raw = getSetting(store2, "live.heartbeat");
   store2.close();
   assert.ok(raw !== undefined && raw.includes(otherRoot), "other root's claim preserved");
+});
+
+test("live: an out-of-band proxy run (direct store writes) streams with provider identity and gets sentinel file attribution", async () => {
+  const fx = freshEnv();
+  const proc = spawnLive(["--files-dir", fx.filesRoot, "--json"], {
+    METERBILITY_HOME: fx.home,
+    CLAUDE_HOME: fx.claudeHome,
+    CODEX_HOME: fx.codexHome,
+  });
+  const runId = `run_${randomUUID()}`;
+  let code: number | null = null;
+  try {
+    await proc.waitFor(/"type":"sentinel:ready"/);
+    // capture:health only streams after the SYNCED flip + one evaluator
+    // tick — past it, the silent boot pass (which seeds arrival cursors
+    // WITHOUT emitting) is definitively over, so the writes below must
+    // produce events.
+    await proc.waitFor(/"type":"capture:health"/);
+
+    // Exactly what `meter proxy` does per captured request: ensureRun +
+    // appendStep via the proxy's own store-bridge, from a DIFFERENT
+    // process than the live viewer (here, the test process). No
+    // transcript exists — this is the pure store-driven path, with the
+    // cwd fallback `meter run` relies on (no x-meterbility-cwd header).
+    const { ensureRun, appendStep } = await import(
+      "../../../proxy/src/store-bridge.ts"
+    );
+    const store = Store.open({ path: join(fx.home, "meterbility.db") });
+    ensureRun(store, { project: fx.filesRoot, agent: "proxy" }, runId, {
+      cwd: fx.filesRoot,
+      provider: "nvidia",
+      upstream_host: "integrate.api.nvidia.com",
+    });
+    await appendStep(store, {
+      run_id: runId,
+      sequence: 0,
+      provider: "nvidia",
+      model: "meta/llama-3.1-405b",
+      history: [{ role: "user", content: "make a file" }],
+      decisionJson: "{}",
+      action: {
+        kind: "tool_call",
+        tool_name: "Bash",
+        tool_input: { command: "touch side-effect.txt" },
+      },
+      tokens: { input: 10, output: 5, cached_read: 0, cache_creation: 0 },
+      latency_ms: 120,
+      outcome: { status: "ok" },
+    });
+    store.close();
+
+    // Arrival detection announces a run the viewer never ingested…
+    await proc.waitFor(new RegExp(`"type":"run:created".*${runId}`));
+    // …and the sentinel attributes a real filesystem write to it via
+    // the cwd fallback (temporal proximity to the step just appended).
+    writeFileSync(join(fx.filesRoot, "side-effect.txt"), "hello from the agent\n");
+    await proc.waitFor(new RegExp(`"type":"file:captured".*${runId}`));
+  } finally {
+    code = await proc.stop();
+  }
+  assert.equal(code, 0);
+
+  const events = proc
+    .stdout()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const created = events.find(
+    (o) =>
+      o.type === "run:created" &&
+      (o.run as Record<string, unknown> | undefined)?.run_id === runId,
+  );
+  assert.ok(created, "run:created streamed for the out-of-band proxy run");
+  const run = created!.run as Record<string, unknown>;
+  assert.equal(run.provider, "nvidia", "provider identity travels with the event");
+  assert.equal(run.upstream_host, "integrate.api.nvidia.com");
+  assert.equal(run.source_runtime, "proxy");
+  const captured = events.find(
+    (o) => o.type === "file:captured" && o.run_id === runId,
+  );
+  assert.ok(captured, "sentinel attributed the file write to the proxy run");
+  const change = (captured as { change?: { path?: string } }).change;
+  assert.equal(change?.path, "side-effect.txt");
 });
