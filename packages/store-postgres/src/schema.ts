@@ -22,10 +22,36 @@ import type { Client } from "pg";
  *             Additive-only per v0.2 §17.
  *   v4 → v5 — runs.provider + steps.provider + runs.upstream_host
  *             (proxy multi-upstream; sqlite v6 equivalent)
+ *   v5 → v6 — steps.ttft_ms + steps.ttft_visible_ms (sqlite v7)
+ *   v6 → v7 — runs.parent_run_id + runs.parent_run_step_id
+ *             (delegation lineage; sqlite v8 equivalent)
  */
-export const POSTGRES_SCHEMA_VERSION = 6;
+export const POSTGRES_SCHEMA_VERSION = 7;
 
 export async function ensurePostgresSchema(client: Client): Promise<void> {
+  // Forward-compat guard (mirrors the SQLite v8 guard): refuse to open
+  // a database written by a NEWER build, before any DDL runs. An
+  // unparseable version fails closed. A missing meta table means a
+  // fresh database — proceed.
+  try {
+    const ver = await client.query<{ value: string }>(
+      "SELECT value FROM meta WHERE key = 'schema_version'",
+    );
+    const value = ver.rows[0]?.value;
+    if (value !== undefined) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n > POSTGRES_SCHEMA_VERSION) {
+        throw new Error(
+          `postgres schema v${value} is newer than this build (v${POSTGRES_SCHEMA_VERSION}); upgrade meterbility to open it`,
+        );
+      }
+    }
+  } catch (err) {
+    // 42P01 = undefined_table (fresh database). Anything else — including
+    // our own newer-schema error — propagates.
+    if ((err as { code?: string }).code !== "42P01") throw err;
+  }
+
   await client.query(`
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
@@ -68,7 +94,17 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
       step_count INTEGER NOT NULL DEFAULT 0,
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
       provider TEXT,
-      upstream_host TEXT
+      upstream_host TEXT,
+      -- Soft references (no FK), matching the ALTER-migrated cohort:
+      -- a) sync order is started_at DESC, so children arrive before
+      --    their parent and an FK would reject the first squad sync on
+      --    fresh DBs only; b) the limitRuns window can legitimately
+      --    include a child whose parent falls outside it. SQLite is the
+      --    source of truth for lineage integrity. idx_runs_parent is
+      --    created AFTER the v7 ALTERs below — creating it here would
+      --    error on upgraded DBs whose runs table predates the column.
+      parent_run_id TEXT,
+      parent_run_step_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_runs_project_started
@@ -273,6 +309,18 @@ export async function ensurePostgresSchema(client: Client): Promise<void> {
   );
   await client.query(
     "ALTER TABLE steps ADD COLUMN IF NOT EXISTS ttft_visible_ms INTEGER",
+  );
+
+  // v7 — delegation lineage (see collector schema v8 note). Nullable;
+  // only carved child runs of multi-agent sessions set them.
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS parent_run_id TEXT",
+  );
+  await client.query(
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS parent_run_step_id TEXT",
+  );
+  await client.query(
+    "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)",
   );
 
   const versionRow = await client.query(

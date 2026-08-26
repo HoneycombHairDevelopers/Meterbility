@@ -82,6 +82,7 @@ export interface Run {
     | "claude-code"
     | "codex-cli"
     | "cursor"
+    | "github-copilot"
     | "sdk-ts"
     | "sdk-py"
     | "proxy"
@@ -94,6 +95,22 @@ export interface Run {
   cwd?: string;
   fork_origin_run_id?: string;
   fork_origin_step_id?: string;
+  /**
+   * v8 — Delegation lineage (copilot-squad-adapter design): set on a
+   * child run carved out of a multi-agent session, pointing at the run
+   * that dispatched it. Deliberately separate from fork lineage —
+   * forks are replays, delegation is decomposition. Child runs
+   * (parent_run_id set) are lineage-only: fork/replay rejects them, and
+   * they are EXCLUDED from default run listings but INCLUDED in all
+   * cost/token aggregation (they hold real, exclusive spend).
+   */
+  parent_run_id?: string;
+  /**
+   * v8 — The `sub_agent_dispatch` step in the parent run that spawned
+   * this child. Soft reference (no FK): the step may not exist yet at
+   * child-insert time inside the same carve transaction.
+   */
+  parent_run_step_id?: string;
   tokens_total_input: number;
   tokens_total_output: number;
   tokens_total_cached: number;
@@ -256,7 +273,14 @@ export type AnnotationKind =
   | "comment"
   | "probe_pause"
   | "probe_edit"
-  | "capture_skipped";
+  | "capture_skipped"
+  /**
+   * v8 — emitted by the github-copilot adapter for `session.compaction_*`
+   * events: the vendor compacted its own context mid-session. Recorded
+   * as a run-targeted marker so the timeline explains why history
+   * references shift. `target_kind='run'`.
+   */
+  | "context_compaction";
 
 export interface Annotation {
   annotation_id: string;

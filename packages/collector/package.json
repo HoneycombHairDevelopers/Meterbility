@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/collector",
-  "version": "0.6.2",
+  "version": "0.6.4",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -11,8 +11,8 @@
     }
   },
   "dependencies": {
-    "@meterbility/shared": "^0.6.2",
-    "@meterbility/spec": "^0.6.2",
+    "@meterbility/shared": "^0.6.4",
+    "@meterbility/spec": "^0.6.4",
     "better-sqlite3": "^13.0.3"
   },
   "description": "SQLite store, content-addressed blob storage, and replay primitives for Meterbility",

@@ -57,14 +57,14 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
   return cols.some((c) => c.name === column);
 }
 
-test("fresh apply lands schema v6 with all new tables + columns", () => {
+test("fresh apply lands the current schema version with all new tables + columns", () => {
   const db = freshDb();
   ensureSchema(db);
-  assert.equal(SCHEMA_VERSION, 7, "SCHEMA_VERSION constant must be 7");
+  assert.equal(SCHEMA_VERSION, 8, "SCHEMA_VERSION constant must be 8");
   const row = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string } | undefined;
-  assert.equal(row?.value, "7");
+  assert.equal(row?.value, "8");
 
   // New tables exist.
   assert.equal(tableExists(db, "file_change"), true, "file_change table missing");
@@ -90,6 +90,10 @@ test("fresh apply lands schema v6 with all new tables + columns", () => {
   assert.equal(hasColumn(db, "steps", "ttft_ms"), true);
   assert.equal(hasColumn(db, "steps", "ttft_visible_ms"), true);
 
+  // v8: delegation lineage columns (copilot-squad-adapter).
+  assert.equal(hasColumn(db, "runs", "parent_run_id"), true);
+  assert.equal(hasColumn(db, "runs", "parent_run_step_id"), true);
+
   // Indexes are sanity-checked via the master table — the names must
   // match what queries.ts will rely on in Track A.
   const indexes = db
@@ -111,6 +115,67 @@ test("fresh apply lands schema v6 with all new tables + columns", () => {
   db.close();
 });
 
+test("v8 migration rebuilds the annotations kind-CHECK on fresh-at-v5–v7 databases", () => {
+  // A database created FRESH at v5–v7 has the 4-value CHECK baked into
+  // the annotations table; CREATE TABLE IF NOT EXISTS never updates it,
+  // so without the rebuild a context_compaction insert would throw
+  // SQLITE_CONSTRAINT_CHECK and abort the whole copilot carve.
+  const db = freshDb();
+  db.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE annotations (
+      annotation_id TEXT PRIMARY KEY,
+      target_kind TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      author TEXT NOT NULL,
+      verdict TEXT,
+      note TEXT,
+      kind TEXT NOT NULL DEFAULT 'comment'
+        CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped')),
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO meta(key, value) VALUES ('schema_version', '7');
+    INSERT INTO annotations(annotation_id, target_kind, target_id, author, kind, created_at)
+      VALUES ('ann_legacy', 'run', 'run_x', 'tester', 'comment', '2026-01-01T00:00:00Z');
+  `);
+  ensureSchema(db);
+  // Legacy row survived the rebuild…
+  const legacy = db
+    .prepare("SELECT kind FROM annotations WHERE annotation_id='ann_legacy'")
+    .get() as { kind: string };
+  assert.equal(legacy.kind, "comment");
+  // …and the widened CHECK now admits the v8 kind.
+  assert.doesNotThrow(() =>
+    db
+      .prepare(
+        "INSERT INTO annotations(annotation_id, target_kind, target_id, author, kind, created_at) VALUES (?,?,?,?,?,?)",
+      )
+      .run("ann_v8", "run", "run_x", "tester", "context_compaction", "2026-01-01T00:00:01Z"),
+  );
+  // Unknown kinds are still rejected (the CHECK is intact, not dropped).
+  assert.throws(() =>
+    db
+      .prepare(
+        "INSERT INTO annotations(annotation_id, target_kind, target_id, author, kind, created_at) VALUES (?,?,?,?,?,?)",
+      )
+      .run("ann_bad", "run", "run_x", "tester", "random_kind", "2026-01-01T00:00:02Z"),
+  );
+  db.close();
+});
+
+test("v8 forward-compat guard: refuses to open a database written by a newer build", () => {
+  const db = freshDb();
+  ensureSchema(db);
+  db.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(
+    String(SCHEMA_VERSION + 1),
+  );
+  assert.throws(
+    () => ensureSchema(db),
+    /newer than this build .* upgrade meterbility/i,
+  );
+  db.close();
+});
+
 test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
   const db = freshDb();
   ensureSchema(db);
@@ -122,7 +187,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .all() as Array<{ value: string }>;
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.value, "7");
+  assert.equal(rows[0]!.value, "8");
   // Tables are still singular (the master table doesn't grow on re-apply).
   const fcCount = db
     .prepare(
@@ -133,7 +198,7 @@ test("ensureSchema is idempotent: re-apply does not error or duplicate", () => {
   db.close();
 });
 
-test("v3 → v6 migration: hand-built v3 db gets ALTER'd to the current version without data loss", () => {
+test("v3 → current migration: hand-built v3 db gets ALTER'd to the current version without data loss", () => {
   const db = freshDb();
   // Hand-shape a v3 database: enable WAL + FKs (production parity),
   // create the v3 subset of tables (projects, agents, runs without the
@@ -227,11 +292,25 @@ test("v3 → v6 migration: hand-built v3 db gets ALTER'd to the current version 
   assert.equal(legacy!.provider, null, "legacy rows get NULL provider");
   assert.equal(legacy!.upstream_host, null);
 
+  // v8 columns land on the hand-built legacy DB too, defaulting NULL.
+  assert.equal(hasColumn(db, "runs", "parent_run_id"), true);
+  assert.equal(hasColumn(db, "runs", "parent_run_step_id"), true);
+  const legacyLineage = db
+    .prepare(
+      "SELECT parent_run_id, parent_run_step_id FROM runs WHERE run_id=?",
+    )
+    .get("run_legacy") as {
+    parent_run_id: string | null;
+    parent_run_step_id: string | null;
+  };
+  assert.equal(legacyLineage.parent_run_id, null);
+  assert.equal(legacyLineage.parent_run_step_id, null);
+
   // schema_version was bumped.
   const ver = db
     .prepare("SELECT value FROM meta WHERE key='schema_version'")
     .get() as { value: string };
-  assert.equal(ver.value, "7");
+  assert.equal(ver.value, "8");
   db.close();
 });
 

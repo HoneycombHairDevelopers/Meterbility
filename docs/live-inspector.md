@@ -9,7 +9,7 @@ meter web --live
 # → http://127.0.0.1:4317  (auto-opens browser)
 ```
 
-The `--live` flag tells Meterbility to watch `~/.claude/projects/` (Claude Code) and, as of v0.5.1, `~/.codex` (Codex CLI rollouts) for new sessions and growing session files. Every ~1.5s it scans, runs incremental ingest on anything new, and emits structured events over Server-Sent Events (`/api/live`). The fleet view updates without a page refresh.
+The `--live` flag tells Meterbility to watch `~/.claude/projects/` (Claude Code), as of v0.5.1 `~/.codex` (Codex CLI rollouts), and as of v0.6.4 `~/.copilot/session-state` (GitHub Copilot CLI `events.jsonl`) for new sessions and growing session files. Every ~1.5s it scans, runs incremental ingest on anything new, and emits structured events over Server-Sent Events (`/api/live`). The fleet view updates without a page refresh.
 
 ### How live is it? (near-realtime, not instantaneous)
 
@@ -144,4 +144,4 @@ Release verification for both paths lives in the [manual test checklist](test-pl
 - Polling cadence is 1.5s by default, so live updates are near-realtime (≤~1.5s), not instantaneous — see [How live is it?](#how-live-is-it-near-realtime-not-instantaneous) for why ingest polls rather than watches. Faster intervals are possible (`scanIntervalMs`) but the bottleneck is `ingestSession`, which re-reads the file body to thread the parent-uuid chain.
 - Loop detection uses `JSON.stringify(action.tool_input)` for the signature. Tool inputs that include non-deterministic values (timestamps, uuids) won't trip the heuristic — that's by design.
 - Alert state is in-memory. Restarting `meter web --live` re-fires alerts that already triggered in the previous session.
-- Codex CLI sessions **are** watched as of v0.5.1: the same tick loop discovers growing rollout files under `~/.codex` and tail-polls them alongside Claude Code sessions. Cursor is the remaining gap — it persists to a SQLite database (`state.vscdb`), not an append-only file, so it can't join the tail-poll loop; use `meter ingest cursor` for after-the-fact capture or `meter init --cursor-hooks` for real-time hook capture via `meter cursor-hook`.
+- Codex CLI sessions **are** watched as of v0.5.1: the same tick loop discovers growing rollout files under `~/.codex` and tail-polls them alongside Claude Code sessions. GitHub Copilot CLI sessions join the same loop as of v0.6.4 (`~/.copilot/session-state` `events.jsonl`; squad sessions carve into parent + per-agent child runs live, and each agent run appears in the fleet individually). Cursor is the remaining gap — it persists to a SQLite database (`state.vscdb`), not an append-only file, so it can't join the tail-poll loop; use `meter ingest cursor` for after-the-fact capture or `meter init --cursor-hooks` for real-time hook capture via `meter cursor-hook`.

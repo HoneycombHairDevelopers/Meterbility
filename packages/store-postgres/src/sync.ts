@@ -32,7 +32,7 @@ export async function syncSqliteToPostgres(
   postgres: PostgresStore,
   opts: { limitRuns?: number } = {},
 ): Promise<SyncReport> {
-  const runs = listRuns(sqlite, { limit: opts.limitRuns ?? 1000 });
+  const runs = listRuns(sqlite, { limit: opts.limitRuns ?? 1000, includeChildren: true });
   const report: SyncReport = { runs: 0, steps: 0, blobs: 0, bytes: 0 };
   for (const run of runs) {
     // Ensure project + agent exist on the Postgres side. We use the

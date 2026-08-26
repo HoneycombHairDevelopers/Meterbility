@@ -49,6 +49,9 @@ interface RunRow {
   // v6 — nullable: only proxy multi-upstream capture sets them.
   provider: string | null;
   upstream_host: string | null;
+  // v8 — nullable: only carved child runs of multi-agent sessions set them.
+  parent_run_id: string | null;
+  parent_run_step_id: string | null;
 }
 
 interface StepRow {
@@ -103,6 +106,8 @@ function rowToRun(row: RunRow): Run {
     tags: JSON.parse(row.tags) as string[],
     provider: row.provider ?? undefined,
     upstream_host: row.upstream_host ?? undefined,
+    parent_run_id: row.parent_run_id ?? undefined,
+    parent_run_step_id: row.parent_run_step_id ?? undefined,
     baseline_tree_id: row.baseline_tree_id ?? undefined,
     probe_state:
       row.probe_state === "paused" || row.probe_state === "resumed"
@@ -197,8 +202,9 @@ export function insertRun(store: Store, run: Run): void {
         fork_origin_run_id, fork_origin_step_id,
         tokens_total_input, tokens_total_output, tokens_total_cached,
         cost_cents, step_count, tags,
-        baseline_tree_id, probe_state, provider, upstream_host
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        baseline_tree_id, probe_state, provider, upstream_host,
+        parent_run_id, parent_run_step_id
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       run.run_id,
@@ -224,7 +230,55 @@ export function insertRun(store: Store, run: Run): void {
       run.probe_state ?? null,
       run.provider ?? null,
       run.upstream_host ?? null,
+      run.parent_run_id ?? null,
+      run.parent_run_step_id ?? null,
     );
+}
+
+/**
+ * v8 — children of a delegating run, carve order (started_at, run_id).
+ * The default run listing excludes children (parent_run_id IS NULL —
+ * the M2 getRuns change); this is the expand path under a parent row.
+ */
+export function getChildRuns(store: Store, parentRunId: string): Run[] {
+  const rows = store.db
+    .prepare(
+      "SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at, run_id",
+    )
+    .all(parentRunId) as RunRow[];
+  return rows.map(rowToRun);
+}
+
+/** One run in a lineage tree, with its nesting depth (1 = direct child). */
+export interface DescendantRun {
+  run: Run;
+  depth: number;
+}
+
+/**
+ * v8 — the full lineage tree under a run, DFS order (each run's subtree
+ * immediately follows it), so display surfaces can indent by `depth`
+ * and fleet rollups can sum ALL descendant spend — an agent that
+ * dispatches its own sub-agent (nested delegation) must not silently
+ * drop the grandchild from listings or cost sums. Cycle-safe against
+ * corrupt lineage rows.
+ */
+export function getDescendantRuns(
+  store: Store,
+  rootRunId: string,
+): DescendantRun[] {
+  const out: DescendantRun[] = [];
+  const seen = new Set<string>([rootRunId]);
+  const walk = (id: string, depth: number): void => {
+    for (const child of getChildRuns(store, id)) {
+      if (seen.has(child.run_id)) continue;
+      seen.add(child.run_id);
+      out.push({ run: child, depth });
+      walk(child.run_id, depth + 1);
+    }
+  };
+  walk(rootRunId, 1);
+  return out;
 }
 
 export function updateRunTotals(store: Store, runId: string): void {
@@ -385,11 +439,29 @@ export interface ListRunsOpts {
   agentId?: string;
   status?: StepStatus;
   containsTool?: string;
+  /**
+   * v8 — include carved child runs (delegation lineage). Default FALSE:
+   * listings and counts show top-level runs only (`parent_run_id IS
+   * NULL`), with children rendered nested under their parent via
+   * {@link getChildRuns}. Aggregation, exports, live bookkeeping,
+   * sentinel attribution, and batch operations set this to true —
+   * children hold real, exclusive spend and activity (design doc
+   * aggregation policy, eng review T3/2A). NOTE: with the default,
+   * status/containsTool filters apply to TOP-LEVEL runs only — a match
+   * that exists only on a carved child will not surface its parent;
+   * pass includeChildren for flat filtered sets.
+   */
+  includeChildren?: boolean;
 }
 
 export function listRuns(store: Store, opts: ListRunsOpts = {}): Run[] {
   const params: unknown[] = [];
   let where = "1=1";
+  if (!opts.includeChildren) {
+    // Lineage-free rows have NULL parent_run_id, so pre-v8 databases
+    // (and non-fleet runs) list byte-identically to the old behavior.
+    where += " AND parent_run_id IS NULL";
+  }
   if (opts.projectId) {
     where += " AND project_id = ?";
     params.push(opts.projectId);

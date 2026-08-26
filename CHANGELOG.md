@@ -3,6 +3,68 @@
 Notable changes to Meterbility. Versions are lockstep across the
 `@meterbility/*` npm packages and `meterbility-agent` on PyPI.
 
+## [0.6.4] - 2026-08-24
+
+### Added
+
+- **GitHub Copilot CLI adapter** (`@meterbility/github-copilot-adapter`).
+  `meter ingest github-copilot` parses Copilot CLI sessions
+  (`~/.copilot/session-state/*/events.jsonl`, legacy root probed too) into
+  runs and steps, with tool calls, per-turn token usage priced under the
+  v0.6 cost-honesty rules (`provider: "github"`, `cost:unpriced` for
+  opaque models, premium requests recorded), file-change rows derived
+  from mutating tool inputs (secrets redacted, honest `redacted` flag),
+  context-compaction markers, and a day-one shape probe that warns on
+  format drift instead of crashing. `meter live` and the web ingest
+  endpoint pick Copilot sessions up automatically.
+- **Multi-agent fleet carving (schema v8).** A Copilot session that
+  dispatches sub-agents (squad-style) is carved into a parent run plus
+  one child run per agent — each with its own steps, tokens, and
+  exclusive cost, correlated strictly by recorded event ancestry (never
+  inferred). Agent names and roles parse from spawn prompts
+  ("You are {Name}, the {Role}…") into run titles and tags. The whole
+  carve commits in one transaction and re-carving a grown, shrunk, or
+  rewritten session file converges to byte-identical state — steps that
+  re-route between runs are reconciled, never double-counted.
+- **Fleet views.** `meter list` and the web run list nest agent runs
+  under their parent (nested delegation renders too) with a
+  display-time fleet cost rollup; run detail shows "Agent of" lineage
+  and the agents list; the live fleet and event stream cover each agent
+  run individually. `GET /api/runs` gains `?children=1` for the flat set.
+- **Forward-compat guard.** Opening a database written by a newer
+  Meterbility build now fails with a clear upgrade message — before any
+  DDL runs, on both SQLite and Postgres — instead of silently misreading
+  newer semantics.
+
+### Changed
+
+- **Run listings default to top-level runs.** `listRuns` and
+  `GET /api/runs` exclude carved child runs by default (they render
+  nested under their parent); aggregation, exports, live bookkeeping,
+  and batch operations still include them. Pass `includeChildren`
+  (library) or `?children=1` (API) for the old flat behavior.
+- `diffLines` moved to `@meterbility/shared` (re-exported from the
+  claude-code adapter for compatibility); diff inputs from untrusted
+  session files are size-capped.
+- Copilot run status inference is session-level with a staleness
+  window: sessions that die mid-turn resolve to `abandoned` instead of
+  sitting `in_progress` forever, and a live squad's streaming agents
+  are never mislabeled abandoned.
+
+### Fixed
+
+- The v8 migration rebuilds the annotations table on databases created
+  at v5–v7, whose baked-in CHECK constraint would otherwise reject
+  compaction markers and abort Copilot ingest.
+- A corrupted or adversarial `events.jsonl` line with a cyclic
+  `parentId` can no longer hang the live poll; cyclic chains route to
+  the parent tagged `copilot:unrouted`.
+- Postgres: the lineage index no longer breaks `ensurePostgresSchema`
+  on upgraded databases, and syncing a squad session no longer violates
+  a foreign key on fresh databases.
+- Per-agent tool-call-id collisions no longer attribute one agent's
+  tool result to another agent's run.
+
 ## [0.6.3] - 2026-08-24
 
 ### Fixed

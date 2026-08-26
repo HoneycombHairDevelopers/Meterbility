@@ -271,8 +271,9 @@ Cross-adapter duplication has grown past the original capture-path pair:
   collector capture path).
 - `parseMaybeJson` — duplicated in cursor/file_changes.ts and
   cursor/ingest.ts.
-- `diffLines` — cursor imports it from `@meterbility/claude-code-adapter`,
-  a cross-adapter dependency that belongs in shared.
+- ~~`diffLines`~~ — DONE v0.6.4: moved to `@meterbility/shared`
+  (claude-code re-exports for compat; cursor + github-copilot import
+  from shared).
 - The synthetic-step scaffold (blob snapshot + decision ref +
   nextSequenceInBand + insertStep + tags) is triplicated across cursor
   hooks.ts / admin_api.ts / extras.ts.
@@ -285,6 +286,35 @@ scaffold (hook_capture.test.ts / file_sentinel.test.ts); dedup predicate
 shared `walkTree` and a capture-test-utils module.
 
 ## Adapters (GitHub Copilot + fleet lineage — design doc docs/designs/copilot-squad-adapter.md, eng-reviewed 2026-08-19)
+
+### Copilot live-poll re-carve cost (deferred from M2 review)
+**Priority:** P2
+The copilot adapter re-reads and re-carves the whole events.jsonl on
+every growth tick, and `snapshotFor` re-hashes the cumulative history
+per step — O(N²) serialization per carve, every 1500ms while a session
+streams. Fine at demo scale; a multi-hour squad session will lag the
+poll. Fix direction: cache parsed carve state per path keyed on
+(size, mtime) and process only appended events, memoize the serialized
+history prefix (snapshot ids must stay byte-identical), and skip blob
+putJson for snapshot/decision ids already recorded. The review also
+accepted (not fixed) the /runs page's per-parent getChildRuns loop —
+indexed in-process lookups, batch it if the runs page ever feels slow.
+
+### Postgres annotations parity
+**Priority:** P3
+The pg mirror's annotations table has no `kind` column (sqlite v5) and
+therefore no 'context_compaction' (sqlite v8); annotations aren't
+synced today so nothing breaks, but the drift is two schema
+generations deep. Add the column + migration when annotation sync
+lands, or document the asymmetry in store-postgres.
+
+### Tool-result redaction across adapters
+**Priority:** P3
+All adapters (claude-code, codex, cursor, github-copilot) run
+redactString over tool INPUTS but blob-store tool RESULT payloads
+verbatim — results are where secrets most often surface (.env reads,
+printenv). Apply the redaction pipeline to tool_result_ref across
+adapters in one pass so the convention stays uniform.
 
 ### Claude Code Task-subagent carving retrofit
 **Priority:** P2

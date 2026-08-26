@@ -29,6 +29,7 @@ export interface TracerOptions {
     | "claude-code"
     | "codex-cli"
     | "cursor"
+    | "github-copilot"
     | "fork";
   /** Source session id (e.g. the host runtime's session uuid). */
   sourceSessionId?: string;

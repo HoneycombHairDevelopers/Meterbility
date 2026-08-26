@@ -2,7 +2,7 @@
 
 > **The debugger for AI agents.** Capture every run, inspect every decision, pause and inject live, fork from any step, diff the trajectories.
 
-Meterbility turns AI agent runs into a queryable, replayable, forkable corpus and surfaces them through a terminal inspector, a local web UI, and a Live Probe operator surface. It works against Claude Code, Codex CLI, Cursor, the Anthropic and OpenAI proxies, and any custom agent that uses the TypeScript or Python SDK.
+Meterbility turns AI agent runs into a queryable, replayable, forkable corpus and surfaces them through a terminal inspector, a local web UI, and a Live Probe operator surface. It works against Claude Code, Codex CLI, Cursor, GitHub Copilot CLI, the Anthropic and OpenAI proxies, and any custom agent that uses the TypeScript or Python SDK.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![License: ELv2](https://img.shields.io/badge/EE_License-ELv2-orange.svg)](ee/LICENSE) [![Node](https://img.shields.io/badge/Node-24%2B-339933.svg)](.nvmrc) [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](packages/agent-py/pyproject.toml)
 
@@ -10,9 +10,16 @@ Meterbility turns AI agent runs into a queryable, replayable, forkable corpus an
 
 ## Status
 
-**v0.6.3.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
+**v0.6.4 — GitHub Copilot + multi-agent fleets.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
-Latest milestones (v0.6.2 — the live front door):
+Latest milestones (v0.6.4):
+
+- **GitHub Copilot CLI adapter** — `meter ingest github-copilot` parses Copilot CLI sessions (`~/.copilot/session-state/*/events.jsonl`) into runs and steps: tool calls, per-turn token usage priced under the cost-honesty rules (`cost:unpriced` for opaque models, premium requests recorded), file changes derived from mutating tool inputs with secret redaction, context-compaction markers, and a shape probe that warns on format drift instead of crashing. `meter live` and the web ingest endpoint pick Copilot sessions up automatically.
+- **Multi-agent fleet carving (schema v8)** — a Copilot session that dispatches sub-agents (squad-style) is carved into a parent run plus one child run per agent, each with its own steps, tokens, and exclusive cost, correlated strictly by recorded event ancestry. Re-carving a grown or rewritten session file converges to byte-identical state.
+- **Fleet views** — `meter list` and the web run list nest agent runs under their parent with a fleet cost rollup; run detail shows "Agent of" lineage and the agents list; the live fleet covers each agent run individually. `listRuns` and `GET /api/runs` now default to top-level runs — pass `includeChildren` (library) or `?children=1` (API) for the flat set.
+- **Forward-compat guard** — opening a database written by a newer Meterbility build fails with a clear upgrade message instead of silently misreading newer semantics, on both SQLite and Postgres.
+
+Earlier milestones (v0.6.2 — the live front door):
 
 - **`meter live` — the front door** — one command starts session ingest and file side-effect capture together: a self-explaining header, an honest `SYNCING → SYNCED` backfill state, a live `step 42 · Edit src/foo.ts · +12 −3` stream, and a capture-health line that reports watcher degradation instead of silently missing changes.
 - **Step-range file summary** — `meter files <run> --from X [--to Y]` without `--diff`: a git-status-style view of everything a step window changed, re-runnable against a live session; synthetic bands (hook/admin/checkpoint) are mapped in by wall clock, `--main-band-only` opts out.
@@ -108,7 +115,7 @@ Instrumenting your own agent? Add the SDK to your project instead: `npm install 
 Everything in Meterbility hangs off two commands. Pick by where your agent runs:
 
 - **`meter run -- <cmd>`** — *launch and capture.* Wraps any script or agent with the capture proxy auto-wired (Anthropic, OpenAI, or any OpenAI-compatible upstream via `--upstream nvidia=…`). API traffic becomes runs with first-class provider identity. Zero code change.
-- **`meter live`** — *watch and capture.* For sessions Meterbility observes from the outside (Claude Code, Codex CLI — Cursor persists to SQLite, so it joins via `meter ingest cursor` or `meter init --cursor-hooks` instead): one command starts session ingest **and** file side-effect capture together, streams `step 42 · Edit src/foo.ts · +12 −3` lines as they happen, and prints a capture-health line that tells you honestly when the filesystem watcher is degraded. Run it in your repo before (or during — it attaches) an agent session.
+- **`meter live`** — *watch and capture.* For sessions Meterbility observes from the outside (Claude Code, Codex CLI, GitHub Copilot CLI — Cursor persists to SQLite, so it joins via `meter ingest cursor` or `meter init --cursor-hooks` instead): one command starts session ingest **and** file side-effect capture together, streams `step 42 · Edit src/foo.ts · +12 −3` lines as they happen, and prints a capture-health line that tells you honestly when the filesystem watcher is degraded. Run it in your repo before (or during — it attaches) an agent session.
 
 Then interrogate what happened:
 
@@ -156,6 +163,8 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Cursor deep-diff file capture (`edit_file_v2` before/after + accept/reject fates, checkpoint fallback) | ✅ v0.5.1 |
 | Cursor real-time hooks (`meter init --cursor-hooks` → `meter cursor-hook`) | ✅ v0.5.1 |
 | Cursor billed cost via Admin API (`meter cursor-usage`, `cost:actual` tags) | ✅ v0.5.1 |
+| GitHub Copilot CLI capture (`meter ingest github-copilot`, live tail-poll, web ingest) | ✅ v0.6.4 |
+| Multi-agent fleet carving (squad sessions → parent + per-agent child runs, schema v8) | ✅ v0.6.4 |
 | Anthropic + OpenAI proxy capture (`meter proxy`) | ✅ v0.2 |
 | Multi-upstream proxy capture (`--upstream <name>[:<dialect>]=<url>` — any OpenAI/Anthropic-dialect host behind a `/<name>/` prefix, concurrent on one port, first-class `provider` on runs/steps; verified: NVIDIA `integrate.api.nvidia.com`) | ✅ v0.6 |
 | Proxy edge metadata (`x-meterbility-cwd` / `x-meterbility-git-branch` headers) | ✅ v0.5.1 |
@@ -171,13 +180,15 @@ This is the same script CI runs — clones into a tempdir, installs, runs the fu
 | Live Probe in SDK (pause / inject / resume) | ✅ v0.3 |
 | **Inspector** | |
 | `meter list` / `inspect` / `fork` / `diff` / `annotate` / `export` / `web` / `doctor` | ✅ v0 |
-| Live fleet view (`meter web --live`, `meter watch`) — Claude Code + Codex CLI sessions | ✅ v0.1 / v0.5.1 |
+| Live fleet view (`meter web --live`, `meter watch`) — Claude Code + Codex CLI + GitHub Copilot CLI sessions | ✅ v0.1 / v0.5.1 / v0.6.4 |
+| Nested fleet display (`meter list` + web run list nest agent runs under their parent, fleet cost rollup, `?children=1` for the flat set) | ✅ v0.6.4 |
 | Notifications (loop / threshold / stall / tool-watch) | ✅ v0.1 |
 | Files tab (per-step + per-run summary) | ✅ v0.3 |
 | Live Probe operator surface (`meter probe`, web panel) | ✅ v0.3 |
 | **Storage** | |
 | Local SQLite + content-addressed filesystem blobs | ✅ v0 |
 | Postgres backend (single-operator multi-machine sync) | ✅ v0.1 |
+| Forward-compat schema guard (newer-DB detection before any DDL, SQLite + Postgres) | ✅ v0.6.4 |
 | Trace format v0.2 (export/import) | ✅ v0.1 |
 | **Workflows** | |
 | Fork + replay (deterministic prefix, Anthropic live suffix) | ✅ v0 |
@@ -228,6 +239,7 @@ adapters/
   claude-code/        # Claude Code JSONL + file-history-snapshot adapter
   codex-cli/          # Codex / Codex Desktop rollout JSONL adapter
   cursor/             # Cursor composer/Agents reverse-engineered SQLite adapter
+  github-copilot/     # GitHub Copilot CLI events.jsonl adapter + squad fleet carving
 
 ee/                   # Enterprise Edition modules (ELv2 — empty today)
 

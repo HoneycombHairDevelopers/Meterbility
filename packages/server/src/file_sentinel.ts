@@ -691,7 +691,7 @@ export class FileSentinel extends EventEmitter {
   private attribute():
     | { run: Run; step: Step; gapMs: number }
     | { reason: "no-active-run" | "no-recent-step" } {
-    const runs = listRuns(this.store, { limit: 100 }).filter(
+    const runs = listRuns(this.store, { limit: 100, includeChildren: true }).filter(
       (r) => r.status === "in_progress" && this.cwdOverlaps(r.cwd),
     );
     if (runs.length === 0) return { reason: "no-active-run" };

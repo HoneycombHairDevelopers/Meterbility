@@ -25,10 +25,39 @@ import type Database from "better-sqlite3";
  *             identity + host provenance)
  *   v6 → v7 — steps.ttft_ms + steps.ttft_visible_ms (streamed-capture
  *             time-to-first-token; the gap is reasoning burn)
+ *   v7 → v8 — runs.parent_run_id + runs.parent_run_step_id (delegation
+ *             lineage: each agent in a multi-agent session becomes a
+ *             child run; github-copilot adapter is the first producer),
+ *             annotations.kind gains 'context_compaction'
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export function ensureSchema(db: Database.Database): void {
+  // v8 — forward-compat guard, checked BEFORE any DDL runs: refuse to
+  // open a database written by a NEWER build. Migrations are one-way
+  // additive; an older reader would silently misread semantics it
+  // doesn't know (e.g. delegation lineage: children would leak into
+  // default listings as top-level runs) — and must not get to mutate
+  // the newer database with its own stale DDL first. An unparseable
+  // version fails closed (treated as newer). Builds older than v8
+  // predate this guard — from here forward the failure is clean.
+  const hasMeta = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'")
+    .get();
+  if (hasMeta) {
+    const ver = db
+      .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
+      .get() as { value: string } | undefined;
+    if (ver) {
+      const n = Number(ver.value);
+      if (!Number.isFinite(n) || n > SCHEMA_VERSION) {
+        throw new Error(
+          `database schema v${ver.value} is newer than this build (v${SCHEMA_VERSION}); upgrade meterbility to open it`,
+        );
+      }
+    }
+  }
+
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
@@ -75,7 +104,9 @@ export function ensureSchema(db: Database.Database): void {
       step_count INTEGER NOT NULL DEFAULT 0,
       tags TEXT NOT NULL DEFAULT '[]',
       provider TEXT,
-      upstream_host TEXT
+      upstream_host TEXT,
+      parent_run_id TEXT REFERENCES runs(run_id),
+      parent_run_step_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_runs_project_started
@@ -84,6 +115,10 @@ export function ensureSchema(db: Database.Database): void {
       ON runs(source_session_id);
     CREATE INDEX IF NOT EXISTS idx_runs_fork_origin
       ON runs(fork_origin_run_id);
+    -- idx_runs_parent is created AFTER ensureColumn below so legacy
+    -- (pre-v8) DBs don't trip on an index over a column that doesn't
+    -- exist yet at executescript time — same pattern as
+    -- idx_annotations_kind.
 
     CREATE TABLE IF NOT EXISTS steps (
       step_id TEXT PRIMARY KEY,
@@ -148,7 +183,8 @@ export function ensureSchema(db: Database.Database): void {
       verdict TEXT,
       note TEXT,
       kind TEXT NOT NULL DEFAULT 'comment'
-        CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped')),
+        CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped',
+                        'context_compaction')),
       created_at TEXT NOT NULL
     );
 
@@ -387,6 +423,73 @@ export function ensureSchema(db: Database.Database): void {
   // ttft_visible_ms - ttft_ms = the invisible reasoning burn.
   ensureColumn(db, "steps", "ttft_ms", "INTEGER");
   ensureColumn(db, "steps", "ttft_visible_ms", "INTEGER");
+
+  // v8 — delegation lineage (copilot-squad-adapter design). Nullable:
+  // only carved child runs of multi-agent sessions set them. Plain TEXT
+  // via ALTER (no REFERENCES clause) matching the house pattern for
+  // migrated columns — fresh DBs get the FK from CREATE TABLE above;
+  // the app layer only ever writes ids it just inserted in the same
+  // carve transaction. `parent_run_step_id` is a soft reference by
+  // design (see the Run type docstring). NOTE the CHECK nuance from v5
+  // applies to 'context_compaction' too: legacy-migrated DBs enforce
+  // the annotation kind enum at the API layer only.
+  ensureColumn(db, "runs", "parent_run_id", "TEXT");
+  ensureColumn(db, "runs", "parent_run_step_id", "TEXT");
+  // Index AFTER ensureColumn — see the note in the CREATE TABLE block.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)",
+  );
+
+  // v8 — annotations kind-CHECK widening. SQLite bakes CHECK
+  // constraints at CREATE time and never updates them via CREATE TABLE
+  // IF NOT EXISTS, so every database created fresh at v5–v7 carries the
+  // old 4-value CHECK and would reject 'context_compaction' with
+  // SQLITE_CONSTRAINT_CHECK — aborting the copilot carve transaction on
+  // exactly the installs that upgraded (review finding, all four review
+  // passes). Detect that cohort by the stored CREATE SQL and do the
+  // standard rename→create→copy→drop rebuild. Legacy-migrated DBs
+  // (kind via ALTER, no CHECK at all) and fresh v8 DBs skip this.
+  const annotationsSql = (
+    db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='annotations'",
+      )
+      .get() as { sql: string } | undefined
+  )?.sql;
+  if (
+    annotationsSql &&
+    annotationsSql.includes("'capture_skipped'") &&
+    !annotationsSql.includes("'context_compaction'")
+  ) {
+    const rebuild = db.transaction(() => {
+      db.exec(`
+        ALTER TABLE annotations RENAME TO annotations_v7;
+        CREATE TABLE annotations (
+          annotation_id TEXT PRIMARY KEY,
+          target_kind TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          author TEXT NOT NULL,
+          verdict TEXT,
+          note TEXT,
+          kind TEXT NOT NULL DEFAULT 'comment'
+            CHECK (kind IN ('comment', 'probe_pause', 'probe_edit', 'capture_skipped',
+                            'context_compaction')),
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO annotations(annotation_id, target_kind, target_id, author,
+                                verdict, note, kind, created_at)
+          SELECT annotation_id, target_kind, target_id, author,
+                 verdict, note, kind, created_at
+          FROM annotations_v7;
+        DROP TABLE annotations_v7;
+        CREATE INDEX IF NOT EXISTS idx_annotations_target
+          ON annotations(target_kind, target_id);
+        CREATE INDEX IF NOT EXISTS idx_annotations_kind
+          ON annotations(kind);
+      `);
+    });
+    rebuild();
+  }
 
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }

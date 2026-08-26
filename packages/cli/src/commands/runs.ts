@@ -128,7 +128,9 @@ function bulkTargets(
   store: import("@meterbility/collector").Store,
   opts: { olderThan?: number; source?: string },
 ): Array<import("@meterbility/shared").Run> {
-  const all = listRuns(store, { limit: 1000 });
+  // Batch seal is an operation over ALL runs — carved agent runs can go
+  // stale too (aggregation policy: children out of listings, in for ops).
+  const all = listRuns(store, { limit: 1000, includeChildren: true });
   const cutoffMs = opts.olderThan
     ? Date.now() - opts.olderThan * 60_000
     : undefined;

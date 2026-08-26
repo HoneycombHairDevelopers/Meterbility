@@ -203,6 +203,43 @@ test("forkRun: rejects unknown origin run with a clear error", async () => {
   }
 });
 
+test("forkRun: rejects carved child runs (v8 delegation lineage) but not their parent", async () => {
+  const { store } = await seedOriginRun();
+  try {
+    const parent = seedShellRun(store);
+    const child = seedShellRun(store);
+    // Hand-wire the lineage the copilot adapter's carve writes.
+    store.db
+      .prepare(
+        "UPDATE runs SET parent_run_id = ?, parent_run_step_id = ? WHERE run_id = ?",
+      )
+      .run(parent.runId, parent.stepId, child.runId);
+    await assert.rejects(
+      () =>
+        forkRun(store, {
+          origin_run_id: child.runId,
+          at: 0,
+          edit: { type: "inject_message", payload: { text: "x" } },
+        }),
+      /carved child .* cannot be forked; fork the parent run instead/i,
+    );
+    // The parent (no parent_run_id) passes the guard — it fails later
+    // only if at-resolution fails, so resolve a real step to prove the
+    // guard itself did not fire. seedShellRun's step 0 exists.
+    await assert.rejects(
+      () =>
+        forkRun(store, {
+          origin_run_id: parent.runId,
+          at: 99,
+          edit: { type: "inject_message", payload: { text: "x" } },
+        }),
+      /fork target step not found/i,
+    );
+  } finally {
+    store.close();
+  }
+});
+
 test("forkRun: rejects unknown sequence number with a clear error", async () => {
   const { store, runId } = await seedOriginRun();
   try {
