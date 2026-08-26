@@ -49,16 +49,29 @@ jobs:
       # NPM_TOKEN secret. Each @meterbility/* package has this repo +
       # workflow (publish.yml) registered as its trusted publisher on
       # npmjs.com; a missing/mistyped registration 404s that one package.
+      # NOTE: OIDC cannot CREATE a package — a brand-new package's first
+      # publish must be done once with user auth (npm publish from a
+      # logged-in machine), then this workflow owns it from the next
+      # release (learned the hard way on v0.6.4, github-copilot-adapter).
       #
-      # Same topological order as the root build script. npm skips nothing
-      # silently here: a version that already exists on the registry fails
-      # the job, which is the safe default for a release gate.
+      # Same topological order as the root build script. The loop is
+      # RESUMABLE: a version already on the registry is skipped, not
+      # failed, so a run that dies mid-loop (outage, first-publish 404)
+      # can be re-dispatched and finishes the remainder. Anything else
+      # still fails the job.
       - name: Publish
         run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
           for w in packages/shared packages/spec packages/collector \
                    packages/store-postgres adapters/claude-code \
                    adapters/codex-cli adapters/cursor \
                    adapters/github-copilot packages/agent \
                    packages/proxy packages/server packages/cli; do
+            name=$(node -p "require('./$w/package.json').name")
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "skip: $name@$VERSION already on the registry"
+              continue
+            fi
             npm publish -w "$w" --provenance --access public
           done
