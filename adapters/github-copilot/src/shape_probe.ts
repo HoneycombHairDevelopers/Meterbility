@@ -43,6 +43,13 @@ export const KNOWN_EVENT_TYPES = new Set([
   "tool.user_requested",
   "subagent.started",
   "subagent.completed",
+  // Observed in real Copilot CLI ≥1.0.80 sessions (2026-08-26):
+  "session.auto_mode_resolved",
+  "session.usage_checkpoint",
+  "session.shutdown",
+  "system.message",
+  "system.notification",
+  "subagent.selected",
 ]);
 
 /** Envelope keys every event should carry per the observed format. */

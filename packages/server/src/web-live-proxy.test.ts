@@ -27,12 +27,18 @@ test("web live: an out-of-band proxy run reaches the SSE stream with provider id
   const home = mkdtempSync(join(tmpdir(), "meter-web-live-"));
   const emptyProjects = mkdtempSync(join(tmpdir(), "meter-web-live-projects-"));
   const emptyCodex = mkdtempSync(join(tmpdir(), "meter-web-live-codex-"));
+  const emptyCopilot = mkdtempSync(join(tmpdir(), "meter-web-live-copilot-"));
   const emptyClaude = mkdtempSync(join(tmpdir(), "meter-web-live-claude-"));
   const prevHome = process.env.METERBILITY_HOME;
   const prevCodex = process.env.CODEX_HOME;
+  const prevCopilot = process.env.COPILOT_HOME;
   const prevClaude = process.env.CLAUDE_HOME;
   process.env.METERBILITY_HOME = home;
   process.env.CODEX_HOME = emptyCodex;
+  // Copilot live-poll isolation (v8 adapter): without this, real
+  // ~/.copilot sessions on the dev machine get ingested every tick
+  // and starve the assertions (machine-state-dependent failure).
+  process.env.COPILOT_HOME = emptyCopilot;
   // NOTE: LiveOptions.projectsRoot is currently ignored by the tick's
   // bare discoverSessions() call (latent dead option, flagged in
   // TODOS) — CLAUDE_HOME env is the isolation that actually works.
@@ -155,6 +161,8 @@ test("web live: an out-of-band proxy run reaches the SSE stream with provider id
     store.close();
     process.env.METERBILITY_HOME = prevHome;
     process.env.CODEX_HOME = prevCodex;
+    if (prevCopilot === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = prevCopilot;
     process.env.CLAUDE_HOME = prevClaude;
   }
 });
