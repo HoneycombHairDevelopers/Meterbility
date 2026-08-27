@@ -16,7 +16,8 @@ Notable changes to Meterbility. Versions are lockstep across the
   Tree-shaped legacy files keep the existing ancestry routing.
 - **Real usage lands where the CLI actually puts it.** Per-message
   `outputTokens` price each assistant step as an honest floor
-  (`cost:approx` + `tokens:output-only`); `session.shutdown.tokenDetails`
+  (`cost:approx` + `tokens:output-only`; opaque models stay
+  `cost:unpriced`); `session.shutdown.tokenDetails`
   becomes a parent session-totals step (output excluded to avoid double
   counting); `subagent.completed.totalTokens` is recorded as a per-agent
   tag so it never double-counts; premium requests become a run tag.
