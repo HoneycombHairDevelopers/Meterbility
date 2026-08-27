@@ -10,15 +10,15 @@ Meterbility turns AI agent runs into a queryable, replayable, forkable corpus an
 
 ## Status
 
-**v0.6.6 — GitHub Copilot + multi-agent fleets, hardened release publishing.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
+**v0.6.5 — GitHub Copilot + multi-agent fleets.** Working end-to-end. On npm as [`@meterbility/cli`](https://www.npmjs.com/package/@meterbility/cli).
 
-Latest milestones (v0.6.4–v0.6.6):
+Latest milestones (v0.6.4–v0.6.5):
 
 - **GitHub Copilot CLI adapter** — `meter ingest github-copilot` parses Copilot CLI sessions (`~/.copilot/session-state/*/events.jsonl`) into runs and steps: tool calls, per-turn token usage priced under the cost-honesty rules (`cost:unpriced` for opaque models, premium requests recorded), file changes derived from mutating tool inputs with secret redaction, context-compaction markers, and a shape probe that warns on format drift instead of crashing. `meter live` and the web ingest endpoint pick Copilot sessions up automatically.
 - **Multi-agent fleet carving (schema v8)** — a Copilot session that dispatches sub-agents (squad-style) is carved into a parent run plus one child run per agent, each with its own steps, tokens, and exclusive cost, correlated strictly by recorded events. Re-carving a grown or rewritten session file converges to byte-identical state.
 - **Real-shape Copilot routing (v0.6.5)** — validated against live Copilot CLI 1.0.80 sessions: per-agent streams route by `interactionId`, agent identity parses from the task dispatch prompt, usage is priced from where the CLI actually records it, and agents cut off by a session shutdown resolve to `abandoned` immediately.
 - **Fleet views** — `meter list` and the web run list nest agent runs under their parent with a fleet cost rollup; run detail shows "Agent of" lineage and the agents list; the live fleet covers each agent run individually. `listRuns` and `GET /api/runs` now default to top-level runs — pass `includeChildren` (library) or `?children=1` (API) for the flat set.
-- **Resumable release publishing (v0.6.6)** — the npm and PyPI publish workflows skip versions already on the registry, complete partial PyPI uploads, refuse to run on version drift, and queue concurrent runs, so a release that dies halfway is re-dispatched, not hand-repaired. See [docs/publishing.md](docs/publishing.md).
+- **Resumable release publishing (unreleased)** — the npm and PyPI publish workflows skip versions already on the registry, complete partial PyPI uploads, refuse to run on version drift, and queue concurrent runs, so a release that dies halfway is re-dispatched, not hand-repaired. See [docs/publishing.md](docs/publishing.md).
 - **Forward-compat guard** — opening a database written by a newer Meterbility build fails with a clear upgrade message instead of silently misreading newer semantics, on both SQLite and Postgres.
 
 Earlier milestones (v0.6.2 — the live front door):

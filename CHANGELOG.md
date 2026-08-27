@@ -3,32 +3,6 @@
 Notable changes to Meterbility. Versions are lockstep across the
 `@meterbility/*` npm packages and `meterbility-agent` on PyPI.
 
-## [0.6.6] - 2026-08-27
-
-### Fixed
-
-- **A release that dies halfway can now be re-dispatched safely on both
-  registries.** The npm publish loop's skip guard no longer trusts
-  `npm view`'s exit code alone (older npm majors exited 0 with empty
-  output for a missing version, which would have silently skipped every
-  package): it now reads the full truth table — non-empty output skips,
-  a definitive E404 publishes, and anything else (outage, auth, DNS)
-  fails the run loudly instead of guessing. PyPI publishing gains the
-  matching guard: an already-published version is skipped instead of
-  failing the redispatch, a partial upload (sdist without wheel, or vice
-  versa) is detected from PyPI's file inventory and completed via
-  `skip-existing`, and an ambiguous registry answer fails the job.
-- Publish runs refuse to proceed when a workspace package's version has
-  drifted from the root version, or when the root version is malformed —
-  both previously produced green runs that silently published nothing.
-
-### Changed
-
-- Publish workflows queue behind each other (`concurrency` groups) so a
-  release trigger and a manual re-dispatch can never interleave
-  mid-publish. OIDC trusted-publishing auth is unchanged on both
-  registries.
-
 ## [0.6.5] - 2026-08-27
 
 ### Changed
