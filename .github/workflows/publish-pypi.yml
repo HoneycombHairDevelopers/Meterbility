@@ -1,7 +1,9 @@
 name: Publish to PyPI
 
 # Publishes packages/agent-py (the meterbility-agent distribution) when a GitHub
-# release is published, or manually via workflow_dispatch.
+# release is published, or manually via workflow_dispatch. RESUMABLE: a
+# version already on PyPI is skipped, not failed, so a redispatch after a
+# partial release run (e.g. PyPI published, npm failed) goes green.
 #
 # Auth is PyPI *trusted publishing* (OIDC) — no token secret. One-time setup
 # on pypi.org: Account → Publishing → "Add a new pending publisher" with
@@ -15,6 +17,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+
+# Queue concurrent runs (release trigger + human redispatch), never cancel —
+# a cancelled publish is exactly the partial state the guard resumes from.
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -35,13 +43,68 @@ jobs:
         working-directory: packages/agent-py
         run: python3 -m unittest discover -s tests
 
+      # Existing-version guard, mirroring the npm loop's resumability in
+      # publish.yml: if a release run partially succeeds (PyPI publishes,
+      # npm fails), a redispatch would otherwise die on PyPI's "version
+      # already exists". A 200 from the version's JSON endpoint means it's
+      # published → skip build+publish gracefully; a 404 means it isn't →
+      # proceed. Anything else (outage, rate limit) fails the job rather
+      # than guessing — publishing on a false "missing" would fail anyway,
+      # and skipping on a false "exists" would silently publish nothing.
+      #
+      # PyPI uploads are FILE-level, so "version exists" can mean "one of
+      # two files exists" (sdist landed, wheel upload died). The 200 branch
+      # therefore checks the file inventory: skip only when BOTH sdist and
+      # wheel are present; on a partial set, proceed — the Publish step's
+      # skip-existing tolerates the files already there and uploads the
+      # missing one (PyPI accepts new files on an existing version; only
+      # duplicate filenames are rejected). Residual risk, accepted: a
+      # complete out-of-band upload of this version is skipped as if ours —
+      # that gate is PyPI trusted publishing itself, not this check.
+      - name: Check PyPI for existing version
+        id: guard
+        working-directory: packages/agent-py
+        run: |
+          set -euo pipefail
+          NAME=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['name'])")
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          code=$(curl -sL --max-time 30 --retry 3 -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$NAME/$VERSION/json")
+          case "$code" in
+            200)
+              types=$(curl -fsSL --max-time 30 --retry 3 "https://pypi.org/pypi/$NAME/$VERSION/json" \
+                | python3 -c "import json,sys; print('\n'.join(f['packagetype'] for f in json.load(sys.stdin)['urls']))")
+              if echo "$types" | grep -qx "sdist" && echo "$types" | grep -qx "bdist_wheel"; then
+                echo "skip: $NAME $VERSION already on PyPI (sdist + wheel present)"
+                echo "exists=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "partial upload for $NAME $VERSION (present: ${types:-none}) — rebuilding to complete it"
+                echo "exists=false" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            404)
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "unexpected HTTP $code from PyPI version check for $NAME $VERSION" >&2
+              exit 1
+              ;;
+          esac
+
+      # Gates compare == 'false' (not != 'true') so an errored or skipped
+      # guard fails CLOSED — no output means no publish, never a publish.
       - name: Build sdist + wheel
+        if: steps.guard.outputs.exists == 'false'
         working-directory: packages/agent-py
         run: |
           python3 -m pip install --upgrade build
           python3 -m build
 
+      # skip-existing: on a partial-upload resume the file already on PyPI
+      # is tolerated and only the missing one is uploaded; on a fresh
+      # publish it is a no-op.
       - name: Publish
+        if: steps.guard.outputs.exists == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: packages/agent-py/dist
+          skip-existing: true

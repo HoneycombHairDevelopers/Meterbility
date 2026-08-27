@@ -11,6 +11,13 @@ on:
     types: [published]
   workflow_dispatch:
 
+# A release-trigger run and a human redispatch can otherwise interleave
+# mid-loop (both see "missing", both publish). Queue, never cancel — a
+# cancelled publish run is exactly the partial state the loop resumes from.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -57,21 +64,54 @@ jobs:
       # Same topological order as the root build script. The loop is
       # RESUMABLE: a version already on the registry is skipped, not
       # failed, so a run that dies mid-loop (outage, first-publish 404)
-      # can be re-dispatched and finishes the remainder. Anything else
-      # still fails the job.
+      # can be re-dispatched and finishes the remainder.
+      #
+      # The skip guard judges the FULL npm view truth table, never the
+      # exit code alone (this runs on npm@latest, upgraded above, and
+      # older npm majors exited 0 with empty output for a missing exact
+      # version — an exit-code guard that regressed that way would "skip"
+      # every package and go green having published nothing):
+      #   exit 0 + non-empty stdout  -> version exists      -> skip
+      #   exit 0 + empty stdout      -> missing (old-npm)   -> publish
+      #   non-zero + E404 in output  -> version missing     -> publish
+      #   non-zero, anything else    -> outage/auth/DNS     -> FAIL loudly
+      # The last row keeps a transient registry outage from masquerading
+      # as "missing" and burning a publish attempt (or, on a resume run,
+      # dying on EPUBLISHCONFLICT for an already-published package).
       - name: Publish
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
+          # An empty/garbage VERSION would make the guard query
+          # "$name@" — which resolves the LATEST dist-tag, returns
+          # non-empty, and silently skips every package.
+          case "$VERSION" in
+            [0-9]*.[0-9]*) ;;
+            *) echo "refusing to publish: root package.json version is '$VERSION'" >&2; exit 1 ;;
+          esac
           for w in packages/shared packages/spec packages/collector \
                    packages/store-postgres adapters/claude-code \
                    adapters/codex-cli adapters/cursor \
                    adapters/github-copilot packages/agent \
                    packages/proxy packages/server packages/cli; do
             name=$(node -p "require('./$w/package.json').name")
-            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+            # The guard checks $name@$VERSION (root) but npm publishes the
+            # workspace's own version — drift between them silently skips
+            # a package or dies on EPUBLISHCONFLICT. Refuse to guess.
+            pkgver=$(node -p "require('./$w/package.json').version")
+            if [ "$pkgver" != "$VERSION" ]; then
+              echo "version drift: $name is at $pkgver but the root is $VERSION — fix the bump before publishing" >&2
+              exit 1
+            fi
+            view_rc=0
+            view_out=$(npm view "$name@$VERSION" version 2>&1) || view_rc=$?
+            if [ "$view_rc" -eq 0 ] && [ -n "$view_out" ]; then
               echo "skip: $name@$VERSION already on the registry"
               continue
+            elif [ "$view_rc" -ne 0 ] && ! printf '%s' "$view_out" | grep -q "E404"; then
+              echo "npm view failed for $name@$VERSION with something other than E404 — not guessing:" >&2
+              printf '%s\n' "$view_out" >&2
+              exit 1
             fi
             npm publish -w "$w" --provenance --access public
           done
