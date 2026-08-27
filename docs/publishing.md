@@ -6,10 +6,15 @@ installs the `meter` binary (from `@meterbility/cli`).
 ## One-time setup
 
 1. Create the **meterbility** org on npmjs.com (Add Organization → free/public).
-2. Generate an **automation** token: npmjs.com → Access Tokens → Generate New
-   Token → Automation. Automation tokens bypass 2FA so CI can publish.
-3. Add it to the GitHub repo as the `NPM_TOKEN` secret:
-   `gh secret set NPM_TOKEN --repo HoneycombHairDevelopers/Meterbility`
+2. Auth is npm **trusted publishing** (OIDC) — no `NPM_TOKEN` secret. Register
+   each `@meterbility/*` package's trusted publisher on npmjs.com
+   (Package → Settings → Trusted Publisher): repository
+   `HoneycombHairDevelopers/Meterbility`, workflow `publish.yml`, no
+   environment.
+3. OIDC cannot *create* a package: a brand-new package's first publish must be
+   done once with user auth (`npm publish` from a logged-in machine), then the
+   workflow owns it from the next release — see step 4 under
+   [Adding a new workspace package](#adding-a-new-workspace-package).
 
 ## Publishing a release
 
@@ -17,6 +22,15 @@ The [publish workflow](../.github/workflows/publish.yml) runs automatically
 when a GitHub release is published (or manually from the Actions tab). It
 installs, builds, runs the full test suite, then publishes every package in
 dependency order with npm provenance.
+
+The run is safe to re-dispatch. A package version already on the registry is
+skipped, so a run that dies mid-loop (registry outage, first-publish 404)
+finishes the remainder on the next dispatch from the Actions tab. The loop
+fails loudly instead of guessing: an ambiguous registry answer (outage, auth,
+DNS) stops the run, and it refuses to publish at all if a workspace's version
+has drifted from the root `package.json` version or the root version is
+malformed. Concurrent runs queue rather than cancel, so a release trigger and
+a manual re-dispatch can never interleave mid-publish.
 
 To publish by hand instead:
 
@@ -65,6 +79,14 @@ Account → Publishing → "Add a new pending publisher" with project
 `publish-pypi.yml`, environment `pypi`. Also create a `pypi` environment in
 the GitHub repo settings (Settings → Environments) — it can be empty; it just
 scopes the OIDC claim.
+
+Like the npm loop, the PyPI job is safe to re-dispatch after a partial
+release (say PyPI published but npm failed): a version already fully on PyPI
+(sdist and wheel both present) is skipped instead of failing on "version
+already exists", a partial upload (one file landed, the other didn't) is
+rebuilt and completed via `skip-existing`, and an ambiguous answer from PyPI
+fails the job rather than guessing. Both publish workflows also queue
+concurrent runs instead of cancelling them.
 
 The distribution version lives in `packages/agent-py/pyproject.toml` and
 `src/meterbility_agent/__init__.py` (`__version__`) — bump both in lockstep with

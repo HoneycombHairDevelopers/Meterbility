@@ -254,6 +254,7 @@ docs/
   trace-format.md     # v0.2 wire format spec
   v0-3-followups.md   # known limitations + their resolution paths
   test-plan-v0_4-capture.md  # manual release checklist for the Bash capture paths
+  publishing.md       # npm + PyPI release process (trusted publishing, resumable runs)
 ```
 
 ---
@@ -271,6 +272,7 @@ docs/
 | [Trace format](docs/trace-format.md) | Wire-format spec (export/import) |
 | [Roadmap follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
 | [Capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
+| [Publishing](docs/publishing.md) | Cutting an npm + PyPI release, trusted publishing setup |
 | [CHANGELOG](CHANGELOG.md) | What shipped in each release |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, PR conventions |
 | [SECURITY](SECURITY.md) | Vulnerability disclosure |
