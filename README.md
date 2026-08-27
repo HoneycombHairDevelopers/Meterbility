@@ -18,6 +18,7 @@ Latest milestones (v0.6.4–v0.6.5):
 - **Multi-agent fleet carving (schema v8)** — a Copilot session that dispatches sub-agents (squad-style) is carved into a parent run plus one child run per agent, each with its own steps, tokens, and exclusive cost, correlated strictly by recorded events. Re-carving a grown or rewritten session file converges to byte-identical state.
 - **Real-shape Copilot routing (v0.6.5)** — validated against live Copilot CLI 1.0.80 sessions: per-agent streams route by `interactionId`, agent identity parses from the task dispatch prompt, usage is priced from where the CLI actually records it, and agents cut off by a session shutdown resolve to `abandoned` immediately.
 - **Fleet views** — `meter list` and the web run list nest agent runs under their parent with a fleet cost rollup; run detail shows "Agent of" lineage and the agents list; the live fleet covers each agent run individually. `listRuns` and `GET /api/runs` now default to top-level runs — pass `includeChildren` (library) or `?children=1` (API) for the flat set.
+- **Resumable release publishing (unreleased)** — the npm and PyPI publish workflows skip versions already on the registry, complete partial PyPI uploads, refuse to run on version drift, and queue concurrent runs, so a release that dies halfway is re-dispatched, not hand-repaired. See [docs/publishing.md](docs/publishing.md).
 - **Forward-compat guard** — opening a database written by a newer Meterbility build fails with a clear upgrade message instead of silently misreading newer semantics, on both SQLite and Postgres.
 
 Earlier milestones (v0.6.2 — the live front door):
@@ -254,6 +255,7 @@ docs/
   trace-format.md     # v0.2 wire format spec
   v0-3-followups.md   # known limitations + their resolution paths
   test-plan-v0_4-capture.md  # manual release checklist for the Bash capture paths
+  publishing.md       # npm + PyPI release process (trusted publishing, resumable runs)
 ```
 
 ---
@@ -271,6 +273,7 @@ docs/
 | [Trace format](docs/trace-format.md) | Wire-format spec (export/import) |
 | [Roadmap follow-ups](docs/v0-3-followups.md) | What's deliberately deferred + why |
 | [Capture test plan](docs/test-plan-v0_4-capture.md) | Manual release verification for hook capture + FileSentinel |
+| [Publishing](docs/publishing.md) | Cutting an npm + PyPI release, trusted publishing setup |
 | [CHANGELOG](CHANGELOG.md) | What shipped in each release |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, PR conventions |
 | [SECURITY](SECURITY.md) | Vulnerability disclosure |
