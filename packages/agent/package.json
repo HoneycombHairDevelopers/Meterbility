@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/agent",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -11,9 +11,9 @@
     }
   },
   "dependencies": {
-    "@meterbility/shared": "^0.6.5",
-    "@meterbility/spec": "^0.6.5",
-    "@meterbility/collector": "^0.6.5"
+    "@meterbility/shared": "^0.6.6",
+    "@meterbility/spec": "^0.6.6",
+    "@meterbility/collector": "^0.6.6"
   },
   "description": "TypeScript SDK for tracing custom agents with Meterbility, including Live Probe",
   "repository": {

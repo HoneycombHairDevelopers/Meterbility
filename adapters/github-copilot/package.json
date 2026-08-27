@@ -1,6 +1,6 @@
 {
   "name": "@meterbility/github-copilot-adapter",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -11,9 +11,9 @@
     }
   },
   "dependencies": {
-    "@meterbility/collector": "^0.6.5",
-    "@meterbility/shared": "^0.6.5",
-    "@meterbility/spec": "^0.6.5"
+    "@meterbility/collector": "^0.6.6",
+    "@meterbility/shared": "^0.6.6",
+    "@meterbility/spec": "^0.6.6"
   },
   "description": "GitHub Copilot CLI session capture adapter for Meterbility — parses ~/.copilot/session-state events.jsonl and carves multi-agent (squad) sessions into parent/child runs",
   "repository": {
