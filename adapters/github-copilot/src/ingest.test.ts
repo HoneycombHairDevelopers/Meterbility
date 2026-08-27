@@ -803,6 +803,37 @@ test("REVIEW: re-carve refreshes run metadata (title arrives after first carve)"
   );
 });
 
+test("REAL-SHAPE: session.shutdown abandons uncompleted agents immediately (no staleness wait)", async () => {
+  const store = freshStore();
+  // Observed live (squad session 4): shutdown "routine" landed while a
+  // dispatched agent never got subagent.completed — the agent was cut
+  // off. Recent timestamps keep the staleness window out of the way:
+  // shutdown alone must settle the status.
+  const path = writeSession([
+    ev("session.start", { sessionId: "s-cutoff" }, { id: "z1", timestamp: recentTs(300) }),
+    ev("user.message", { content: "go team" }, { id: "z2", parentId: "z1", timestamp: recentTs(290) }),
+    ev(
+      "subagent.started",
+      { prompt: "You are Omega, the Finisher on this project.", subagentId: "sa-z" },
+      { id: "z3", parentId: "z2", timestamp: recentTs(280) },
+    ),
+    ev("assistant.message", { content: "working…" }, { id: "z4", parentId: "z3", timestamp: recentTs(200) }),
+    ev(
+      "session.shutdown",
+      { shutdownType: "routine", tokenDetails: { input: { tokenCount: 100 } } },
+      { id: "z5", parentId: "z4", timestamp: recentTs(60) },
+    ),
+  ]);
+  const r = await ingestCopilotSession(store, path);
+  assert.equal(getRun(store, r.run_id)!.status, "ok", "shutdown seals the parent");
+  const child = getChildRuns(store, r.run_id)[0]!;
+  assert.equal(
+    child.status,
+    "abandoned",
+    "uncompleted agent after shutdown must not sit in_progress for the staleness window",
+  );
+});
+
 test("REVIEW: routing drift across re-carves does not double-count steps (torn subagent.started completes)", async () => {
   const store = freshStore();
   const startLine = JSON.stringify(
