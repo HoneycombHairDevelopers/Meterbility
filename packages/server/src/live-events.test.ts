@@ -25,6 +25,10 @@ function freshHome(): { meter: string; claude: string; codex: string } {
   // Isolate Codex discovery too — without this, the inspector would
   // ingest the developer's real ~/.codex rollouts into the test store.
   process.env.CODEX_HOME = codex;
+  // Copilot live-poll isolation (v8 adapter): without this, real
+  // ~/.copilot sessions on the dev machine get ingested every tick
+  // and starve the assertions (machine-state-dependent failure).
+  process.env.COPILOT_HOME = codex;
   return { meter, claude, codex };
 }
 

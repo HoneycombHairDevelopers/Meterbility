@@ -284,6 +284,7 @@ function freshEnv(): {
   home: string;
   claudeHome: string;
   codexHome: string;
+  copilotHome: string;
   filesRoot: string;
 } {
   const home = mkdtempSync(join(tmpdir(), "meter-live-e2e-"));
@@ -292,8 +293,11 @@ function freshEnv(): {
   // unisolated run ingests the HOST's real rollout history (slow, and
   // it once surfaced a real adapter crash mid-suite).
   const codexHome = mkdtempSync(join(tmpdir(), "meter-live-e2e-codex-"));
+  // Copilot live-poll isolation (v8): real ~/.copilot sessions must
+  // never leak into the spawned CLI's discovery.
+  const copilotHome = mkdtempSync(join(tmpdir(), "meter-live-e2e-copilot-"));
   const filesRoot = mkdtempSync(join(tmpdir(), "meter-live-e2e-root-"));
-  return { home, claudeHome, codexHome, filesRoot };
+  return { home, claudeHome, codexHome, copilotHome, filesRoot };
 }
 
 test("live: header warns loudly with no active session, then SYNCING → SYNCED", async () => {
@@ -302,6 +306,7 @@ test("live: header warns loudly with no active session, then SYNCING → SYNCED"
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     CODEX_HOME: fx.codexHome,
+    COPILOT_HOME: fx.copilotHome,
   });
   let code: number | null = null;
   try {
@@ -329,6 +334,7 @@ test("live: viewer-guard — a fresh claim for THIS root (legacy wildcard format
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     CODEX_HOME: fx.codexHome,
+    COPILOT_HOME: fx.copilotHome,
   });
   let code: number | null = null;
   try {
@@ -346,6 +352,7 @@ test("live: invalid --files-dir warns and continues without file capture", async
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     CODEX_HOME: fx.codexHome,
+    COPILOT_HOME: fx.copilotHome,
   });
   let code: number | null = null;
   try {
@@ -363,6 +370,7 @@ test("live: --json streams sentinel:ready as NDJSON; SIGINT releases the heartbe
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     CODEX_HOME: fx.codexHome,
+    COPILOT_HOME: fx.copilotHome,
   });
   let code: number | null = null;
   try {
@@ -463,6 +471,7 @@ test("live: --force-capture overrides a fresh heartbeat and takes capture", asyn
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     CODEX_HOME: fx.codexHome,
+    COPILOT_HOME: fx.copilotHome,
   });
   let code: number | null = null;
   try {
@@ -490,6 +499,7 @@ test("live: a claim for a DIFFERENT root does not force viewer-only (per-root gu
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     CODEX_HOME: fx.codexHome,
+    COPILOT_HOME: fx.copilotHome,
   });
   let code: number | null = null;
   try {
@@ -512,6 +522,7 @@ test("live: an out-of-band proxy run (direct store writes) streams with provider
     METERBILITY_HOME: fx.home,
     CLAUDE_HOME: fx.claudeHome,
     CODEX_HOME: fx.codexHome,
+    COPILOT_HOME: fx.copilotHome,
   });
   const runId = `run_${randomUUID()}`;
   let code: number | null = null;

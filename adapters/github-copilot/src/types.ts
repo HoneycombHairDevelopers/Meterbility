@@ -151,6 +151,31 @@ export function toolNameOf(e: CopilotEvent): string | undefined {
 }
 
 /** Tool call correlation id with alias fallback. */
+/** Per-conversation stream id (real Copilot CLI ≥1.0): the main thread
+ *  and each spawned agent get distinct interactionIds. This — not the
+ *  parentId chain, which is a flat linked list in real files — is the
+ *  routing key for multi-agent carving. */
+export function interactionIdOf(e: CopilotEvent): string | undefined {
+  return strOf(e.data?.interactionId) ?? strOf(e.data?.interaction_id);
+}
+
+/** Turn correlation id (assistant.turn_start carries interactionId +
+ *  turnId; assistant.turn_end carries ONLY turnId in real files). */
+export function turnIdOf(e: CopilotEvent): string | undefined {
+  return strOf(e.data?.turnId) ?? strOf(e.data?.turn_id);
+}
+
+/** Per-message output token count (real assistant.message events). */
+export function outputTokensOf(e: CopilotEvent): number | undefined {
+  const v = e.data?.outputTokens ?? e.data?.output_tokens;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+/** Human display name on real subagent events ("Task Agent"). */
+export function agentDisplayNameOf(e: CopilotEvent): string | undefined {
+  return strOf(e.data?.agentDisplayName) ?? strOf(e.data?.displayName);
+}
+
 export function toolCallIdOf(e: CopilotEvent): string | undefined {
   return (
     strOf(e.data?.toolCallId) ?? strOf(e.data?.callId) ?? strOf(e.data?.call_id)
@@ -182,10 +207,22 @@ function parseSquadPromptIdentity(promptText: string): {
 } {
   const m = SQUAD_IDENTITY_RE.exec(promptText);
   if (m?.[1]) return { name: m[1].trim(), role: m[2]?.trim() };
+  // Role-less spawn ("You are Scribe. TEAM_ROOT: …") — real squad shape.
+  const bare = /You are ([^,.\n]{1,60})[.,\n]/.exec(promptText);
+  if (bare?.[1]) return { name: bare[1].trim() };
   // "🔧 EECOM: Refactoring auth" style descriptions.
   const d = /^[^\w]*([A-Z][\w-]{1,30}):\s/.exec(promptText);
   if (d?.[1]) return { name: d[1] };
   return {};
+}
+
+/** Parse squad identity out of raw prompt text (task-tool dispatch
+ *  arguments carry the spawn prompt in real Copilot CLI sessions). */
+export function squadIdentityOfText(promptText: string): {
+  name?: string;
+  role?: string;
+} {
+  return parseSquadPromptIdentity(promptText);
 }
 
 /** Sub-agent display name with alias fallback + spawn-prompt parsing. */

@@ -481,6 +481,146 @@ test("REGRESSION v8: fresh schema has lineage columns; lineage-free runs list id
   assert.equal(getChildRuns(store, r.run_id).length, 0);
 });
 
+test("REAL SHAPE (Copilot CLI ≥1.0.80): interaction-stream carve — siblings, prompt identity, per-message tokens, shutdown totals", async () => {
+  const store = freshStore();
+  // Replicates the observed real format (2026-08-26 live session):
+  // a FLAT linked list (every parentId = previous event), streams keyed
+  // by interactionId, spawn prompts in `task` tool arguments, subagent
+  // lifecycle joined by toolCallId, per-message outputTokens, and a
+  // session.shutdown carrying the session-total token breakdown.
+  const MAIN = "iid-main";
+  const A = "iid-frontend";
+  const B = "iid-backend";
+  const promptA = "You are Frontend, the UI engineer for the recipe app.\nGoal: build the form.";
+  const promptB = "You are Backend, the Express engineer for the recipe app.\nGoal: build the API.";
+  let prev: string | null = null;
+  let n = 0;
+  const lin = (type: string, data: object) => {
+    const id = `ev${n++}`;
+    const e = ev(type, data, { id, parentId: prev ?? undefined, timestamp: recentTs(600 - n * 5) });
+    (e as { parentId: string | null }).parentId = prev;
+    prev = id;
+    return e;
+  };
+  const path = writeSession(
+    [
+      lin("session.start", { sessionId: "s-real", model: "gpt-5-mini" }),
+      lin("user.message", { content: "build it all", interactionId: MAIN }),
+      lin("tool.execution_start", {
+        toolName: "task",
+        toolCallId: "call_A",
+        arguments: { description: "Frontend work", prompt: promptA },
+      }),
+      lin("subagent.started", {
+        toolCallId: "call_A",
+        agentName: "task",
+        agentDisplayName: "Task Agent",
+        model: "gpt-5-mini",
+      }),
+      lin("tool.execution_start", {
+        toolName: "task",
+        toolCallId: "call_B",
+        arguments: { description: "Backend work", prompt: promptB },
+      }),
+      lin("subagent.started", {
+        toolCallId: "call_B",
+        agentName: "task",
+        agentDisplayName: "Task Agent",
+        model: "gpt-5-mini",
+      }),
+      // Children's spawn user.messages bind their interaction streams.
+      lin("user.message", { content: promptA, interactionId: A }),
+      lin("user.message", { content: promptB, interactionId: B }),
+      // Interleaved child work with per-message outputTokens.
+      lin("assistant.message", {
+        content: "building form",
+        interactionId: A,
+        model: "gpt-5-mini",
+        outputTokens: 1000,
+      }),
+      lin("assistant.message", {
+        content: "building api",
+        interactionId: B,
+        model: "gpt-5-mini",
+        outputTokens: 2000,
+      }),
+      // A child tool call: start has NO interactionId (real shape) —
+      // joined via its completion's interactionId.
+      lin("tool.execution_start", {
+        toolName: "create",
+        toolCallId: "call_fA",
+        arguments: { path: "/repo/src/Form.tsx", content: "export {}\n" },
+      }),
+      lin("tool.execution_complete", {
+        toolCallId: "call_fA",
+        interactionId: A,
+        success: true,
+        result: "created",
+      }),
+      lin("subagent.completed", {
+        toolCallId: "call_A",
+        agentName: "task",
+        totalTokens: 5000,
+        durationMs: 1234,
+      }),
+      lin("subagent.completed", {
+        toolCallId: "call_B",
+        agentName: "task",
+        totalTokens: 7000,
+        durationMs: 2345,
+      }),
+      lin("session.shutdown", {
+        shutdownType: "routine",
+        totalPremiumRequests: 2,
+        tokenDetails: {
+          input: { tokenCount: 100000 },
+          cache_read: { tokenCount: 50000 },
+          cache_write: { tokenCount: 0 },
+          output: { tokenCount: 3000 },
+        },
+      }),
+    ],
+    { workspaceYaml: "cwd: /repo\n" },
+  );
+  const r = await ingestCopilotSession(store, path);
+  assert.equal(r.status, "ok");
+  assert.equal(r.child_run_ids.length, 2);
+
+  const parentRun = getRun(store, r.run_id)!;
+  const kids = getChildRuns(store, parentRun.run_id);
+  assert.equal(kids.length, 2, "both agents are SIBLINGS under the parent (not a chain)");
+
+  const frontend = kids.find((c) => c.tags.includes("agent:frontend"))!;
+  const backend = kids.find((c) => c.tags.includes("agent:backend"))!;
+  assert.equal(frontend.title, "Frontend — UI engineer", "identity from the task spawn prompt");
+  assert.equal(backend.title, "Backend — Express engineer");
+  assert.equal(frontend.status, "ok", "completion joined by toolCallId");
+  assert.equal(backend.status, "ok");
+  assert.equal(parentRun.status, "ok", "session.shutdown is an at-rest event");
+
+  // Per-message output tokens land on the owning child.
+  assert.equal(frontend.tokens_total_output, 1000);
+  assert.equal(backend.tokens_total_output, 2000);
+  assert.ok(frontend.tags.includes("agent_total_tokens:5000"));
+
+  // The iid-less tool start joined to Frontend via its completion.
+  const fFcs = listFileChanges(store, { runId: frontend.run_id });
+  assert.equal(fFcs.length, 1, "child file change routed via toolCallId→interaction join");
+  assert.equal(fFcs[0]!.path, "src/Form.tsx");
+
+  // Session input totals land on the parent, tagged, never on children.
+  assert.equal(parentRun.tokens_total_input, 100000);
+  assert.equal(parentRun.tokens_total_cached, 50000);
+  assert.ok(parentRun.tags.includes("premium_requests:2"));
+
+  // Nothing in a real-shaped (flat linked list) file is "unrouted".
+  const allSteps = [parentRun, ...kids].flatMap((run) => listSteps(store, run.run_id));
+  assert.ok(
+    !allSteps.some((s) => s.tags.includes("copilot:unrouted")),
+    "flat parentId chain is the format's normal shape, not drift",
+  );
+});
+
 test("REVIEW: cyclic/self-referential parentId does not hang; events land unrouted on parent", async () => {
   const store = freshStore();
   const path = writeSession([

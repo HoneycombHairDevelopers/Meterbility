@@ -38,15 +38,20 @@ import { readEvents } from "./parser.ts";
 import { workspaceCwd } from "./discover.ts";
 import { CopilotShapeProbe } from "./shape_probe.ts";
 import {
+  agentDisplayNameOf,
   contentTextOf,
+  interactionIdOf,
   normalizeUsage,
+  outputTokensOf,
   sessionIdOf,
+  squadIdentityOfText,
   subagentIdOf,
   subagentNameOf,
   subagentRoleOf,
   toolCallIdOf,
   toolInputOf,
   toolNameOf,
+  turnIdOf,
   type CopilotEvent,
 } from "./types.ts";
 
@@ -65,6 +70,10 @@ const SESSION_AT_REST_EVENTS = new Set([
   "subagent.completed",
   "session.info",
   "session.end",
+  // Real Copilot CLI (≥1.0) closes every session with a shutdown event
+  // carrying the session-total token breakdown.
+  "session.shutdown",
+  "session.usage_checkpoint",
 ]);
 /** A session whose newest event is older than this and not at rest is
  *  inferred `abandoned` (crashed / killed mid-turn). Mirrors the design
@@ -228,6 +237,41 @@ export async function ingestCopilotSession(
 
   const childByStartEventId = new Map<string, RunCtx>();
   const childBySubagentId = new Map<string, RunCtx>();
+
+  // ── Real-shape (Copilot CLI ≥1.0) stream indices ────────────────────
+  // Real files are a FLAT linked list: every event's parentId is simply
+  // the previous line, so ancestry carries no routing signal. The real
+  // per-agent stream key is `interactionId` (main thread + one per
+  // spawned agent). The joins, all correlation-only:
+  //   task tool.execution_start (toolCallId → spawn prompt/description)
+  //   subagent.started/completed (same toolCallId)
+  //   child's first user.message (content === spawn prompt) → binds the
+  //     child's interactionId
+  //   tool.execution_complete carries interactionId; execution_start
+  //     does not (joined via toolCallId)
+  //   assistant.turn_end carries only turnId (joined via turn_start)
+  const taskDispatches = new Map<
+    string,
+    { prompt?: string; description?: string; ownerAtDispatch?: RunCtx }
+  >();
+  const childByToolCallId = new Map<string, RunCtx>();
+  const childByInteraction = new Map<string, RunCtx>();
+  const iidByToolCall = new Map<string, string>();
+  const iidByTurnId = new Map<string, string>();
+  let hasInteractionIds = false;
+  for (const { event } of parsed) {
+    const iid = interactionIdOf(event);
+    if (!iid) continue;
+    hasInteractionIds = true;
+    if (event.type === "tool.execution_complete") {
+      const tcid = toolCallIdOf(event);
+      if (tcid && !iidByToolCall.has(tcid)) iidByToolCall.set(tcid, iid);
+    }
+  }
+  // iidByTurnId is maintained INSIDE the main loop (turnIds restart per
+  // interaction — "0", "1", … — so a whole-file pre-scan would let a
+  // later stream's turn_start steal an earlier stream's turn_end; in
+  // file order, a turn_end always follows its own turn_start).
   /** Memoized event-id → routing result (ctx null = walks cleanly to
    *  root). Carries the unrouted flag so every sibling on a broken
    *  chain gets the copilot:unrouted tag, not just the first walker. */
@@ -258,6 +302,37 @@ export async function ingestCopilotSession(
    */
   const routeEvent = (event: CopilotEvent): { ctx: RunCtx; unrouted: boolean } => {
     if (!hasCorrelationIds) return { ctx: parent, unrouted: false };
+    // Real-shape routing: when the file carries interactionIds, they —
+    // not the (flat) parentId chain — decide stream membership. An iid
+    // not bound to any child is the main thread: parent, cleanly.
+    if (hasInteractionIds) {
+      const type = event.type ?? "";
+      // subagent.* lifecycle events are handled by their own cases and
+      // must not join through the task call's (main-thread) completion.
+      if (!type.startsWith("subagent.")) {
+        const iid = interactionIdOf(event);
+        if (iid) {
+          return { ctx: childByInteraction.get(iid) ?? parent, unrouted: false };
+        }
+        if (type === "tool.execution_start") {
+          const tcid = toolCallIdOf(event);
+          const jid = tcid ? iidByToolCall.get(tcid) : undefined;
+          if (jid) {
+            return { ctx: childByInteraction.get(jid) ?? parent, unrouted: false };
+          }
+        }
+        if (type === "assistant.turn_end") {
+          const tid = turnIdOf(event);
+          const jid = tid ? iidByTurnId.get(tid) : undefined;
+          if (jid) {
+            return { ctx: childByInteraction.get(jid) ?? parent, unrouted: false };
+          }
+        }
+      }
+      // session.*, subagent.*, and anything iid-less: the parent owns it.
+      // No unrouted tag — a flat chain is the real format's normal shape.
+      return { ctx: parent, unrouted: false };
+    }
     const sid = subagentIdOf(event);
     if (sid) {
       const bySid = childBySubagentId.get(sid);
@@ -364,6 +439,30 @@ export async function ingestCopilotSession(
 
   for (const { event, offset } of parsed) {
     const type = event.type ?? "";
+    // Bind a child's interaction stream BEFORE routing: the child's
+    // first user.message is the spawn prompt verbatim (real shape), so
+    // an exact content match against a recorded task dispatch claims
+    // this interactionId for that child — including for this event.
+    if (hasInteractionIds && type === "user.message") {
+      const iid = interactionIdOf(event);
+      if (iid && !childByInteraction.has(iid)) {
+        const text = contentTextOf(event);
+        if (text) {
+          for (const [tcid, d] of taskDispatches) {
+            if (d.prompt !== undefined && d.prompt === text) {
+              const boundChild = childByToolCallId.get(tcid);
+              if (boundChild) childByInteraction.set(iid, boundChild);
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (hasInteractionIds && type === "assistant.turn_start") {
+      const tid = turnIdOf(event);
+      const iid = interactionIdOf(event);
+      if (tid && iid) iidByTurnId.set(tid, iid);
+    }
     const { ctx, unrouted } = routeEvent(event);
     const unroutedTags = unrouted ? ["copilot:unrouted"] : [];
     if (unrouted) probe.noteUnrouted(type || "<missing>");
@@ -417,6 +516,10 @@ export async function ingestCopilotSession(
       case type === "assistant.message": {
         const text = contentTextOf(event) ?? "";
         const ref = await putJson({ role: "assistant", text });
+        // Real events carry the serving model per message — more precise
+        // than the session-level model_change stream.
+        const msgModel = event.data?.model ?? event.data?.modelId;
+        if (typeof msgModel === "string") ctx.currentModel = msgModel;
         const idx = await addStep(
           ctx,
           event,
@@ -425,6 +528,24 @@ export async function ingestCopilotSession(
           { status: "ok" },
           unroutedTags,
         );
+        // Real events carry per-message output token counts — the only
+        // per-stream token signal in real files (turn_end has none).
+        // Output-only is a cost FLOOR: tag it so nobody reads it as the
+        // full spend.
+        const outTok = outputTokensOf(event);
+        if (outTok !== undefined) {
+          const step = ctx.steps[idx]!;
+          step.tokens.output = outTok;
+          const priced = costCents(step.model, {
+            input: 0,
+            output: outTok,
+            cached_read: 0,
+            cache_creation: 0,
+          });
+          step.cost_cents = priced.cost_cents;
+          if (priced.unpriced) step.tags.push("cost:unpriced");
+          else step.tags.push("cost:approx", "tokens:output-only");
+        }
         ctx.turnAssistantIdx = idx;
         ctx.history.push({
           role: "assistant",
@@ -505,6 +626,21 @@ export async function ingestCopilotSession(
           stepIdx: idx,
           startTs: event.timestamp,
         });
+        // Real-shape squad dispatch: the `task` tool call carries the
+        // spawn prompt (identity source) and its toolCallId is the join
+        // key for the subagent.started/completed pair that follows.
+        if (toolName === "task") {
+          const args =
+            rawInput && typeof rawInput === "object"
+              ? (rawInput as Record<string, unknown>)
+              : {};
+          taskDispatches.set(callId, {
+            prompt: typeof args.prompt === "string" ? args.prompt : undefined,
+            description:
+              typeof args.description === "string" ? args.description : undefined,
+            ownerAtDispatch: ctx,
+          });
+        }
         maybeFileChange(ctx, ctx.steps[idx]!, toolName, rawInput, callId, cwd);
         break;
       }
@@ -555,17 +691,38 @@ export async function ingestCopilotSession(
         break;
       }
       case type === "subagent.started": {
-        const name = subagentNameOf(event) ?? "subagent";
-        const role = subagentRoleOf(event);
+        // Real shape: the durable identity lives in the task dispatch's
+        // spawn prompt ("You are Frontend, the UI engineer …"), joined
+        // by toolCallId; the event's own agentName is a generic wrapper
+        // ("task"). Prefer prompt identity, then display name, then the
+        // legacy field/prompt fallbacks.
+        const tcid = toolCallIdOf(event);
+        const dispatch = tcid ? taskDispatches.get(tcid) : undefined;
+        const promptIdentity = dispatch?.prompt
+          ? squadIdentityOfText(dispatch.prompt)
+          : {};
+        const displayName = agentDisplayNameOf(event);
+        const legacyName = subagentNameOf(event);
+        const name =
+          promptIdentity.name ??
+          (legacyName && legacyName !== "task" ? legacyName : undefined) ??
+          displayName ??
+          legacyName ??
+          "subagent";
+        const role = promptIdentity.role ?? subagentRoleOf(event);
         const slug = slugify(name);
+        // The dispatching run is whoever issued the matching task tool
+        // call (correlation-only); routed ctx is the fallback.
+        const dispatchCtx = dispatch?.ownerAtDispatch ?? ctx;
         const dispatchIdx = await addStep(
-          ctx,
+          dispatchCtx,
           event,
           idKey,
           {
             kind: "sub_agent_dispatch",
             sub_agent: name,
-            tool_input: event.data?.description ?? undefined,
+            tool_input:
+              dispatch?.description ?? event.data?.description ?? undefined,
           },
           { status: "pending" },
           [`agent:${slug}`, ...unroutedTags],
@@ -574,10 +731,11 @@ export async function ingestCopilotSession(
           // Correlation-only carving (T1): without ids we cannot route
           // the child's events, so no child run exists — the dispatch
           // step and tags are the honest record.
-          ctx.steps[dispatchIdx]!.outcome = { status: "ok" };
-          ctx.steps[dispatchIdx]!.status = "ok";
+          dispatchCtx.steps[dispatchIdx]!.outcome = { status: "ok" };
+          dispatchCtx.steps[dispatchIdx]!.status = "ok";
           break;
         }
+        const agentModel = event.data?.model;
         const child: RunCtx = {
           runId: `run_${hashJson([sessionId, event.id])}`,
           isChild: true,
@@ -587,30 +745,43 @@ export async function ingestCopilotSession(
           fileChanges: [],
           seq: 0,
           history: [],
-          currentModel: ctx.currentModel,
+          currentModel:
+            typeof agentModel === "string" ? agentModel : dispatchCtx.currentModel,
           sawTurnStart: false,
           completed: false,
           sawError: false,
           startedAt: event.timestamp,
-          dispatch: { parentCtx: ctx, stepIdx: dispatchIdx },
-          parentRunId: ctx.runId,
-          parentRunStepId: ctx.steps[dispatchIdx]!.step_id,
+          dispatch: { parentCtx: dispatchCtx, stepIdx: dispatchIdx },
+          parentRunId: dispatchCtx.runId,
+          parentRunStepId: dispatchCtx.steps[dispatchIdx]!.step_id,
         };
         childByStartEventId.set(event.id, child);
+        if (tcid) childByToolCallId.set(tcid, child);
         const sid = subagentIdOf(event);
         if (sid) childBySubagentId.set(sid, child);
         ownerMemo.set(event.id, { ctx: child, unrouted: false });
         break;
       }
       case type === "subagent.completed": {
-        // The completion may correlate by subagentId or by ancestry.
+        // Real shape correlates by toolCallId; older/synthetic shapes by
+        // subagentId or ancestry.
+        const tcid = toolCallIdOf(event);
         const sid = subagentIdOf(event);
         const child =
+          (tcid ? childByToolCallId.get(tcid) : undefined) ??
           (sid ? childBySubagentId.get(sid) : undefined) ??
           (ctx.isChild ? ctx : undefined);
         if (!child) break;
         child.completed = true;
         noteActivity(child, event);
+        // Real completions carry the agent's aggregate accounting —
+        // token total (unsplit), tool-call count, wall duration. Tags,
+        // not run totals: per-message outputTokens already sum honestly
+        // and an unsplit aggregate would double-count against them.
+        const totalTokens = event.data?.totalTokens;
+        if (typeof totalTokens === "number" && totalTokens > 0) {
+          child.tags.push(`agent_total_tokens:${totalTokens}`);
+        }
         if (child.dispatch) {
           const dispatchStep =
             child.dispatch.parentCtx.steps[child.dispatch.stepIdx]!;
@@ -619,6 +790,60 @@ export async function ingestCopilotSession(
             summary: summarize(event.data?.result),
           };
           dispatchStep.status = "ok";
+          const durationMs = event.data?.durationMs;
+          if (typeof durationMs === "number" && durationMs > 0) {
+            dispatchStep.latency_ms = durationMs;
+          }
+        }
+        break;
+      }
+      case type === "session.shutdown": {
+        // Session-total token breakdown (input/cache_read/cache_write/
+        // output). Output tokens are already counted per-message on
+        // their own steps; the INPUT side is counted nowhere else, so a
+        // synthetic step carries it (tagged — inputs include the whole
+        // fleet's requests, so it lives on the parent as session-level
+        // accounting, not per-agent attribution).
+        const td = event.data?.tokenDetails as
+          | Record<string, { tokenCount?: number } | undefined>
+          | undefined;
+        const n = (k: string): number => {
+          const v = td?.[k]?.tokenCount;
+          return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+        };
+        const input = n("input");
+        const cachedRead = n("cache_read");
+        const cacheWrite = n("cache_write");
+        if (input + cachedRead + cacheWrite > 0) {
+          const idx = await addStep(
+            ctx,
+            event,
+            idKey,
+            { kind: "none" },
+            { status: "ok" },
+            ["session_input_totals", ...unroutedTags],
+          );
+          const step = ctx.steps[idx]!;
+          step.tokens = {
+            input,
+            output: 0,
+            cached_read: cachedRead,
+            cache_creation: cacheWrite,
+            cache_creation_1h: 0,
+          };
+          const priced = costCents(step.model, {
+            input,
+            output: 0,
+            cached_read: cachedRead,
+            cache_creation: cacheWrite,
+          });
+          step.cost_cents = priced.cost_cents;
+          if (priced.unpriced) step.tags.push("cost:unpriced");
+          else step.tags.push("cost:approx");
+        }
+        const premium = event.data?.totalPremiumRequests;
+        if (typeof premium === "number" && premium > 0) {
+          ctx.tags.push(`premium_requests:${premium}`);
         }
         break;
       }
@@ -703,12 +928,18 @@ export async function ingestCopilotSession(
         // Re-carve of a known run: title/tags/lineage are carve-derived
         // and can gain information as the live file grows (first user
         // message arrives after run creation, an agent's role parses on
-        // a later tick). Steps upsert below; refresh the metadata too.
+        // a later tick) — or CORRECT itself when a better routing join
+        // becomes available (a chain-shaped carve heals into siblings).
+        // Steps upsert below; refresh the metadata too.
         store.db
-          .prepare("UPDATE runs SET title = ?, tags = ? WHERE run_id = ?")
+          .prepare(
+            "UPDATE runs SET title = ?, tags = ?, parent_run_id = ?, parent_run_step_id = ? WHERE run_id = ?",
+          )
           .run(
             ctx.title ?? titleOf(ctx) ?? already.title ?? null,
             JSON.stringify(ctx.tags),
+            ctx.parentRunId ?? null,
+            ctx.parentRunStepId ?? null,
             ctx.runId,
           );
       }

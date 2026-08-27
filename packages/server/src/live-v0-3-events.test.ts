@@ -31,6 +31,9 @@ function freshHomes(): { meter: string; claude: string } {
   process.env.CLAUDE_HOME = claude;
   // Keep Codex discovery out of these tests (see live-events.test.ts).
   process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), "codex-v03-events-"));
+  // Same for Copilot (v8 adapter joined the live poll): real ~/.copilot
+  // sessions on the dev machine must never leak into these assertions.
+  process.env.COPILOT_HOME = mkdtempSync(join(tmpdir(), "copilot-v03-events-"));
   return { meter, claude };
 }
 
