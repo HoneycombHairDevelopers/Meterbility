@@ -1,7 +1,9 @@
 # Publishing to npm
 
-All twelve workspace packages publish under the `@meterbility` scope. The CLI
-installs the `meter` binary (from `@meterbility/cli`).
+Twelve workspace packages publish under the `@meterbility` scope
+(`@meterbility/web` is private and stays unpublished — its bundle ships inside
+the server package). The CLI installs the `meter` binary (from
+`@meterbility/cli`).
 
 ## One-time setup
 
@@ -28,8 +30,9 @@ skipped, so a run that dies mid-loop (registry outage, first-publish 404)
 finishes the remainder on the next dispatch from the Actions tab. The loop
 fails loudly instead of guessing: an ambiguous registry answer (outage, auth,
 DNS) stops the run, and it refuses to publish at all if a workspace's version
-has drifted from the root `package.json` version or the root version is
-malformed. Concurrent runs queue rather than cancel, so a release trigger and
+has drifted from the root `package.json` version or the root version is empty
+or obviously malformed (a shape check, not full semver validation).
+Concurrent runs queue rather than cancel, so a release trigger and
 a manual re-dispatch can never interleave mid-publish.
 
 To publish by hand instead:
@@ -49,7 +52,9 @@ done
 ## Version bumps
 
 Package versions are kept in lockstep with the repo version (the root
-`VERSION` file).
+`VERSION` file and the root `package.json` — the publish workflow's drift
+guard anchors on the root `package.json` version and refuses to run if any
+workspace disagrees with it).
 When cutting a new release, bump `version` in every workspace `package.json`
 (the CLI reads its version from its own `package.json` at runtime — there is
 no separate string to edit), tag, and publish. Inter-package caret ranges
