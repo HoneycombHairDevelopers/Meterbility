@@ -3,6 +3,36 @@
 Notable changes to Meterbility. Versions are lockstep across the
 `@meterbility/*` npm packages and `meterbility-agent` on PyPI.
 
+## [0.6.5] - 2026-08-27
+
+### Changed
+
+- **Copilot adapter routes the real wire format.** Live Copilot CLI 1.0.80
+  sessions write a flat linked-list event log (every `parentId` is just the
+  previous line), not the tree the fixtures assumed. Per-agent streams now
+  key on `interactionId`; agent identity parses from the `task` dispatch
+  prompt ("You are {Name}, the {Role}…") joined by `toolCallId`, so squad
+  agents carve as siblings of each other instead of nesting in a chain.
+  Tree-shaped legacy files keep the existing ancestry routing.
+- **Real usage lands where the CLI actually puts it.** Per-message
+  `outputTokens` price each assistant step as an honest floor
+  (`cost:approx` + `tokens:output-only`; opaque models stay
+  `cost:unpriced`); `session.shutdown.tokenDetails`
+  becomes a parent session-totals step (output excluded to avoid double
+  counting); `subagent.completed.totalTokens` is recorded as a per-agent
+  tag so it never double-counts; premium requests become a run tag.
+- Sessions that ended with a routine shutdown no longer read
+  `in_progress`; six newly observed event types joined the shape probe's
+  known set.
+
+### Fixed
+
+- Agents cut off by a session shutdown (dispatched but never completed —
+  seen live when a squad lead shut down with three agents mid-flight) now
+  resolve to `abandoned` immediately instead of sitting `in_progress`
+  through the 30-minute staleness window. Re-carving a resumed session
+  still self-heals statuses.
+
 ## [0.6.4] - 2026-08-24
 
 ### Added
