@@ -879,9 +879,21 @@ export async function ingestCopilotSession(
     if (SESSION_AT_REST_EVENTS.has(sessionLastType)) return "ok";
     return sessionStale ? "abandoned" : "in_progress";
   })();
+  // session.shutdown anywhere in the file is an authoritative end: the
+  // CLI wrote its final accounting. Observed live (squad session 4):
+  // the session can shut down "routine" while dispatched agents never
+  // received a subagent.completed — those agents were cut off, and
+  // waiting out the staleness window would report them in_progress for
+  // 30 minutes after the session provably ended. A --resume append
+  // re-carves the whole file and re-derives every status, so marking
+  // abandoned here stays self-healing.
+  const sessionShutdown = parsed.some(
+    (p) => p.event.type === "session.shutdown",
+  );
   const statusOf = (ctx: RunCtx): Run["status"] => {
     if (!ctx.isChild) return parentStatus;
     if (ctx.completed) return ctx.sawError ? "error" : "ok";
+    if (sessionShutdown) return "abandoned";
     // No subagent.completed recorded: still in flight while the session
     // shows recent activity (live tail), abandoned once it goes stale.
     return sessionStale ? "abandoned" : "in_progress";
