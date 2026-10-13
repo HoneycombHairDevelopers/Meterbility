@@ -390,3 +390,136 @@ test("checkpoint fallback patch_text is redacted before it hits SQLite", async (
   );
   store.close();
 });
+
+test("absolute tool paths dedupe against checkpoint URIs; checkpoint creates count +0/−0", async () => {
+  freshHome();
+  const store = Store.open();
+  // Real shape: toolFormerData.params.relativeWorkspacePath is ABSOLUTE
+  // and the checkpoint lists the same file plus two creates whose edit
+  // script wrt V0 is the one-line empty buffer (startLineNumber 1,
+  // endLineNumberExclusive 2, modified []).
+  const dir = mkdtempSync(join(tmpdir(), "cursor-abs-overlap-"));
+  const dbPath = join(dir, "state.vscdb");
+  const db = new Database(dbPath);
+  db.exec("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+  const ins = db.prepare("INSERT INTO cursorDiskKV(key, value) VALUES (?, ?)");
+  ins.run(
+    "composerData:comp-abs",
+    JSON.stringify({
+      _v: 10,
+      composerId: "comp-abs",
+      name: "abs overlap",
+      status: "completed",
+      createdAt: Date.now(),
+      lastUpdatedAt: Date.now(),
+      fullConversationHeadersOnly: [
+        { bubbleId: "a1", type: 2 },
+        { bubbleId: "a2", type: 2 },
+      ],
+      text: "abs overlap",
+      unifiedMode: "agent",
+    }),
+  );
+  ins.run(
+    "bubbleId:comp-abs:a1",
+    JSON.stringify({
+      _v: 3,
+      bubbleId: "a1",
+      type: 2,
+      text: "",
+      createdAt: new Date().toISOString(),
+      toolFormerData: {
+        name: "edit_file_v2",
+        tool: 0,
+        status: "completed",
+        params: JSON.stringify({
+          relativeWorkspacePath: "/tmp/abs-proj/prisma/schema.prisma",
+        }),
+        result: JSON.stringify({
+          beforeContentId: "composer.content.sha-schema-before",
+          afterContentId: "composer.content.sha-schema-after",
+        }),
+      },
+    }),
+  );
+  ins.run(
+    "bubbleId:comp-abs:a2",
+    JSON.stringify({
+      _v: 3,
+      bubbleId: "a2",
+      type: 2,
+      text: "",
+      createdAt: new Date().toISOString(),
+      toolFormerData: {
+        name: "edit_file_v2",
+        tool: 0,
+        status: "completed",
+        params: JSON.stringify({
+          relativeWorkspacePath: "/tmp/abs-proj/src/lib/vectors.ts",
+        }),
+        result: JSON.stringify({ afterContentId: "composer.content.sha-pg" }),
+      },
+    }),
+  );
+  ins.run("composer.content.sha-schema-before", "model A {}\n");
+  ins.run("composer.content.sha-schema-after", "model A {}\nmodel B {}\n");
+  ins.run("composer.content.sha-pg", "export const dim = 1536;\n");
+  ins.run(
+    "checkpointId:comp-abs:ckpt-1",
+    JSON.stringify({
+      files: [
+        {
+          uri: { path: "/tmp/abs-proj/prisma/schema.prisma" },
+          isNewlyCreated: false,
+          originalModelDiffWrtV0: [],
+        },
+        {
+          uri: { path: "/tmp/abs-proj/src/lib/vectors.ts" },
+          isNewlyCreated: true,
+          originalModelDiffWrtV0: [
+            { original: { startLineNumber: 1, endLineNumberExclusive: 2 }, modified: [] },
+          ],
+        },
+        {
+          // Captured by no tool row → the only legitimate fallback row.
+          uri: { path: "/tmp/abs-proj/prisma/_scratch.prisma" },
+          isNewlyCreated: true,
+          originalModelDiffWrtV0: [
+            { original: { startLineNumber: 1, endLineNumberExclusive: 2 }, modified: [] },
+          ],
+        },
+      ],
+    }),
+  );
+  db.close();
+
+  await ingestCursorGlobal(store, { dbPath, cwd: "/tmp/abs-proj" });
+  const runId = listRuns(store)[0]!.run_id;
+  const rows = store.db
+    .prepare(
+      `SELECT path, op, source_tool_name, partial_diff, lines_added, lines_removed
+       FROM file_change WHERE run_id = ? ORDER BY path`,
+    )
+    .all(runId) as Array<Record<string, unknown>>;
+
+  assert.deepEqual(
+    rows.map((r) => [r.path, r.source_tool_name]),
+    [
+      ["prisma/_scratch.prisma", "cursor-checkpoint"],
+      ["prisma/schema.prisma", "edit_file_v2"],
+      ["src/lib/vectors.ts", "edit_file_v2"],
+    ],
+    "tool paths are repo-relative and each path appears exactly once",
+  );
+  const schema = rows.find((r) => r.path === "prisma/schema.prisma")!;
+  assert.equal(schema.op, "modify");
+  assert.equal(schema.partial_diff, 0);
+  const pg = rows.find((r) => r.path === "src/lib/vectors.ts")!;
+  assert.equal(pg.op, "create");
+  assert.equal(pg.partial_diff, 0);
+  const scratch = rows.find((r) => r.path === "prisma/_scratch.prisma")!;
+  assert.equal(scratch.op, "create");
+  assert.equal(scratch.lines_removed, 0, "a create removes nothing");
+  assert.equal(scratch.lines_added, 0);
+  store.close();
+});

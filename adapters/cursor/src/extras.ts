@@ -15,6 +15,7 @@ import {
   nextSequenceInBand,
 } from "./bands.ts";
 import type { CursorDb } from "./parser.ts";
+import { PLACEHOLDER_CWD, toRepoRelative } from "./paths.ts";
 
 /**
  * Cursor extras — supplementary audit evidence beyond the three main
@@ -133,7 +134,7 @@ async function ingestCheckpoints(
   // Path canonicalization is impossible without a real workspace cwd —
   // checkpoint URIs are absolute, tool rows are repo-relative, so every
   // comparison would mismatch and double-count. Skip entirely.
-  if (run.cwd === undefined || run.cwd === "(cursor)") return 0;
+  if (run.cwd === undefined || run.cwd === PLACEHOLDER_CWD) return 0;
 
   const keys = cursor.listKeysByPrefix(`checkpointId:${composerId}:`);
   if (keys.length === 0) return 0;
@@ -195,7 +196,7 @@ async function ingestCheckpoints(
     for (const f of files) {
       const absPath = f.uri?.path ?? f.uri?.external;
       if (!absPath) continue;
-      const relPath = toRepoRelative(absPath, run.cwd ?? "");
+      const relPath = toRepoRelative(absPath, run.cwd);
       if (covered.has(relPath)) continue;
 
       const fcId = `fc_${hashJson([run.run_id, "ckpt", checkpointUuid, relPath])}`;
@@ -218,11 +219,17 @@ async function ingestCheckpoints(
         (n, s) => n + (s.modified?.length ?? 0),
         0,
       );
-      const linesRemoved = script.reduce((n, s) => {
-        const start = s.original?.startLineNumber ?? 0;
-        const end = s.original?.endLineNumberExclusive ?? start;
-        return n + Math.max(0, end - start);
-      }, 0);
+      // A newly created file has no baseline to remove lines from. Real
+      // checkpoints still record a one-line `original` span for creates
+      // (V0 is the editor's empty buffer: line 1, exclusive end 2) with
+      // an empty `modified`, which would otherwise count as +0/−1.
+      const linesRemoved = f.isNewlyCreated
+        ? 0
+        : script.reduce((n, s) => {
+            const start = s.original?.startLineNumber ?? 0;
+            const end = s.original?.endLineNumberExclusive ?? start;
+            return n + Math.max(0, end - start);
+          }, 0);
 
       const fc: Omit<FileChange, "created_at"> = {
         file_change_id: fcId,
@@ -357,15 +364,4 @@ function renderEditScript(
     for (const line of s.modified ?? []) hunks.push(`+${line}`);
   }
   return hunks.join("\n");
-}
-
-function toRepoRelative(absPath: string, cwd: string): string {
-  const normCwd = cwd.replace(/\/+$/, "");
-  if (normCwd.length > 0 && normCwd !== "(cursor)") {
-    if (absPath === normCwd) return "";
-    if (absPath.startsWith(normCwd + "/")) {
-      return absPath.slice(normCwd.length + 1).split("\\").join("/");
-    }
-  }
-  return absPath.split("\\").join("/");
 }

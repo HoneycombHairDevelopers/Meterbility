@@ -1225,9 +1225,11 @@ test("parity: edit_file_v2 resolves content blobs into full before/after file_ch
             tool: {
               name: "edit_file_v2",
               params: JSON.stringify({ relativeWorkspacePath: "notes.md" }),
+              // Real Cursor 2.x ids already carry the KV prefix — the
+              // adapter must not prepend it a second time.
               result: JSON.stringify({
-                beforeContentId: "sha-before",
-                afterContentId: "sha-after",
+                beforeContentId: "composer.content.sha-before",
+                afterContentId: "composer.content.sha-after",
               }),
             },
           },
@@ -1254,6 +1256,287 @@ test("parity: edit_file_v2 resolves content blobs into full before/after file_ch
   assert.equal(fc[0]!.line_count_before, 2);
   assert.equal(fc[0]!.line_count_after, 3);
   assert.ok((fc[0]!.lines_added as number) >= 1);
+  const notes = JSON.parse(String(fc[0]!.normalizer_notes)) as Record<string, unknown>;
+  assert.equal(notes.before_source, "tool-result", "before-image provenance recorded");
+  store.close();
+});
+
+test("parity: bare (unprefixed) content ids still resolve", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-efv2-bare",
+        name: "edit file bare",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "edit_file_v2",
+              params: JSON.stringify({ relativeWorkspacePath: "notes.md" }),
+              result: JSON.stringify({
+                beforeContentId: "sha-b",
+                afterContentId: "sha-a",
+              }),
+            },
+          },
+        ],
+      },
+    ],
+    extraKv: {
+      "composer.content.sha-b": "a\n",
+      "composer.content.sha-a": "b\n",
+    },
+  });
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0]!.partial_diff, 0);
+  assert.ok(fc[0]!.before_blob_ref);
+  assert.ok(fc[0]!.after_blob_ref);
+  store.close();
+});
+
+test("parity: edit_file_v2 without beforeContentId is a create with the after blob", async () => {
+  freshMeterbilityHome();
+  const body = "generator client {\n  provider = \"prisma-client-js\"\n}\n";
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-efv2-create",
+        name: "create file",
+        headers: [
+          { bubbleId: "a1", type: 2 },
+          { bubbleId: "a2", type: 2 },
+        ],
+        bubbles: [
+          {
+            // Real shape: creates carry only afterContentId.
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "edit_file_v2",
+              params: JSON.stringify({ relativeWorkspacePath: "prisma/new.prisma" }),
+              result: JSON.stringify({
+                afterContentId: "composer.content.sha-new",
+              }),
+            },
+          },
+          {
+            // Explicit flag wins even when a (stale) before id is present
+            // and its blob is missing.
+            bubbleId: "a2",
+            type: 2,
+            tool: {
+              name: "edit_file_v2",
+              params: JSON.stringify({ relativeWorkspacePath: "prisma/flagged.prisma" }),
+              result: JSON.stringify({
+                isNewlyCreated: true,
+                beforeContentId: "composer.content.sha-missing",
+                afterContentId: "composer.content.sha-new",
+              }),
+            },
+          },
+        ],
+      },
+    ],
+    extraKv: { "composer.content.sha-new": body },
+  });
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ? ORDER BY path`)
+    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
+  assert.equal(fc.length, 2);
+  for (const row of fc) {
+    assert.equal(row.op, "create", `${row.path} is a create`);
+    assert.equal(row.partial_diff, 0, "full after content stored");
+    assert.equal(row.before_blob_ref, null);
+    assert.ok(row.after_blob_ref);
+    assert.equal(row.line_count_after, 3);
+    assert.equal(row.lines_added, 3);
+    assert.equal(row.lines_removed, 0);
+    assert.equal(row.normalizer_notes, null, "no before_source on a create");
+  }
+  store.close();
+});
+
+test("parity: absolute relativeWorkspacePath is stored repo-relative to the composer cwd", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-abs",
+        name: "absolute path",
+        headers: [{ bubbleId: "a1", type: 2 }],
+        bubbles: [
+          {
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "search_replace",
+              params: JSON.stringify({
+                relativeWorkspacePath: "/tmp/abs-proj/src/nav/Main.tsx",
+              }),
+              result: JSON.stringify({
+                diff: {
+                  chunks: [
+                    { diffString: "  a\n+ b", oldStart: 1, newStart: 1, oldLines: 1, newLines: 2, linesAdded: 1 },
+                  ],
+                },
+              }),
+            },
+          },
+        ],
+      },
+    ],
+  });
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath, cwd: "/tmp/abs-proj" });
+  const runs = listRuns(store);
+  const fc = store.db
+    .prepare(`SELECT path FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<{ path: string }>;
+  assert.deepEqual(fc.map((r) => r.path), ["src/nav/Main.tsx"]);
+  store.close();
+});
+
+test("parity: search_replace derives lines_removed from oldLines/newLines when linesRemoved is absent", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-sr-real",
+        name: "real chunk shape",
+        headers: [
+          { bubbleId: "a1", type: 2 },
+          { bubbleId: "a2", type: 2 },
+          { bubbleId: "a3", type: 2 },
+        ],
+        bubbles: [
+          {
+            // Real Cursor 2.x shape: no @@ header, two-char prefixes,
+            // linesRemoved omitted because it is zero.
+            bubbleId: "a1",
+            type: 2,
+            tool: {
+              name: "search_replace",
+              params: JSON.stringify({ relativeWorkspacePath: "src/pure-add.ts" }),
+              result: JSON.stringify({
+                diff: {
+                  chunks: [
+                    {
+                      diffString: "      Home: undefined;\n+     Tutorial: undefined;\n  };",
+                      oldStart: 26,
+                      newStart: 26,
+                      oldLines: 4,
+                      newLines: 5,
+                      linesAdded: 1,
+                    },
+                  ],
+                  editor: "EDITOR_AI",
+                },
+              }),
+            },
+          },
+          {
+            // A replacement: 2 context + 2 removed = 4 old, 2 context + 1 added = 3 new.
+            bubbleId: "a2",
+            type: 2,
+            tool: {
+              name: "search_replace",
+              params: JSON.stringify({ relativeWorkspacePath: "src/replace.ts" }),
+              result: JSON.stringify({
+                diff: {
+                  chunks: [
+                    {
+                      diffString: "  ctx\n- old1\n- old2\n+ new\n  ctx",
+                      oldStart: 1,
+                      newStart: 1,
+                      oldLines: 4,
+                      newLines: 3,
+                      linesAdded: 1,
+                    },
+                  ],
+                },
+              }),
+            },
+          },
+          {
+            // No counts at all — fall back to counting prefixed lines.
+            bubbleId: "a3",
+            type: 2,
+            tool: {
+              name: "search_replace",
+              params: JSON.stringify({ relativeWorkspacePath: "src/nocounts.ts" }),
+              result: JSON.stringify({
+                diff: {
+                  chunks: [{ diffString: "- a\n- b\n+ c" }],
+                },
+              }),
+            },
+          },
+        ],
+      },
+    ],
+  });
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const rows = store.db
+    .prepare(`SELECT path, lines_added, lines_removed FROM file_change WHERE run_id = ?`)
+    .all(runs[0]!.run_id) as Array<{ path: string; lines_added: number; lines_removed: number }>;
+  const byPath = new Map(rows.map((r) => [r.path, r]));
+  assert.deepEqual(
+    { a: byPath.get("src/pure-add.ts")!.lines_added, r: byPath.get("src/pure-add.ts")!.lines_removed },
+    { a: 1, r: 0 },
+  );
+  assert.deepEqual(
+    { a: byPath.get("src/replace.ts")!.lines_added, r: byPath.get("src/replace.ts")!.lines_removed },
+    { a: 1, r: 2 },
+  );
+  assert.deepEqual(
+    { a: byPath.get("src/nocounts.ts")!.lines_added, r: byPath.get("src/nocounts.ts")!.lines_removed },
+    { a: 1, r: 2 },
+  );
+  store.close();
+});
+
+test("tool status \"error\" (real Cursor spelling) propagates to step status", async () => {
+  freshMeterbilityHome();
+  const dbPath = buildCursorDb({
+    composers: [
+      {
+        id: "comp-err-real",
+        headers: [
+          { bubbleId: "u", type: 1 },
+          { bubbleId: "a", type: 2 },
+        ],
+        bubbles: [
+          { bubbleId: "u", type: 1, text: "write something" },
+          {
+            bubbleId: "a",
+            type: 2,
+            tool: { name: "write", status: "error", result: "{}" },
+          },
+        ],
+      },
+    ],
+  });
+  const store = Store.open();
+  await ingestCursorGlobal(store, { dbPath });
+  const runs = listRuns(store);
+  const steps = listSteps(store, runs[0]!.run_id);
+  const toolStep = steps.find((s) => s.action.kind === "tool_call");
+  assert.equal(toolStep?.status, "error");
+  assert.equal(toolStep?.outcome.is_error, true);
   store.close();
 });
 

@@ -110,9 +110,15 @@ export class CursorDb {
    * Full before/after file bodies for edit_file_v2, stored content-
    * addressed under `composer.content.<id>`. Values are the raw file
    * text (occasionally JSON-quoted — unwrap when it round-trips).
+   *
+   * Real `result.beforeContentId` / `afterContentId` values already
+   * carry the `composer.content.` prefix (Cursor 2.x, verified
+   * 2026-10-13 against a live state.vscdb); older fixtures used bare
+   * hashes. Accept both — prepending the prefix twice made every real
+   * lookup miss, degrading every edit_file_v2 row to a pruned stub.
    */
   getContentBlob(contentId: string): string | undefined {
-    const raw = this.getRawKV(`composer.content.${contentId}`);
+    const raw = this.getRawKV(contentBlobKey(contentId));
     if (raw === undefined) return undefined;
     if (raw.startsWith('"')) {
       try {
@@ -225,6 +231,15 @@ export class CursorDb {
     for (const r of rows) out[r.prefix] = r.n;
     return out;
   }
+}
+
+const CONTENT_BLOB_PREFIX = "composer.content.";
+
+/** KV key for a content id, whether or not it already carries the prefix. */
+export function contentBlobKey(contentId: string): string {
+  return contentId.startsWith(CONTENT_BLOB_PREFIX)
+    ? contentId
+    : CONTENT_BLOB_PREFIX + contentId;
 }
 
 export function headerCount(c: CursorComposerData): number {

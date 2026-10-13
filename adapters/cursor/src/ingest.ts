@@ -621,6 +621,7 @@ async function ingestOneComposer(
       p.bubble,
       runId,
       p.stepId,
+      args.cwd,
     );
   }
   return { steps_added: stepsAdded };
@@ -658,7 +659,7 @@ async function bubbleToOutcome(
 ): Promise<Outcome> {
   const tf = bubble.toolFormerData;
   if (!tf) return { status: "ok" };
-  if (tf.status === "errored") {
+  if (isErroredStatus(tf.status)) {
     const ref = tf.result
       ? await store.blobs.putJson(tf.result)
       : undefined;
@@ -685,6 +686,11 @@ async function bubbleToOutcome(
   }
   if (tf.status === "pending") return { status: "pending" };
   return { status: "ok" };
+}
+
+/** Real toolFormerData writes `"error"`; older captures said `"errored"`. */
+export function isErroredStatus(status: string | undefined): boolean {
+  return status === "error" || status === "errored";
 }
 
 function composerStatus(c: CursorComposerData): Run["status"] {
