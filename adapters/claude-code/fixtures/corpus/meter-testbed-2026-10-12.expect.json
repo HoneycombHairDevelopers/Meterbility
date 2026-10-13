@@ -1,0 +1,385 @@
+{
+  "unknown_record_types": [
+    "agent-name",
+    "atis-latch",
+    "attachment",
+    "bridge-session",
+    "custom-title",
+    "last-prompt",
+    "queue-operation"
+  ],
+  "known_types_with_drift": [
+    "assistant",
+    "system",
+    "user"
+  ],
+  "steps": 37,
+  "file_changes": [
+    {
+      "step": 0,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 1,
+      "sequence": 0,
+      "path": "package.json",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 17,
+      "lines_removed": 0,
+      "tool": "Write"
+    },
+    {
+      "step": 2,
+      "sequence": 0,
+      "path": "src/gonig.js",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 42,
+      "lines_removed": 0,
+      "tool": "Write"
+    },
+    {
+      "step": 3,
+      "sequence": 0,
+      "path": "src/cli.js",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 51,
+      "lines_removed": 0,
+      "tool": "Write"
+    },
+    {
+      "step": 4,
+      "sequence": 0,
+      "path": "test/gonig.test.js",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 54,
+      "lines_removed": 0,
+      "tool": "Write"
+    },
+    {
+      "step": 5,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 6,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 7,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 8,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 9,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 10,
+      "sequence": 0,
+      "path": "src/cli.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 1,
+      "lines_removed": 0,
+      "tool": "Edit",
+      "before_source": "tool-result"
+    },
+    {
+      "step": 11,
+      "sequence": 0,
+      "path": "src/cli.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 7,
+      "lines_removed": 3,
+      "tool": "Edit",
+      "before_source": "tool-result"
+    },
+    {
+      "step": 12,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 13,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 14,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 15,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 16,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 17,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 18,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 19,
+      "sequence": 0,
+      "path": "scripts/build.js",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 41,
+      "lines_removed": 0,
+      "tool": "Write"
+    },
+    {
+      "step": 20,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 21,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 22,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 23,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 24,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 25,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 26,
+      "sequence": 0,
+      "path": "src/vogefif.js",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 8,
+      "lines_removed": 0,
+      "tool": "Write"
+    },
+    {
+      "step": 27,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 28,
+      "sequence": 0,
+      "path": "src/cli.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 1,
+      "lines_removed": 1,
+      "tool": "Edit",
+      "before_source": "tool-result"
+    },
+    {
+      "step": 29,
+      "sequence": 0,
+      "path": "src/cli.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 3,
+      "lines_removed": 0,
+      "tool": "Edit",
+      "before_source": "tool-result"
+    },
+    {
+      "step": 30,
+      "sequence": 0,
+      "path": "test/gonig.test.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 1,
+      "lines_removed": 0,
+      "tool": "Edit",
+      "before_source": "tool-result"
+    },
+    {
+      "step": 31,
+      "sequence": 0,
+      "path": "test/gonig.test.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 18,
+      "lines_removed": 0,
+      "tool": "Edit",
+      "before_source": "tool-result"
+    },
+    {
+      "step": 32,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 33,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 34,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "tool": "Bash"
+    },
+    {
+      "step": 35,
+      "sequence": 0,
+      "path": "/Users/dev/Library/Hebelabokep Vokasuz/Vumixo/nete-forujej-desof/local_2db412ef-7a50-4557-ad96-504087ac09e9/xukojebof-build-lopicoge.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 40,
+      "lines_removed": 0,
+      "tool": "Write"
+    }
+  ]
+}

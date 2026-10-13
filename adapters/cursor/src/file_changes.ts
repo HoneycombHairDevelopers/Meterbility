@@ -44,7 +44,8 @@ import type { CursorBubble } from "./types.ts";
  * actually kept. No other vendor exposes this.
  */
 
-const FILE_TOOLS = new Set([
+/** Tool names the extractor derives file_change rows from (see probe.ts). */
+export const FILE_TOOLS: ReadonlySet<string> = new Set([
   "search_replace",
   "write",
   "edit_file_v2",
