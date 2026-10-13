@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, listRuns, listSteps } from "@meterbility/collector";
 import { ingestCodexSession } from "./ingest.ts";
+import { resetCodexDriftLog } from "./shape_probe.ts";
 
 function freshStore(): Store {
   const dir = mkdtempSync(join(tmpdir(), "meter-codex-"));
@@ -164,10 +165,58 @@ test("codex ingest is idempotent", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Parity coverage (2026-08-04): token_count usage, turn_context model,
-// patch_apply_end file changes, custom_tool_call steps. Fixture shapes are
-// taken from a real captured write-mode rollout.
+// Parity coverage: token_count usage, turn_context model, file changes,
+// custom_tool_call steps. The file-change records are the two
+// `event_msg/item_completed` FileChange records from the real 2026-08-04
+// write-mode rollout (CLI 0.142.0-alpha.6), with cwd and ids redacted —
+// NOT the `patch_apply_end` envelope the adapter was first written
+// against, which no real rollout (0.130–0.142) contains. See
+// oldEnvelopeSession() for the legacy shape, kept additively.
 // ---------------------------------------------------------------------------
+
+const FILECHANGE_ADD = {
+  type: "event_msg",
+  timestamp: "2026-08-04T18:26:42Z",
+  payload: {
+    type: "item_completed",
+    thread_id: "sess-parity",
+    turn_id: "turn-1",
+    item: {
+      type: "FileChange",
+      id: "call_A",
+      changes: {
+        "/tmp/proj/probe.txt": { type: "add", content: "parity probe v1\n" },
+      },
+      status: "completed",
+      stdout: "Success. Updated the following files:\nA probe.txt\n",
+    },
+    completed_at_ms: 1785893203154,
+  },
+};
+
+const FILECHANGE_UPDATE = {
+  type: "event_msg",
+  timestamp: "2026-08-04T18:26:46Z",
+  payload: {
+    type: "item_completed",
+    thread_id: "sess-parity",
+    turn_id: "turn-1",
+    item: {
+      type: "FileChange",
+      id: "call_B",
+      changes: {
+        "/tmp/proj/probe.txt": {
+          type: "update",
+          unified_diff: "@@ -1 +1,2 @@\n parity probe v1\n+edited by codex\n",
+          move_path: null,
+        },
+      },
+      status: "completed",
+      stdout: "Success. Updated the following files:\nM probe.txt\n",
+    },
+    completed_at_ms: 1785893205966,
+  },
+};
 
 function paritySession(): object[] {
   return [
@@ -219,22 +268,7 @@ function paritySession(): object[] {
           "Exit code: 0\nWall time: 0.2 seconds\nOutput:\nSuccess. Updated the following files:\nA probe.txt\n",
       },
     },
-    {
-      type: "event_msg",
-      timestamp: "2026-08-04T18:26:42Z",
-      payload: {
-        type: "patch_apply_end",
-        call_id: "call_A",
-        turn_id: "turn-1",
-        stdout: "Success. Updated the following files:\nA probe.txt\n",
-        stderr: "",
-        success: true,
-        status: "completed",
-        changes: {
-          "/tmp/proj/probe.txt": { type: "add", content: "parity probe v1\n" },
-        },
-      },
-    },
+    FILECHANGE_ADD,
     {
       type: "event_msg",
       timestamp: "2026-08-04T18:26:43Z",
@@ -284,26 +318,7 @@ function paritySession(): object[] {
           "Exit code: 0\nWall time: 0.1 seconds\nOutput:\nSuccess. Updated the following files:\nM probe.txt\n",
       },
     },
-    {
-      type: "event_msg",
-      timestamp: "2026-08-04T18:26:46Z",
-      payload: {
-        type: "patch_apply_end",
-        call_id: "call_B",
-        turn_id: "turn-1",
-        stdout: "Success. Updated the following files:\nM probe.txt\n",
-        stderr: "",
-        success: true,
-        status: "completed",
-        changes: {
-          "/tmp/proj/probe.txt": {
-            type: "update",
-            unified_diff: "@@ -1 +1,2 @@\n parity probe v1\n+edited by codex\n",
-            move_path: null,
-          },
-        },
-      },
-    },
+    FILECHANGE_UPDATE,
     {
       type: "event_msg",
       timestamp: "2026-08-04T18:26:47Z",
@@ -395,34 +410,255 @@ test("parity: model comes from turn_context, never the provider string", async (
   store.close();
 });
 
-test("parity: patch_apply_end produces file_change rows (add + partial update)", async () => {
+/** Legacy `patch_apply_end` envelope (pre-0.130 CLIs) — same changes map. */
+function oldEnvelopeSession(): object[] {
+  return paritySession().map((r) => {
+    const rec = r as { type: string; payload: { type?: string; item?: { id?: string; changes?: unknown; stdout?: string } } };
+    if (rec.type !== "event_msg" || rec.payload.type !== "item_completed") return r;
+    const item = rec.payload.item!;
+    return {
+      ...rec,
+      payload: {
+        type: "patch_apply_end",
+        call_id: item.id,
+        turn_id: "turn-1",
+        stdout: item.stdout,
+        stderr: "",
+        success: true,
+        status: "completed",
+        changes: item.changes,
+      },
+    };
+  });
+}
+
+function fileChangeRows(store: Store, runId: string): Array<Record<string, unknown>> {
+  return store.db
+    .prepare(`SELECT * FROM file_change WHERE run_id = ? ORDER BY created_at, sequence`)
+    .all(runId) as Array<Record<string, unknown>>;
+}
+
+test("parity: item_completed/FileChange produces a create row and a FULL modify row via the session chain", async () => {
   const store = freshStore();
   const path = writeSession(paritySession());
   await ingestCodexSession(store, path);
   const runs = listRuns(store);
-  const rows = store.db
-    .prepare(
-      `SELECT * FROM file_change WHERE run_id = ? ORDER BY created_at, sequence`,
-    )
-    .all(runs[0]!.run_id) as Array<Record<string, unknown>>;
-  assert.equal(rows.length, 2);
+  const steps = listSteps(store, runs[0]!.run_id);
+  const rows = fileChangeRows(store, runs[0]!.run_id);
+  assert.equal(rows.length, 2, "zero rows was the pre-fix behavior on real data");
 
   const add = rows.find((r) => r.op === "create")!;
   assert.equal(add.path, "probe.txt");
   assert.equal(add.partial_diff, 0);
+  assert.equal(add.tool_call_id, "call_A");
+  assert.equal(add.step_id, steps[0]!.step_id, "linked via item.id == call_id");
   assert.ok(add.after_blob_ref, "add carries after-content blob");
+  assert.equal(
+    await store.blobs.getString(String(add.after_blob_ref)),
+    "parity probe v1\n",
+  );
   assert.equal(add.lines_added, 1);
   assert.equal(add.source_tool_name, "apply_patch");
 
   const upd = rows.find((r) => r.op === "modify")!;
   assert.equal(upd.path, "probe.txt");
-  assert.equal(upd.partial_diff, 1, "updates have no before-content");
+  assert.equal(upd.tool_call_id, "call_B");
+  assert.equal(upd.step_id, steps[1]!.step_id);
+  assert.equal(upd.partial_diff, 0, "chain before-image + applied hunks → full row");
+  assert.ok(upd.before_blob_ref && upd.after_blob_ref);
+  assert.equal(
+    await store.blobs.getString(String(upd.before_blob_ref)),
+    "parity probe v1\n",
+  );
+  assert.equal(
+    await store.blobs.getString(String(upd.after_blob_ref)),
+    "parity probe v1\nedited by codex\n",
+  );
   assert.ok(
     String(upd.patch_text).includes("+edited by codex"),
     "unified diff cached as patch_text",
   );
   assert.equal(upd.lines_added, 1);
+  assert.equal(upd.lines_removed, 0);
+  assert.equal(upd.line_count_before, 1);
+  assert.equal(upd.line_count_after, 2);
+  assert.deepEqual(JSON.parse(String(upd.normalizer_notes)), {
+    before_source: "session-chain",
+  });
   store.close();
+});
+
+test("legacy patch_apply_end envelope still produces the same rows (additive)", async () => {
+  const store = freshStore();
+  const path = writeSession(oldEnvelopeSession());
+  await ingestCodexSession(store, path);
+  const runs = listRuns(store);
+  const rows = fileChangeRows(store, runs[0]!.run_id);
+  assert.equal(rows.length, 2);
+  const add = rows.find((r) => r.op === "create")!;
+  assert.equal(add.partial_diff, 0);
+  assert.equal(add.tool_call_id, "call_A");
+  const upd = rows.find((r) => r.op === "modify")!;
+  assert.equal(upd.partial_diff, 0);
+  assert.deepEqual(JSON.parse(String(upd.normalizer_notes)), {
+    before_source: "session-chain",
+  });
+  store.close();
+});
+
+test("FileChange item whose status is not completed emits no row", async () => {
+  const store = freshStore();
+  const session = paritySession().map((r) => {
+    const rec = r as { type: string; payload: { type?: string; item?: { id?: string } } };
+    if (rec.type === "event_msg" && rec.payload.type === "item_completed" && rec.payload.item?.id === "call_B") {
+      return { ...rec, payload: { ...rec.payload, item: { ...rec.payload.item, status: "failed" } } };
+    }
+    return r;
+  });
+  const path = writeSession(session);
+  await ingestCodexSession(store, path);
+  const rows = fileChangeRows(store, listRuns(store)[0]!.run_id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.op, "create");
+  store.close();
+});
+
+test("update with no chain image stays a partial row with before_source none", async () => {
+  const store = freshStore();
+  // Drop the add: the update's path has never been seen.
+  const session = paritySession().filter((r) => r !== FILECHANGE_ADD);
+  const path = writeSession(session);
+  await ingestCodexSession(store, path);
+  const rows = fileChangeRows(store, listRuns(store)[0]!.run_id);
+  assert.equal(rows.length, 1);
+  const upd = rows[0]!;
+  assert.equal(upd.op, "modify");
+  assert.equal(upd.partial_diff, 1);
+  assert.equal(upd.before_blob_ref, null);
+  assert.equal(upd.after_blob_ref, null);
+  assert.ok(String(upd.patch_text).includes("+edited by codex"));
+  assert.equal(upd.lines_added, 1);
+  assert.deepEqual(JSON.parse(String(upd.normalizer_notes)), { before_source: "none" });
+  store.close();
+});
+
+test("update whose hunks do not apply to the chain image falls back to a partial row", async () => {
+  const store = freshStore();
+  // The add's content differs from what the update's context expects —
+  // as if a shell edit rewrote the file between the two apply_patch
+  // calls.
+  const session = paritySession().map((r) => {
+    if (r !== FILECHANGE_ADD) return r;
+    return {
+      ...FILECHANGE_ADD,
+      payload: {
+        ...FILECHANGE_ADD.payload,
+        item: {
+          ...FILECHANGE_ADD.payload.item,
+          changes: { "/tmp/proj/probe.txt": { type: "add", content: "something else\n" } },
+        },
+      },
+    };
+  });
+  const path = writeSession(session);
+  await ingestCodexSession(store, path);
+  const rows = fileChangeRows(store, listRuns(store)[0]!.run_id);
+  assert.equal(rows.length, 2);
+  const upd = rows.find((r) => r.op === "modify")!;
+  assert.equal(upd.partial_diff, 1);
+  assert.equal(upd.before_blob_ref, null);
+  assert.deepEqual(JSON.parse(String(upd.normalizer_notes)), {
+    before_source: "none",
+    chain: "stale",
+  });
+  store.close();
+});
+
+test("add → update → update → delete chains through every step", async () => {
+  const store = freshStore();
+  const call = (id: string, patch: string, ts: string) => ({
+    type: "response_item",
+    timestamp: ts,
+    payload: { type: "custom_tool_call", id: `ctc_${id}`, status: "completed", call_id: id, name: "apply_patch", input: patch },
+  });
+  const fc = (id: string, changes: unknown, ts: string) => ({
+    type: "event_msg",
+    timestamp: ts,
+    payload: { type: "item_completed", thread_id: "sess-chain", turn_id: "t", item: { type: "FileChange", id, changes, status: "completed" } },
+  });
+  const path = writeSession([
+    { type: "session_meta", timestamp: "2026-08-04T18:26:37Z", payload: { id: "sess-chain", timestamp: "2026-08-04T18:26:37Z", cwd: "/tmp/proj" } },
+    call("c1", "*** Begin Patch\n*** Add File: f.txt\n+one\n+two\n+three\n*** End Patch\n", "2026-08-04T18:26:40Z"),
+    fc("c1", { "/tmp/proj/f.txt": { type: "add", content: "one\ntwo\nthree\n" } }, "2026-08-04T18:26:41Z"),
+    call("c2", "*** Begin Patch\n*** Update File: f.txt\n@@\n one\n-two\n+TWO\n three\n*** End Patch\n", "2026-08-04T18:26:42Z"),
+    fc("c2", { "/tmp/proj/f.txt": { type: "update", unified_diff: "@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n", move_path: null } }, "2026-08-04T18:26:43Z"),
+    call("c3", "*** Begin Patch\n*** Update File: f.txt\n@@\n three\n+four\n*** End Patch\n", "2026-08-04T18:26:44Z"),
+    fc("c3", { "/tmp/proj/f.txt": { type: "update", unified_diff: "@@ -3 +3,2 @@\n three\n+four\n", move_path: null } }, "2026-08-04T18:26:45Z"),
+    call("c4", "*** Begin Patch\n*** Delete File: f.txt\n*** End Patch\n", "2026-08-04T18:26:46Z"),
+    fc("c4", { "/tmp/proj/f.txt": { type: "delete" } }, "2026-08-04T18:26:47Z"),
+  ]);
+  await ingestCodexSession(store, path);
+  const rows = fileChangeRows(store, listRuns(store)[0]!.run_id);
+  assert.deepEqual(rows.map((r) => [r.op, r.partial_diff]), [
+    ["create", 0],
+    ["modify", 0],
+    ["modify", 0],
+    ["delete", 0],
+  ]);
+  const [, m1, m2, del] = rows;
+  assert.equal(await store.blobs.getString(String(m1!.before_blob_ref)), "one\ntwo\nthree\n");
+  assert.equal(await store.blobs.getString(String(m1!.after_blob_ref)), "one\nTWO\nthree\n");
+  assert.equal(await store.blobs.getString(String(m2!.before_blob_ref)), "one\nTWO\nthree\n");
+  assert.equal(await store.blobs.getString(String(m2!.after_blob_ref)), "one\nTWO\nthree\nfour\n");
+  assert.equal(m2!.lines_added, 1);
+  assert.equal(await store.blobs.getString(String(del!.before_blob_ref)), "one\nTWO\nthree\nfour\n");
+  assert.equal(del!.after_blob_ref, null);
+  assert.equal(del!.lines_removed, 4);
+  assert.deepEqual(JSON.parse(String(del!.normalizer_notes)), { before_source: "session-chain" });
+  store.close();
+});
+
+test("unknown item_completed item type is ingested without error and reported once", async () => {
+  resetCodexDriftLog();
+  const logged: string[] = [];
+  const orig = console.warn;
+  console.warn = (msg: unknown) => {
+    logged.push(String(msg));
+  };
+  let store: Store | undefined;
+  try {
+    store = freshStore();
+    const session = [
+      ...paritySession(),
+      {
+        type: "event_msg",
+        timestamp: "2026-08-04T18:26:50Z",
+        payload: { type: "item_completed", item: { type: "TodoList", id: "todo-1", items: [] } },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-08-04T18:26:51Z",
+        payload: { type: "item_completed", item: { type: "TodoList", id: "todo-2", items: [] } },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-08-04T18:26:52Z",
+        payload: { type: "turn_diff", unified_diff: "..." },
+      },
+    ];
+    const path = writeSession(session);
+    const r = await ingestCodexSession(store, path);
+    assert.equal(r.status, "ok");
+    assert.equal(fileChangeRows(store, r.run_id).length, 2, "known rows unaffected");
+  } finally {
+    console.warn = orig;
+    resetCodexDriftLog();
+    store?.close();
+  }
+  const drift = logged.filter((l) => l.includes("codex shape drift"));
+  assert.equal(drift.length, 2, "one line per unknown kind");
+  assert.ok(drift.some((l) => l.includes("unknown item_completed type=TodoList") && l.endsWith("×2")));
+  assert.ok(drift.some((l) => l.includes("unknown event_msg type=turn_diff") && l.endsWith("×1")));
 });
 
 test("parity: custom_tool_call steps get exit code + wall-time latency", async () => {
@@ -503,7 +739,7 @@ test("parity: nonzero exit code marks the tool step as error", async () => {
   store.close();
 });
 
-test("parity: patch_apply_end delete and rename entries map to delete / rename ops", async () => {
+test("parity: delete and rename entries (no chain image) map to partial delete / rename ops", async () => {
   const store = freshStore();
   const path = writeSession([
     {
@@ -527,15 +763,19 @@ test("parity: patch_apply_end delete and rename entries map to delete / rename o
       type: "event_msg",
       timestamp: "2026-08-04T18:26:42Z",
       payload: {
-        type: "patch_apply_end",
-        call_id: "call_ops",
-        success: true,
-        changes: {
-          "/tmp/proj/dead.txt": { type: "delete" },
-          "/tmp/proj/probe.txt": {
-            type: "update",
-            unified_diff: "@@ -1 +1 @@\n-old\n+new\n",
-            move_path: "/tmp/proj/renamed.txt",
+        type: "item_completed",
+        turn_id: "t",
+        item: {
+          type: "FileChange",
+          id: "call_ops",
+          status: "completed",
+          changes: {
+            "/tmp/proj/dead.txt": { type: "delete" },
+            "/tmp/proj/probe.txt": {
+              type: "update",
+              unified_diff: "@@ -1 +1 @@\n-old\n+new\n",
+              move_path: "/tmp/proj/renamed.txt",
+            },
           },
         },
       },
@@ -651,6 +891,42 @@ test("idle tail (chatter-only append) skips the rebuild; a real append still ing
   // Offset advanced: the same call again is a clean empty.
   const r2 = await ingestCodexSession(store, path);
   assert.equal(r2.status, "empty");
+
+  // item_completed chatter (AgentMessage) is idle too — only a
+  // FileChange item is material.
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-08-04T18:27:01Z",
+      payload: { type: "item_completed", item: { type: "AgentMessage", id: "m1", text: "hi" } },
+    }) + "\n",
+  );
+  const r2b = await ingestCodexSession(store, path);
+  assert.equal(r2b.status, "ok");
+  assert.equal(r2b.steps_added, 0);
+
+  // A FileChange item appended later rebuilds and lands a new row.
+  const fcBefore = fileChangeRows(store, runId).length;
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-08-04T18:27:02Z",
+      payload: {
+        type: "item_completed",
+        item: {
+          type: "FileChange",
+          id: "call_late",
+          status: "completed",
+          changes: { "/tmp/proj/late.txt": { type: "add", content: "late\n" } },
+        },
+      },
+    }) + "\n",
+  );
+  const r2c = await ingestCodexSession(store, path);
+  assert.equal(r2c.status, "ok");
+  assert.equal(fileChangeRows(store, runId).length, fcBefore + 1, "FileChange append rebuilt");
 
   // A real append (assistant response_item) still ingests normally.
   appendFileSync(

@@ -13,6 +13,7 @@ import {
 } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import { ADMIN_SEQUENCE_BASE, HOOK_SEQUENCE_BASE, nextSequenceInBand } from "./bands.ts";
+import { toRepoRelative } from "./paths.ts";
 
 /**
  * Cursor Hooks capture (Cursor ≥1.7) — the durable file-attribution
@@ -321,15 +322,4 @@ function countLines(text: string): number {
   if (text.length === 0) return 0;
   const n = text.split("\n").length;
   return text.endsWith("\n") ? n - 1 : n;
-}
-
-function toRepoRelative(absPath: string, cwd: string): string {
-  const normCwd = cwd.replace(/\/+$/, "");
-  if (normCwd.length > 0 && normCwd !== "(cursor)") {
-    if (absPath === normCwd) return "";
-    if (absPath.startsWith(normCwd + "/")) {
-      return absPath.slice(normCwd.length + 1).split("\\").join("/");
-    }
-  }
-  return absPath.split("\\").join("/");
 }

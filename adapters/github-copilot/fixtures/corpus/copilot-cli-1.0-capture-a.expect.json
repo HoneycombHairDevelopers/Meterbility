@@ -1,0 +1,1016 @@
+{
+  "unknown_event_types": [],
+  "steps": 310,
+  "file_changes": [
+    {
+      "step_sequence": 16,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 2,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 7,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 17,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 19,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 24,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 25,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 27,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 28,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 30,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 31,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 33,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/DATAMO_WULESA_VEVUROR_XIDE.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 636,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 35,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/pavibej/malu/wapawoh.json",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 3,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 36,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/PAVIBEJ_FAFEJIDUCALUKA_RUVID.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 172,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 38,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/ZIPIZUGA_FAFEJIDUCALUKA_RUVID.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 312,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 40,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/RE_MOKEJAN_RUVID.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 386,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 42,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/LIFONAH_JOPAFAZ.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 329,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 44,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 46,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/DOCIW_ROHAFACEW.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 248,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 48,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/HALU_SISIBUSOPAZOF_WIR.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 422,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 50,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 52,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 54,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/README_DATAMO_WULESA_VEVUROR.md",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 340,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 56,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 11,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 13,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 15,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 22,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/pavibej/jixuwu/cegitir.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 172,
+      "lines_removed": 0,
+      "before_source": "view_result"
+    },
+    {
+      "step_sequence": 26,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/pavibej/jixuwu/cegitir.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 55,
+      "lines_removed": 0,
+      "before_source": "view_result"
+    },
+    {
+      "step_sequence": 28,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/pavibej/jixuwu/cegitir.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 0,
+      "lines_removed": 55,
+      "before_source": "session_chain"
+    },
+    {
+      "step_sequence": 32,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/pavibej/__tests__/datamo-wulesa.test.js",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 241,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 34,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 36,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/pavibej/__tests__/datamo-wulesa.test.js",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 4,
+      "lines_removed": 5,
+      "before_source": "session_chain"
+    },
+    {
+      "step_sequence": 38,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 40,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 42,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 44,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 46,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 48,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 50,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 52,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 54,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 56,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 58,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 60,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 62,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 64,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 68,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 70,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 72,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 74,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 18,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 22,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 24,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/src/datamo-wulesa.html",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 382,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 26,
+      "sequence": 0,
+      "path": "Users/dev/development/fovih-wakoho/src/datamo-wulesa.js",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 342,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 30,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 32,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 34,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 40,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 42,
+      "sequence": 0,
+      "path": "tmp/pavibej.log",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 44,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 46,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 48,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 50,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 52,
+      "sequence": 0,
+      "path": "tmp/pavibej.log",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 54,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 56,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 58,
+      "sequence": 0,
+      "path": "tmp/zipizuga.log",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 60,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 64,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 66,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 68,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 70,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 72,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 6,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 7,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 9,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 11,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 16,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 19,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 22,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 28,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 29,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 33,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 34,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 36,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 38,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 40,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 41,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 43,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 45,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 47,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 48,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 50,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 52,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 53,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 59,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 61,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 62,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 70,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    },
+    {
+      "step_sequence": 71,
+      "sequence": 0,
+      "path": "(shell)",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null
+    }
+  ]
+}

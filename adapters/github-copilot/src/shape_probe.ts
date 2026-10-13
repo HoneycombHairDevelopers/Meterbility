@@ -50,6 +50,10 @@ export const KNOWN_EVENT_TYPES = new Set([
   "system.message",
   "system.notification",
   "subagent.selected",
+  // Observed in real Copilot CLI sessions (2026-10): a skill file was
+  // loaded into the conversation (data.{name, path, source, trigger,
+  // content, allowedTools, description, model}). No step.
+  "skill.invoked",
 ]);
 
 /** Envelope keys every event should carry per the observed format. */
@@ -71,9 +75,90 @@ export class CopilotShapeProbe {
       !KNOWN_EVENT_TYPES.has(eventType) &&
       // compaction variants beyond start/end still count as known family
       !eventType.startsWith("session.compaction");
-    if (missing.length === 0 && !unknown) return;
-    const note = unknown ? "unknown event type" : undefined;
-    this.record(eventType, missing, note);
+    if (missing.length > 0 || unknown) {
+      const note = unknown ? "unknown event type" : undefined;
+      this.record(eventType, missing, note);
+    }
+    this.probeFields(event, eventType);
+  }
+
+  /**
+   * Payload-shape checks for the fields the carver reads beyond the
+   * envelope (file-change fidelity depends on them). Each check is a
+   * "present but not the shape we parse" test — absent fields are
+   * legal (older CLIs), wrong-typed ones are drift. One deduped
+   * warning per (type, note).
+   */
+  private probeFields(event: CopilotEvent, eventType: string): void {
+    const d = event.data;
+    if (!d || typeof d !== "object") return;
+    const note = (n: string) => this.record(eventType, [], n);
+    if (eventType === "tool.execution_start") {
+      if (
+        typeof d.toolName !== "string" &&
+        typeof d.name !== "string" &&
+        typeof d.tool !== "string"
+      ) {
+        note("tool.execution_start carries no tool name");
+      }
+      const args = d.arguments ?? d.input ?? d.args;
+      if (args !== undefined && (args === null || typeof args !== "object")) {
+        note("tool arguments is not an object");
+      }
+      if (d.shellToolInfo !== undefined) {
+        const sti = d.shellToolInfo as Record<string, unknown> | null;
+        if (
+          sti === null ||
+          typeof sti !== "object" ||
+          (sti.possiblePaths !== undefined && !Array.isArray(sti.possiblePaths)) ||
+          (sti.hasWriteFileRedirection !== undefined &&
+            typeof sti.hasWriteFileRedirection !== "boolean")
+        ) {
+          note("shellToolInfo is not {possiblePaths[], hasWriteFileRedirection}");
+        }
+      }
+    } else if (eventType === "tool.execution_complete") {
+      if (d.success !== undefined && typeof d.success !== "boolean") {
+        note("success is not a boolean");
+      }
+      const r = d.result;
+      if (r !== undefined && r !== null) {
+        if (typeof r !== "string" && typeof r !== "object") {
+          note("result is neither string nor object");
+        } else if (typeof r === "object") {
+          const obj = r as Record<string, unknown>;
+          if (obj.content !== undefined && typeof obj.content !== "string") {
+            note("result.content is not a string");
+          }
+          if (
+            obj.detailedContent !== undefined &&
+            typeof obj.detailedContent !== "string"
+          ) {
+            note("result.detailedContent is not a string");
+          }
+        }
+      }
+      if (d.error !== undefined && d.error !== null && d.success !== false) {
+        note("error present on a completion not marked success:false");
+      }
+    } else if (eventType === "session.shutdown") {
+      const cc = d.codeChanges;
+      if (cc !== undefined) {
+        const obj = cc as Record<string, unknown> | null;
+        if (
+          obj === null ||
+          typeof obj !== "object" ||
+          (obj.linesAdded !== undefined && typeof obj.linesAdded !== "number") ||
+          (obj.linesRemoved !== undefined && typeof obj.linesRemoved !== "number") ||
+          (obj.filesModified !== undefined && !Array.isArray(obj.filesModified))
+        ) {
+          note("codeChanges is not {linesAdded, linesRemoved, filesModified[]}");
+        }
+      }
+    }
+    if (event.agentId !== undefined && typeof event.agentId !== "string") {
+      note("envelope agentId is not a string");
+    }
   }
 
   noteUnrouted(eventType: string): void {

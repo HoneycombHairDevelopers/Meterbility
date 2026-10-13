@@ -57,7 +57,8 @@ export interface CursorToolFormerData {
   name?: string;
   toolCallId?: string;
   modelCallId?: string;
-  status?: "completed" | "errored" | "pending" | string;
+  /** Real Cursor 2.x writes `"error"`; `"errored"` is the legacy spelling. */
+  status?: "completed" | "error" | "errored" | "pending" | string;
   /** JSON-encoded args as the model emitted them. */
   rawArgs?: string;
   /** Parsed/effective args after Cursor's normalization. */

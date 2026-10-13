@@ -15,6 +15,13 @@
  *   tool.execution_start / tool.execution_complete / tool.user_requested
  *   subagent.started / subagent.completed
  *
+ * Real Copilot CLI ≥1.0 tool vocabulary (5 local sessions, 2026-10):
+ *   create / edit / view / bash / task / glob / grep / read_agent / skill.
+ *   `create` args {path, file_text}; `edit` args {path, old_str, new_str};
+ *   `view` args {path, view_range?, description?}; `bash` args
+ *   {command, description} + data.shellToolInfo. Completions carry
+ *   `success` and, on failure, `error: {message, code}` with no result.
+ *
  * Phase 0 of the design gates the parser spec on firsthand fixtures;
  * until those land, the alias fallbacks below (`toolCallId` vs `callId`,
  * `input_tokens` vs `inputTokens`, …) cover the shape variants the
@@ -29,6 +36,11 @@ export interface CopilotEvent {
   timestamp?: string;
   /** Link to the causally-prior event; null/absent at stream roots. */
   parentId?: string | null;
+  /** Real Copilot CLI ≥1.0: events emitted inside a spawned agent's
+   *  stream carry the spawning `task` call's toolCallId here (envelope
+   *  level, beside `id`). Read for drift detection only — routing stays
+   *  on interactionId (see ingest.ts). */
+  agentId?: string;
   data?: CopilotEventData;
 }
 
@@ -69,6 +81,18 @@ export interface CopilotEventData {
   output?: unknown;
   success?: boolean;
   isError?: boolean;
+  /** Real shape: tool.execution_start of a nested call (inside a task
+   *  agent) names the parent call. */
+  parentToolCallId?: string;
+  /** Real shape: every `bash` execution_start carries the CLI's own
+   *  static analysis of the command (see CopilotShellToolInfo). */
+  shellToolInfo?: unknown;
+  toolTelemetry?: unknown;
+
+  // session.shutdown
+  /** Real shape: per-session lines added/removed + touched paths as the
+   *  CLI counted them — a free cross-check for file_change totals. */
+  codeChanges?: unknown;
 
   // subagent.*
   agentName?: string;
@@ -258,6 +282,75 @@ export function contentTextOf(e: CopilotEvent): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Real `tool.execution_complete.result` (Copilot CLI ≥1.0): `content`
+ *  is the model-facing text (a `view` returns the file with "N. " line
+ *  numbering; `create`/`edit` return a one-line confirmation), and
+ *  `detailedContent` is the UI-facing payload — for `view`, `create`
+ *  and `edit` it is a git unified diff (`diff --git … @@` hunks) of the
+ *  file; a `view` renders as an all-context diff of the whole file. */
+export interface CopilotToolResult {
+  content?: string;
+  detailedContent?: string;
+}
+
+/** Normalized result view: strings only; anything else is dropped. */
+export function toolResultOf(e: CopilotEvent): CopilotToolResult | undefined {
+  const r = e.data?.result ?? e.data?.output;
+  if (r === undefined || r === null) return undefined;
+  if (typeof r === "string") return { content: r };
+  if (typeof r !== "object") return undefined;
+  const obj = r as Record<string, unknown>;
+  return {
+    content: typeof obj.content === "string" ? obj.content : undefined,
+    detailedContent:
+      typeof obj.detailedContent === "string" ? obj.detailedContent : undefined,
+  };
+}
+
+/** Real `data.shellToolInfo` on every `bash` execution_start. */
+export interface CopilotShellToolInfo {
+  /** Path-looking tokens the CLI found in the command (also includes
+   *  non-paths like subcommands, pids, ports — treat as hints). */
+  possiblePaths: string[];
+  /** True when the command redirects stdout/stderr into a file. */
+  hasWriteFileRedirection: boolean;
+}
+
+export function shellToolInfoOf(e: CopilotEvent): CopilotShellToolInfo | undefined {
+  const raw = e.data?.shellToolInfo;
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  const paths = Array.isArray(obj.possiblePaths)
+    ? obj.possiblePaths.filter((p): p is string => typeof p === "string")
+    : [];
+  return {
+    possiblePaths: paths,
+    hasWriteFileRedirection: obj.hasWriteFileRedirection === true,
+  };
+}
+
+/** Real `session.shutdown.data.codeChanges`. */
+export interface CopilotCodeChanges {
+  linesAdded: number;
+  linesRemoved: number;
+  filesModified: string[];
+}
+
+export function codeChangesOf(e: CopilotEvent): CopilotCodeChanges | undefined {
+  const raw = e.data?.codeChanges;
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  const num = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) ? v : 0;
+  return {
+    linesAdded: num(obj.linesAdded),
+    linesRemoved: num(obj.linesRemoved),
+    filesModified: Array.isArray(obj.filesModified)
+      ? obj.filesModified.filter((p): p is string => typeof p === "string")
+      : [],
+  };
 }
 
 function strOf(v: unknown): string | undefined {

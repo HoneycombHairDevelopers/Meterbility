@@ -3,6 +3,7 @@ import { diffLines, hashJson, redactString } from "@meterbility/shared";
 import { insertFileChange } from "@meterbility/collector";
 import type { Store } from "@meterbility/collector";
 import type { CursorDb } from "./parser.ts";
+import { toRepoRelative } from "./paths.ts";
 import type { CursorBubble } from "./types.ts";
 
 /**
@@ -18,8 +19,24 @@ import type { CursorBubble } from "./types.ts";
  * - `edit_file_v2`: `result.{beforeContentId, afterContentId}` —
  *   content-addressed ids resolving to `composer.content.<id>` KV rows
  *   holding FULL before/after file bodies → complete (non-partial)
- *   FileChange rows with both blobs.
+ *   FileChange rows with both blobs. A missing `beforeContentId` (or
+ *   `result.isNewlyCreated`) is a create. The before-image source is
+ *   recorded as `normalizer_notes.before_source` with the same
+ *   vocabulary the Claude Code adapter uses (`tool-result`: the tool's
+ *   own result addressed the blob).
  * - `delete_file`: `params.relativeWorkspacePath` → fact-only delete row.
+ *
+ * Real-data shapes (verified 2026-10-13 against a live Cursor 2.x
+ * state.vscdb): `relativeWorkspacePath` is ABSOLUTE despite its name;
+ * content ids already carry the `composer.content.` prefix;
+ * search_replace chunks carry `oldLines/newLines/linesAdded` but omit
+ * `linesRemoved` when it is zero (and the diffString has no `@@`
+ * header — lines are prefixed `+ `, `- `, `  `).
+ *
+ * Paths are stored repo-relative (against the composer's workspace cwd)
+ * so the checkpoint fallback in extras.ts — which canonicalizes
+ * checkpoint URIs the same way — can tell which paths are already
+ * covered instead of emitting a duplicate `cursor-checkpoint` row.
  *
  * When `additionalData.codeblockId` is present, the accept/reject fate
  * ledger (`codeBlockPartialInlineDiffFates:<composerId>:<codeblockId>`)
@@ -27,7 +44,8 @@ import type { CursorBubble } from "./types.ts";
  * actually kept. No other vendor exposes this.
  */
 
-const FILE_TOOLS = new Set([
+/** Tool names the extractor derives file_change rows from (see probe.ts). */
+export const FILE_TOOLS: ReadonlySet<string> = new Set([
   "search_replace",
   "write",
   "edit_file_v2",
@@ -43,9 +61,24 @@ const FIRST_CHANGE_SEQ = 0;
 
 interface DiffChunk {
   diffString?: string;
+  oldLines?: number;
+  newLines?: number;
   linesAdded?: number;
   linesRemoved?: number;
 }
+
+/**
+ * Where an edit_file_v2 before-image came from — same vocabulary as
+ * the Claude Code adapter's `BeforeSource` so cross-adapter consumers
+ * can rank trustworthiness uniformly. Cursor only has one source: the
+ * content blob the tool result itself addressed.
+ */
+type BeforeSource = "tool-result";
+
+type NormalizerNotes =
+  | string
+  | { before_source: BeforeSource; note?: string }
+  | undefined;
 
 export async function extractCursorFileChanges(
   store: Store,
@@ -54,16 +87,22 @@ export async function extractCursorFileChanges(
   bubble: CursorBubble,
   runId: string,
   stepId: string,
+  cwd?: string,
 ): Promise<number> {
   const tf = bubble.toolFormerData;
   if (!tf || !isFileTool(tf.name)) return 0;
 
   const params = parseMaybeJson(tf.params) ?? parseMaybeJson(tf.rawArgs);
-  const relPath =
+  const rawPath =
     isObj(params) && typeof params.relativeWorkspacePath === "string"
       ? params.relativeWorkspacePath
       : undefined;
-  if (!relPath) return 0;
+  if (!rawPath) return 0;
+  // Despite the name, real Cursor writes an absolute path here. Store
+  // it repo-relative when the composer has a workspace cwd; a path
+  // already relative (fixtures, older Cursor) passes through unchanged.
+  const relPath = toRepoRelative(rawPath, cwd);
+  if (relPath.length === 0) return 0;
 
   const result = parseMaybeJson(tf.result);
   // Stable across re-ingests regardless of step-id scheme: keyed on the
@@ -123,18 +162,22 @@ export async function extractCursorFileChanges(
       isObj(result) && typeof result.afterContentId === "string"
         ? result.afterContentId
         : undefined;
+    const flaggedCreate = isObj(result) && result.isNewlyCreated === true;
     const beforeContent = beforeId ? cursor.getContentBlob(beforeId) : undefined;
     const afterContent = afterId ? cursor.getContentBlob(afterId) : undefined;
     // A beforeContentId whose blob was pruned by Cursor's retention is
     // NOT a create — the file existed, its prior content is just gone.
     // Only a genuinely absent beforeContentId (or an empty "" before
-    // body) means create; a pruned before degrades the whole row to the
-    // partial-diff branch below (the partial_diff invariant requires
-    // BOTH blob refs null, so the after content can't be stored either).
-    const beforePruned = beforeId !== undefined && beforeContent === undefined;
+    // body, or an explicit isNewlyCreated flag) means create; a pruned
+    // before degrades the whole row to the partial-diff branch below
+    // (the partial_diff invariant requires BOTH blob refs null, so the
+    // after content can't be stored either).
+    const beforePruned =
+      beforeId !== undefined && beforeContent === undefined && !flaggedCreate;
 
     if (afterContent !== undefined && !beforePruned) {
-      const isCreate = beforeContent === undefined || beforeContent.length === 0;
+      const isCreate =
+        flaggedCreate || beforeContent === undefined || beforeContent.length === 0;
       const stats =
         beforeContent !== undefined
           ? diffLines(beforeContent, afterContent).stats
@@ -144,12 +187,19 @@ export async function extractCursorFileChanges(
           ? await store.blobs.putString(beforeContent)
           : undefined;
       const afterRef = await store.blobs.putString(afterContent);
+      // Record where the before-image came from, as the Claude Code
+      // adapter does. Omitted for creates (no before-image) so create
+      // rows keep their existing shape.
+      const fullNotes: NormalizerNotes = beforeRef
+        ? { before_source: "tool-result", ...(notes ? { note: notes } : {}) }
+        : notes;
       return insertGuarded({
         ...base,
         file_change_id: fcId,
         sequence: FIRST_CHANGE_SEQ,
         path: relPath,
         op: isCreate ? "create" : "modify",
+        normalizer_notes: fullNotes,
         before_blob_ref: beforeRef,
         after_blob_ref: afterRef,
         partial_diff: false,
@@ -194,8 +244,8 @@ export async function extractCursorFileChanges(
       .join("\n"),
   );
   const patchText = patchRedaction.text;
-  const linesAdded = chunks.reduce((n, c) => n + (c.linesAdded ?? 0), 0);
-  const linesRemoved = chunks.reduce((n, c) => n + (c.linesRemoved ?? 0), 0);
+  const linesAdded = chunks.reduce((n, c) => n + chunkLinesAdded(c), 0);
+  const linesRemoved = chunks.reduce((n, c) => n + chunkLinesRemoved(c), 0);
 
   return insertGuarded({
     ...base,
@@ -246,6 +296,48 @@ function fateNotes(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Real chunks omit `linesAdded`/`linesRemoved` when zero. Derive the
+ * missing count from the hunk extents — a hunk spans `context +
+ * removed` old lines and `context + added` new lines, so
+ * `removed = oldLines − newLines + added` — and fall back to counting
+ * the `-`/`+` prefixed lines of `diffString` when the extents are
+ * absent too.
+ */
+function chunkLinesAdded(c: DiffChunk): number {
+  if (typeof c.linesAdded === "number") return c.linesAdded;
+  if (
+    typeof c.oldLines === "number" &&
+    typeof c.newLines === "number" &&
+    typeof c.linesRemoved === "number"
+  ) {
+    return Math.max(0, c.newLines - c.oldLines + c.linesRemoved);
+  }
+  return countPrefixedLines(c.diffString, "+");
+}
+
+function chunkLinesRemoved(c: DiffChunk): number {
+  if (typeof c.linesRemoved === "number") return c.linesRemoved;
+  if (
+    typeof c.oldLines === "number" &&
+    typeof c.newLines === "number" &&
+    typeof c.linesAdded === "number"
+  ) {
+    return Math.max(0, c.oldLines - c.newLines + c.linesAdded);
+  }
+  return countPrefixedLines(c.diffString, "-");
+}
+
+function countPrefixedLines(diff: string | undefined, prefix: "+" | "-"): number {
+  if (!diff) return 0;
+  let n = 0;
+  for (const line of diff.split("\n")) {
+    // Skip unified-diff file headers (`+++`/`---`) and hunk headers.
+    if (line.startsWith(prefix) && !line.startsWith(prefix.repeat(3))) n += 1;
+  }
+  return n;
 }
 
 function joinNotes(a: string | undefined, b: string): string {

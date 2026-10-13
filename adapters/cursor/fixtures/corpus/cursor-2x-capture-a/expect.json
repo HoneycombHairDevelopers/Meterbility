@@ -1,0 +1,153 @@
+{
+  "drift": {
+    "composers": 3,
+    "bubbles": 74,
+    "tool_names_without_file_changes": [
+      "glob_file_search",
+      "read_file",
+      "read_file_v2",
+      "read_lints",
+      "ripgrep_raw_search",
+      "run_terminal_cmd",
+      "run_terminal_command_v2",
+      "todo_write",
+      "web_fetch",
+      "web_search"
+    ],
+    "unknown_tool_statuses": [],
+    "unknown_composer_statuses": [
+      "aborted"
+    ],
+    "unknown_bubble_types": [],
+    "unread_file_tool_result_keys": [
+      "search_replace.resultForModel",
+      "search_replace.shouldAutoFixLints",
+      "write.resultForModel",
+      "write.shouldAutoFixLints"
+    ]
+  },
+  "composers": 3,
+  "steps": 74,
+  "file_changes": [
+    {
+      "composer": "175fde0b-5574-40c7-9c69-2a1ba343efa5",
+      "step_sequence": 27,
+      "sequence": 0,
+      "path": "momeva/_test-kivuti.momeva",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 14,
+      "lines_removed": 0,
+      "before_source": null,
+      "source_tool_name": "edit_file_v2"
+    },
+    {
+      "composer": "175fde0b-5574-40c7-9c69-2a1ba343efa5",
+      "step_sequence": 31,
+      "sequence": 0,
+      "path": "momeva/_test-kivuti.momeva",
+      "op": "delete",
+      "partial_diff": true,
+      "lines_added": 0,
+      "lines_removed": 0,
+      "before_source": null,
+      "source_tool_name": "delete_file"
+    },
+    {
+      "composer": "175fde0b-5574-40c7-9c69-2a1ba343efa5",
+      "step_sequence": 37,
+      "sequence": 0,
+      "path": "momeva/gomuve.momeva",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 1,
+      "lines_removed": 0,
+      "before_source": "tool-result",
+      "source_tool_name": "edit_file_v2"
+    },
+    {
+      "composer": "175fde0b-5574-40c7-9c69-2a1ba343efa5",
+      "step_sequence": 38,
+      "sequence": 0,
+      "path": "momeva/loputopahe/20260519000000_mevitoco/bofamumar.sql",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 3,
+      "lines_removed": 0,
+      "before_source": "tool-result",
+      "source_tool_name": "edit_file_v2"
+    },
+    {
+      "composer": "175fde0b-5574-40c7-9c69-2a1ba343efa5",
+      "step_sequence": 39,
+      "sequence": 0,
+      "path": "src/lib/mevitoco.ts",
+      "op": "create",
+      "partial_diff": false,
+      "lines_added": 54,
+      "lines_removed": 0,
+      "before_source": null,
+      "source_tool_name": "edit_file_v2"
+    },
+    {
+      "composer": "175fde0b-5574-40c7-9c69-2a1ba343efa5",
+      "step_sequence": 41,
+      "sequence": 0,
+      "path": "src/lib/mevitoco.ts",
+      "op": "modify",
+      "partial_diff": false,
+      "lines_added": 13,
+      "lines_removed": 9,
+      "before_source": "tool-result",
+      "source_tool_name": "edit_file_v2"
+    },
+    {
+      "composer": "abeb873e-a25b-4e70-8272-2b363d4e2135",
+      "step_sequence": 12,
+      "sequence": 0,
+      "path": "/Users/dev/development/Tozi/redavak/Hihexacuvodedo.tsx",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 36,
+      "lines_removed": 1,
+      "before_source": null,
+      "source_tool_name": "write"
+    },
+    {
+      "composer": "abeb873e-a25b-4e70-8272-2b363d4e2135",
+      "step_sequence": 15,
+      "sequence": 0,
+      "path": "/Users/dev/development/Tozi/derocatulo/Cadohofuhurusudohe.tsx",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 1,
+      "lines_removed": 0,
+      "before_source": null,
+      "source_tool_name": "search_replace"
+    },
+    {
+      "composer": "abeb873e-a25b-4e70-8272-2b363d4e2135",
+      "step_sequence": 17,
+      "sequence": 0,
+      "path": "/Users/dev/development/Tozi/derocatulo/Cadohofuhurusudohe.tsx",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 1,
+      "lines_removed": 0,
+      "before_source": null,
+      "source_tool_name": "search_replace"
+    },
+    {
+      "composer": "abeb873e-a25b-4e70-8272-2b363d4e2135",
+      "step_sequence": 19,
+      "sequence": 0,
+      "path": "/Users/dev/development/Tozi/derocatulo/Cadohofuhurusudohe.tsx",
+      "op": "modify",
+      "partial_diff": true,
+      "lines_added": 1,
+      "lines_removed": 0,
+      "before_source": null,
+      "source_tool_name": "search_replace"
+    }
+  ]
+}
