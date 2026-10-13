@@ -64,6 +64,18 @@ export interface CodexTokenCountInfo {
  * ABSOLUTE paths; adds carry full after-content, updates carry a unified
  * diff (no before-content), renames set move_path.
  */
+export interface CodexFileChangeEntry {
+  type: "add" | "update" | "delete" | string;
+  /** Full after-content — only on `add`. */
+  content?: string;
+  /** Hunks only, no before-content — on `update`. */
+  unified_diff?: string;
+  move_path?: string | null;
+}
+
+export type CodexFileChangeMap = Record<string, CodexFileChangeEntry>;
+
+/** Legacy envelope (pre-0.130 CLIs). Kept additively; see `CodexFileChangeItem`. */
 export interface CodexPatchApplyEndPayload {
   type: "patch_apply_end";
   call_id?: string;
@@ -72,15 +84,37 @@ export interface CodexPatchApplyEndPayload {
   stderr?: string;
   success?: boolean;
   status?: string;
-  changes?: Record<
-    string,
-    {
-      type: "add" | "update" | "delete" | string;
-      content?: string;
-      unified_diff?: string;
-      move_path?: string | null;
-    }
-  >;
+  changes?: CodexFileChangeMap;
+}
+
+/**
+ * The file-change event real rollouts contain (verified against CLI
+ * 0.130–0.142, 2026-10-13): `event_msg/item_completed` whose `item` is a
+ * `FileChange`. `item.id` is the `custom_tool_call.call_id` of the
+ * apply_patch call it closes; `changes` is the same map as the legacy
+ * envelope; `status` is `"completed"` on success.
+ */
+export interface CodexFileChangeItem {
+  type: "FileChange";
+  id?: string;
+  changes?: CodexFileChangeMap;
+  status?: string;
+  stdout?: string;
+}
+
+/** Any other item kind (AgentMessage, UserMessage, Reasoning, …). */
+export interface CodexGenericItem {
+  type: string;
+  id?: string;
+  [k: string]: unknown;
+}
+
+export interface CodexItemCompletedPayload {
+  type: "item_completed";
+  thread_id?: string;
+  turn_id?: string;
+  item?: CodexFileChangeItem | CodexGenericItem;
+  completed_at_ms?: number;
 }
 
 export interface CodexResponseItemMessage {
@@ -199,4 +233,16 @@ export function textOfMessage(m: CodexResponseItemMessage): string {
     })
     .filter((s) => s.length > 0)
     .join("\n");
+}
+
+export function isItemCompleted(
+  p: CodexEventMsgPayload,
+): p is CodexItemCompletedPayload & CodexEventMsgPayload {
+  return p.type === "item_completed";
+}
+
+export function isFileChangeItem(
+  item: CodexItemCompletedPayload["item"],
+): item is CodexFileChangeItem {
+  return typeof item === "object" && item !== null && item.type === "FileChange";
 }
