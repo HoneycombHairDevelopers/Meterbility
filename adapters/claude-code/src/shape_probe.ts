@@ -165,13 +165,37 @@ const MESSAGE_SPEC: ShapeSpec = {
   },
 };
 
+/**
+ * One tracked file's backup pointer — `ClaudeFileHistoryBackupEntry`
+ * in types.ts. Shared by the snapshot's `trackedFileBackups` values
+ * and the delta's `backup` field.
+ */
+const FILE_HISTORY_BACKUP_ENTRY_SPEC: ShapeSpec = {
+  required: {
+    backupFileName: { types: ["string", "null"] },
+  },
+  optional: {
+    version: { types: ["number"] },
+    backupTime: { types: ["string"] },
+    realParentDir: { types: ["string"] },
+  },
+};
+
 const EXPECTED_SHAPES: Record<string, ShapeSpec> = {
   user: {
     required: {
       type: { types: ["string"] },
       message: { types: ["object"], nested: MESSAGE_SPEC },
     },
-    optional: BASE_OPTIONAL,
+    optional: {
+      ...BASE_OPTIONAL,
+      // Per-tool structured result; shape varies by tool so we only
+      // assert it's a container (or a plain string for raw outputs).
+      toolUseResult: {
+        types: ["object", "array", "string", "null"],
+        opaque: true,
+      },
+    },
   },
   assistant: {
     required: {
@@ -204,15 +228,7 @@ const EXPECTED_SHAPES: Record<string, ShapeSpec> = {
               types: ["object"],
               recordValue: {
                 types: ["object"],
-                nested: {
-                  required: {
-                    backupFileName: { types: ["string", "null"] },
-                  },
-                  optional: {
-                    version: { types: ["number"] },
-                    backupTime: { types: ["string"] },
-                  },
-                },
+                nested: FILE_HISTORY_BACKUP_ENTRY_SPEC,
               },
             },
           },
@@ -224,6 +240,18 @@ const EXPECTED_SHAPES: Record<string, ShapeSpec> = {
       ...BASE_OPTIONAL,
       isSnapshotUpdate: { types: ["boolean"] },
     },
+  },
+  // Observed 2026-10: one record per first touch of a path within a
+  // turn. See `ClaudeFileHistoryDeltaRecord` in types.ts.
+  "file-history-delta": {
+    required: {
+      type: { types: ["string"] },
+      messageId: { types: ["string"] },
+      snapshotMessageId: { types: ["string"] },
+      trackingPath: { types: ["string"] },
+      backup: { types: ["object"], nested: FILE_HISTORY_BACKUP_ENTRY_SPEC },
+    },
+    optional: BASE_OPTIONAL,
   },
 };
 

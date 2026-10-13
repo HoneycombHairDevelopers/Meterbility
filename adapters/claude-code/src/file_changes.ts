@@ -8,9 +8,14 @@ import {
 } from "@meterbility/shared";
 import type { ParsedRecord } from "./parser.ts";
 import {
+  asFileToolUseResult,
   isAssistant,
+  isFileHistoryDelta,
   isFileHistorySnapshot,
+  isUser,
   type ClaudeContentBlock,
+  type ClaudeFileHistoryBackupEntry,
+  type ClaudeFileToolUseResult,
 } from "./types.ts";
 import { diffLines } from "./diff.ts";
 import { enforceFileSizePolicy, isProbablyText } from "@meterbility/collector";
@@ -19,9 +24,25 @@ import { enforceFileSizePolicy, isProbablyText } from "@meterbility/collector";
  * v0.3 Track A — Claude Code file-history-snapshot parser.
  *
  * Implements the algorithm in SPEC §3.4. Pulls one or more FileChange
- * events out of every modifying assistant turn, using the JSONL
- * `file-history-snapshot` records to recover the pre-edit bytes from
- * `~/.claude/file-history/<session-uuid>/<backupFileName>`.
+ * events out of every modifying assistant turn. The before-image of a
+ * file comes from the first of these sources that has it (see
+ * `resolveBefore`; the winner is recorded as
+ * `normalizer_notes.before_source`):
+ *
+ *   - `tool-result`   — Claude Code's `toolUseResult.originalFile` on
+ *                       the user record that answers the tool call:
+ *                       the exact bytes right before the call.
+ *   - `file-history`  — the JSONL `file-history-snapshot` /
+ *                       `file-history-delta` records, which point at
+ *                       `~/.claude/file-history/<session-uuid>/<backupFileName>`.
+ *                       Claude backs a path up once per turn, so this
+ *                       is the PRE-TURN image, not necessarily the
+ *                       pre-call one.
+ *   - `session-chain` — the after-image of the previous captured
+ *                       change to the same path in this session (a
+ *                       Write followed by an Edit in one turn has no
+ *                       backup for the Edit: the file didn't exist
+ *                       when the turn started).
  *
  * What gets captured (full fidelity, blob refs both sides):
  *   - `Edit` (str_replace on one file)
@@ -147,30 +168,23 @@ export async function extractFileChanges(
   const { records, stepByAssistantUuid, runId, cwd, sessionId, blobs } = args;
   const readBackup = args.readBackup ?? fsBackupReader;
 
-  // Build assistantUuid → merged-backups index. Discriminator-first per
-  // defense #1: only records whose `type === "file-history-snapshot"`
-  // are considered. The linkage to the assistant turn lives at
-  // `record.snapshot.messageId` (stable across initial + update
-  // records), not the outer `messageId` (which gets a fresh uuid on
-  // every update). Update records add more entries to the same turn,
-  // so we fold them into one map per assistant uuid.
-  const backupsByAssistantUuid = new Map<string, SnapshotBackups>();
-  for (const { record } of records) {
-    if (!isFileHistorySnapshot(record)) continue;
-    const assistantUuid = record.snapshot?.messageId;
-    if (!assistantUuid) continue;
-    const entries = record.snapshot.trackedFileBackups;
-    if (!entries) continue;
-    const merged = backupsByAssistantUuid.get(assistantUuid) ?? {};
-    for (const [relPath, entry] of Object.entries(entries)) {
-      merged[relPath] = entry;
-    }
-    backupsByAssistantUuid.set(assistantUuid, merged);
-  }
+  const backupsByMessageId = buildBackupIndex(records);
+  const toolResultByToolUseId = buildToolResultIndex(records);
+  const sessionContent: SessionContent = new Map();
 
   const out: FileChangeInsert[] = [];
 
+  // The "current turn" is the most recent file-history-snapshot seen in
+  // record order — Claude writes it when a user prompt opens a turn,
+  // before any tool runs. Its `snapshot.messageId` is the key that
+  // turn's deltas cite as `snapshotMessageId`.
+  let currentTurnId: string | undefined;
+
   for (const { record } of records) {
+    if (isFileHistorySnapshot(record)) {
+      if (record.snapshot?.messageId) currentTurnId = record.snapshot.messageId;
+      continue;
+    }
     if (!isAssistant(record)) continue;
     const assistantUuid = record.uuid;
     if (!assistantUuid) continue;
@@ -178,7 +192,14 @@ export async function extractFileChanges(
     if (!step) continue; // step builder collapsed this — fine, skip
 
     const blocks = arrayContent(record.message);
-    const backups = backupsByAssistantUuid.get(assistantUuid);
+    // Backups keyed to THIS assistant uuid: an old-format snapshot
+    // (snapshot.messageId was the assistant uuid) or a delta whose
+    // `messageId` names this record as the turn's first touch.
+    const backups = backupsByMessageId.get(assistantUuid);
+    const turnBackups =
+      currentTurnId !== undefined
+        ? backupsByMessageId.get(currentTurnId)
+        : undefined;
 
     // Intra-step sequence — UNIQUE(step_id, sequence) in the schema.
     // We reset per step and increment for every emitted row regardless
@@ -191,6 +212,11 @@ export async function extractFileChanges(
       const generated = await extractForToolUse({
         toolUse: block,
         backups,
+        turnBackups,
+        turnId: currentTurnId,
+        timestamp: record.timestamp,
+        toolResult: asFileToolUseResult(toolResultByToolUseId.get(block.id)),
+        sessionContent,
         runId,
         stepId: step.step_id,
         startingSequence: sequence,
@@ -208,14 +234,105 @@ export async function extractFileChanges(
   return out;
 }
 
-type SnapshotBackups = Record<
+type SnapshotBackups = Record<string, ClaudeFileHistoryBackupEntry>;
+
+/**
+ * Fold every file-history record into one map, keyed by the message
+ * id each record links itself to. Discriminator-first per defense #1:
+ * only records whose `type` is one of the two file-history shapes are
+ * read, and the outer `messageId` of a snapshot is never used.
+ *
+ *   - snapshot → `snapshot.messageId` (assistant uuid in old builds,
+ *     user-prompt uuid in current ones); update records fold into the
+ *     same entry.
+ *   - delta    → BOTH `messageId` (the assistant uuid of the step that
+ *     first touched the path this turn) and `snapshotMessageId` (the
+ *     turn). The former gives a direct step-level hit; the latter
+ *     lets a later step in the same turn fall back to the turn's
+ *     pre-turn image.
+ *
+ * Later records win on conflict, which is what we want: a turn's
+ * snapshot lists the stale backups it still holds, and the delta that
+ * follows carries the fresh one.
+ */
+function buildBackupIndex(
+  records: ParsedRecord[],
+): Map<string, SnapshotBackups> {
+  const index = new Map<string, SnapshotBackups>();
+  const fold = (
+    key: string | undefined,
+    relPath: string,
+    entry: ClaudeFileHistoryBackupEntry,
+  ): void => {
+    if (!key) return;
+    const merged = index.get(key) ?? {};
+    merged[relPath] = entry;
+    index.set(key, merged);
+  };
+  for (const { record } of records) {
+    if (isFileHistorySnapshot(record)) {
+      const entries = record.snapshot?.trackedFileBackups;
+      if (!entries) continue;
+      for (const [relPath, entry] of Object.entries(entries)) {
+        fold(record.snapshot.messageId, relPath, entry);
+      }
+    } else if (isFileHistoryDelta(record)) {
+      if (typeof record.trackingPath !== "string") continue;
+      if (typeof record.backup !== "object" || record.backup === null) continue;
+      fold(record.messageId, record.trackingPath, record.backup);
+      fold(record.snapshotMessageId, record.trackingPath, record.backup);
+    }
+  }
+  return index;
+}
+
+/**
+ * tool_use id → the `toolUseResult` Claude Code attached to the user
+ * record answering it. A user record carries one tool_result block per
+ * tool call it answers; when it answers several (parallel calls) CC
+ * writes one record per result, so the mapping stays one-to-one.
+ */
+function buildToolResultIndex(records: ParsedRecord[]): Map<string, unknown> {
+  const index = new Map<string, unknown>();
+  for (const { record } of records) {
+    if (!isUser(record)) continue;
+    if (record.toolUseResult === undefined) continue;
+    const content = record.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block.type === "tool_result" && block.tool_use_id) {
+        index.set(block.tool_use_id, record.toolUseResult);
+      }
+    }
+  }
+  return index;
+}
+
+/**
+ * Latest known bytes per repo-relative path, maintained as we walk the
+ * captured tool calls in record order. `buf: undefined` means "we saw
+ * it deleted". `turnId` / `at` identify the step that produced the
+ * entry so `resolveBefore` can tell an intra-turn chain (authoritative
+ * — the pre-turn backup is older than it) from a cross-turn one
+ * (a backup taken since then is fresher).
+ */
+type SessionContent = Map<
   string,
-  { backupFileName: string | null; version?: number; backupTime?: string }
+  { buf: Buffer | undefined; turnId: string | undefined; at: string | undefined }
 >;
 
 interface PerToolArgs {
   toolUse: Extract<ClaudeContentBlock, { type: "tool_use" }>;
+  /** Backups keyed to this step's assistant uuid (old snapshot or delta). */
   backups: SnapshotBackups | undefined;
+  /** Backups keyed to the turn this step belongs to (snapshot + deltas). */
+  turnBackups: SnapshotBackups | undefined;
+  turnId: string | undefined;
+  /** The assistant record's timestamp — stamps session-chain entries. */
+  timestamp: string | undefined;
+  /** Claude Code's structured result for this tool call, when it has the file-tool shape. */
+  toolResult: ClaudeFileToolUseResult | undefined;
+  sessionContent: SessionContent;
   runId: string;
   stepId: string;
   startingSequence: number;
@@ -300,12 +417,13 @@ async function extractWrite(args: PerToolArgs): Promise<FileChangeInsert[]> {
   if (!absPath) return [];
   const path = toRepoRelative(absPath, args.cwd);
   const afterText = input.content ?? "";
-  const backup = await readBackupForPath(args, absPath);
-  const isNew = backup === undefined;
+  const before = await resolveBefore(args, absPath);
+  const isNew = before.buf === undefined;
   const op: FileOp = isNew ? "create" : "modify";
 
-  const beforeBuf = backup;
+  const beforeBuf = before.buf;
   const afterBuf = Buffer.from(afterText, "utf-8");
+  rememberContent(args, path, afterBuf);
   return [
     await materialize({
       args,
@@ -313,6 +431,7 @@ async function extractWrite(args: PerToolArgs): Promise<FileChangeInsert[]> {
       op,
       beforeBuf,
       afterBuf,
+      beforeSource: before.source,
       tool: "Write",
     }),
   ];
@@ -323,16 +442,20 @@ async function extractEdit(args: PerToolArgs): Promise<FileChangeInsert[]> {
     file_path?: string;
     old_string?: string;
     new_string?: string;
+    replace_all?: boolean;
   };
   const absPath = input.file_path;
   if (!absPath || input.old_string === undefined || input.new_string === undefined) {
     return [];
   }
   const path = toRepoRelative(absPath, args.cwd);
-  const backup = await readBackupForPath(args, absPath);
-  if (backup === undefined) {
-    // No backup. Emit a partial — the existence of the Edit is real,
-    // we just can't reconstruct the bytes.
+  const before = await resolveBefore(args, absPath);
+  if (before.buf === undefined) {
+    // No before-image from any source. Emit a partial — the existence
+    // of the Edit is real, we just can't reconstruct the bytes. Forget
+    // whatever we thought we knew about the path: the chain would only
+    // feed stale bytes to the next edit.
+    args.sessionContent.delete(path);
     return [
       makeStub({
         runId: args.runId,
@@ -345,21 +468,48 @@ async function extractEdit(args: PerToolArgs): Promise<FileChangeInsert[]> {
       }),
     ];
   }
-  const beforeText = backup.toString("utf-8");
-  const afterText = applyEdit(beforeText, input.old_string, input.new_string);
+  const beforeText = before.buf.toString("utf-8");
+  const afterText = applyEdit(
+    beforeText,
+    input.old_string,
+    input.new_string,
+    input.replace_all === true,
+  );
   if (afterText === undefined) {
-    // The Edit's `old_string` didn't match — Claude Code refused this
-    // edit too, so no actual change occurred. No row.
-    return [];
+    if (before.exact) {
+      // The Edit's `old_string` didn't match the bytes Claude Code
+      // itself saw — it refused this edit too, so no actual change
+      // occurred. No row.
+      return [];
+    }
+    // A derived before-image (session chain / pre-turn backup) that
+    // the edit doesn't fit: something we didn't see rewrote the file
+    // in between (a Bash `sed -i`, say). The edit itself is real; we
+    // just can't reconstruct it. Partial stub, and drop the stale
+    // chain entry so the next edit doesn't inherit it.
+    args.sessionContent.delete(path);
+    return [
+      makeStub({
+        runId: args.runId,
+        stepId: args.stepId,
+        sequence: args.startingSequence,
+        toolCallId: args.toolUse.id,
+        path,
+        sourceToolName: "Edit",
+        sourceToolInput: input,
+      }),
+    ];
   }
   const afterBuf = Buffer.from(afterText, "utf-8");
+  rememberContent(args, path, afterBuf);
   return [
     await materialize({
       args,
       path,
       op: "modify",
-      beforeBuf: backup,
+      beforeBuf: before.buf,
       afterBuf,
+      beforeSource: before.source,
       tool: "Edit",
     }),
   ];
@@ -370,15 +520,20 @@ async function extractMultiEdit(
 ): Promise<FileChangeInsert[]> {
   const input = args.toolUse.input as {
     file_path?: string;
-    edits?: Array<{ old_string: string; new_string: string }>;
+    edits?: Array<{
+      old_string: string;
+      new_string: string;
+      replace_all?: boolean;
+    }>;
   };
   const absPath = input.file_path;
   if (!absPath || !Array.isArray(input.edits) || input.edits.length === 0) {
     return [];
   }
   const path = toRepoRelative(absPath, args.cwd);
-  const backup = await readBackupForPath(args, absPath);
-  if (backup === undefined) {
+  const before = await resolveBefore(args, absPath);
+  if (before.buf === undefined) {
+    args.sessionContent.delete(path);
     return [
       makeStub({
         runId: args.runId,
@@ -391,23 +546,46 @@ async function extractMultiEdit(
       }),
     ];
   }
-  let current = backup.toString("utf-8");
+  let current = before.buf.toString("utf-8");
   for (const edit of input.edits) {
-    const next = applyEdit(current, edit.old_string, edit.new_string);
+    const next = applyEdit(
+      current,
+      edit.old_string,
+      edit.new_string,
+      edit.replace_all === true,
+    );
     if (next === undefined) {
-      // A later edit didn't match. MultiEdit is atomic — Claude would
-      // have rejected the whole thing. So no captured row.
-      return [];
+      if (before.exact) {
+        // A later edit didn't match. MultiEdit is atomic — Claude
+        // would have rejected the whole thing. So no captured row.
+        return [];
+      }
+      // Derived before-image the edits don't fit — see extractEdit.
+      args.sessionContent.delete(path);
+      return [
+        makeStub({
+          runId: args.runId,
+          stepId: args.stepId,
+          sequence: args.startingSequence,
+          toolCallId: args.toolUse.id,
+          path,
+          sourceToolName: "MultiEdit",
+          sourceToolInput: input,
+        }),
+      ];
     }
     current = next;
   }
+  const afterBuf = Buffer.from(current, "utf-8");
+  rememberContent(args, path, afterBuf);
   return [
     await materialize({
       args,
       path,
       op: "modify",
-      beforeBuf: backup,
-      afterBuf: Buffer.from(current, "utf-8"),
+      beforeBuf: before.buf,
+      afterBuf,
+      beforeSource: before.source,
       tool: "MultiEdit",
     }),
   ];
@@ -447,7 +625,9 @@ async function extractBash(args: PerToolArgs): Promise<FileChangeInsert[]> {
   for (const target of targets) {
     const absPath = resolveBashTarget(target, args.cwd);
     const path = toRepoRelative(absPath, args.cwd);
-    const backup = await readBackupForPath(args, absPath);
+    const before = await resolveBefore(args, absPath);
+    const backup = before.buf;
+    rememberContent(args, path, undefined);
     if (backup === undefined) {
       // No backup → can't recover bytes. Emit a delete-op stub so the
       // intent shows up in the Files tab; lines_removed stays 0 because
@@ -472,6 +652,7 @@ async function extractBash(args: PerToolArgs): Promise<FileChangeInsert[]> {
           op: "delete",
           beforeBuf: backup,
           afterBuf: undefined,
+          beforeSource: before.source,
           tool: "Bash",
         }),
       );
@@ -578,6 +759,8 @@ interface MaterializeArgs {
   op: FileOp;
   beforeBuf: Buffer | undefined;
   afterBuf: Buffer | undefined;
+  /** Where `beforeBuf` came from — surfaced as `normalizer_notes.before_source`. */
+  beforeSource?: BeforeSource;
   tool: string;
 }
 
@@ -731,6 +914,12 @@ async function materialize(m: MaterializeArgs): Promise<FileChangeInsert> {
     source_tool_name: tool,
     source_tool_input: args.toolUse.input,
     redacted: policy.redacted,
+    // Which source supplied the before-image. Omitted when there was
+    // none (a create) so existing create rows keep their shape.
+    normalizer_notes:
+      m.beforeBuf !== undefined && m.beforeSource && m.beforeSource !== "none"
+        ? { before_source: m.beforeSource }
+        : undefined,
   };
 }
 
@@ -785,18 +974,132 @@ function makeStub(s: StubArgs): FileChangeInsert {
 
 // ─── Small utilities ─────────────────────────────────────────────────
 
-async function readBackupForPath(
+/** Where a before-image came from. Recorded on the row for debugging. */
+export type BeforeSource =
+  | "tool-result"
+  | "file-history"
+  | "session-chain"
+  | "none";
+
+interface BeforeImage {
+  /** `undefined` = the file did not exist (or nothing knows its bytes). */
+  buf: Buffer | undefined;
+  source: BeforeSource;
+  /**
+   * True when the bytes were observed right before the call (tool
+   * result, or a backup keyed to this very step). False for derived
+   * images — a session-chain entry can't see a Bash rewrite that
+   * happened in between, and a turn-level backup predates the turn.
+   * An Edit whose `old_string` misses an exact image was refused by
+   * Claude Code (no row); one that misses a derived image is an edit
+   * we can't reconstruct (partial stub).
+   */
+  exact: boolean;
+}
+
+/**
+ * Resolve the bytes a tool call saw on disk right before it ran.
+ * Sources, most exact first:
+ *
+ *   1. `toolUseResult.originalFile` — Claude Code read the file to
+ *      apply the edit and wrote the body here. Exact even when a Bash
+ *      command rewrote the file between two Edits in one turn.
+ *   2. A file-history backup keyed to THIS step (old-format snapshot,
+ *      or a delta naming this assistant uuid): taken right before the
+ *      call, so also exact.
+ *   3. The after-image of an earlier captured change in the SAME turn.
+ *      Claude backs each path up once per turn, so for the second
+ *      touch the backup is stale and the chain is the truth.
+ *   4. The turn's pre-turn backup versus a chain entry from an earlier
+ *      turn — whichever is fresher. A backup with no `backupTime`
+ *      wins the tie.
+ *
+ * A non-null backup whose file is missing on disk (defense #4) falls
+ * through to the next source rather than returning "no file".
+ */
+async function resolveBefore(
   args: PerToolArgs,
   absPath: string,
-): Promise<Buffer | undefined> {
-  // trackedFileBackups is keyed by repo-relative path (CC writes
-  // entries like "tests/package.json"), but the tool inputs that
-  // reach us hold absolute paths. Normalize before the lookup.
+): Promise<BeforeImage> {
+  // trackedFileBackups / trackingPath are keyed by repo-relative path
+  // (CC writes entries like "tests/package.json"), but the tool inputs
+  // that reach us hold absolute paths. Normalize before the lookup.
   const relPath = toRepoRelative(absPath, args.cwd);
-  const entry = args.backups?.[relPath];
-  if (!entry) return undefined;
-  if (entry.backupFileName === null) return undefined; // file didn't exist before
-  return args.readBackup(args.sessionId, entry.backupFileName);
+
+  const result = args.toolResult;
+  if (result !== undefined) {
+    if (typeof result.originalFile === "string") {
+      return {
+        buf: Buffer.from(result.originalFile, "utf-8"),
+        source: "tool-result",
+        exact: true,
+      };
+    }
+    if (result.originalFile === null) {
+      return { buf: undefined, source: "tool-result", exact: true };
+    }
+  }
+
+  const own = args.backups?.[relPath];
+  if (own) {
+    const image = await readBackupEntry(args, own, true);
+    if (image) return image;
+  }
+
+  const known = args.sessionContent.get(relPath);
+  if (known && known.turnId === args.turnId) {
+    return { buf: known.buf, source: "session-chain", exact: false };
+  }
+
+  const turnEntry = args.turnBackups?.[relPath];
+  if (turnEntry && !(known && isNewer(known.at, turnEntry.backupTime))) {
+    const image = await readBackupEntry(args, turnEntry, false);
+    if (image) return image;
+  }
+
+  if (known) return { buf: known.buf, source: "session-chain", exact: false };
+  return { buf: undefined, source: "none", exact: false };
+}
+
+/**
+ * Read one backup pointer. `undefined` means the pointer named a file
+ * we couldn't read (caller falls through to the next source); a
+ * `null` pointer is an answer in itself — the file did not exist.
+ */
+async function readBackupEntry(
+  args: PerToolArgs,
+  entry: ClaudeFileHistoryBackupEntry,
+  exact: boolean,
+): Promise<BeforeImage | undefined> {
+  if (entry.backupFileName === null) {
+    return { buf: undefined, source: "file-history", exact };
+  }
+  if (typeof entry.backupFileName !== "string") return undefined;
+  const buf = await args.readBackup(args.sessionId, entry.backupFileName);
+  if (buf === undefined) return undefined;
+  return { buf, source: "file-history", exact };
+}
+
+/** True iff both timestamps parse and `a` is strictly later than `b`. */
+function isNewer(a: string | undefined, b: string | undefined): boolean {
+  if (a === undefined || b === undefined) return false;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return false;
+  return ta > tb;
+}
+
+/** Record the bytes a captured change left on disk (undefined = deleted). */
+function rememberContent(
+  args: PerToolArgs,
+  relPath: string,
+  buf: Buffer | undefined,
+): void {
+  args.sessionContent.set(relPath, {
+    buf,
+    turnId: args.turnId,
+    at: args.timestamp,
+  });
 }
 
 /**
@@ -819,15 +1122,21 @@ function toRepoRelative(absPath: string, cwd: string): string {
  * if `old_string` doesn't appear in `text` (matches Claude Code's own
  * "first match must be unique" semantics loosely — we accept first
  * match and don't enforce uniqueness here because v0.3 doesn't need
- * to reject; the recorder is the spec, not the linter).
+ * to reject; the recorder is the spec, not the linter). With
+ * `replaceAll` (the Edit tool's `replace_all: true`) every occurrence
+ * is substituted, as Claude Code does.
  */
 export function applyEdit(
   text: string,
   oldString: string,
   newString: string,
+  replaceAll = false,
 ): string | undefined {
   const idx = text.indexOf(oldString);
   if (idx < 0) return undefined;
+  if (replaceAll && oldString.length > 0) {
+    return text.split(oldString).join(newString);
+  }
   return text.slice(0, idx) + newString + text.slice(idx + oldString.length);
 }
 
