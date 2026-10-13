@@ -13,9 +13,7 @@ import type {
 import {
   RESERVED_SEQUENCE_BASE,
   deterministicStepId,
-  diffLines,
   hashJson,
-  redactString,
 } from "@meterbility/shared";
 import { costCents } from "@meterbility/spec";
 import {
@@ -38,12 +36,23 @@ import { readEvents } from "./parser.ts";
 import { workspaceCwd } from "./discover.ts";
 import { CopilotShapeProbe } from "./shape_probe.ts";
 import {
+  SessionImages,
+  fileChangesForCompletion,
+  fileChangesForMissingCompletion,
+  isFileTool,
+  isViewTool,
+  recordViewResult,
+  redactToolInputVerbose,
+  type FileToolCall,
+} from "./file_changes.ts";
+import {
   agentDisplayNameOf,
   contentTextOf,
   interactionIdOf,
   normalizeUsage,
   outputTokensOf,
   sessionIdOf,
+  shellToolInfoOf,
   squadIdentityOfText,
   subagentIdOf,
   subagentNameOf,
@@ -51,6 +60,7 @@ import {
   toolCallIdOf,
   toolInputOf,
   toolNameOf,
+  toolResultOf,
   turnIdOf,
   type CopilotEvent,
 } from "./types.ts";
@@ -79,28 +89,6 @@ const SESSION_AT_REST_EVENTS = new Set([
  *  inferred `abandoned` (crashed / killed mid-turn). Mirrors the design
  *  doc's staleness-window requirement for run-status inference. */
 const STALE_SESSION_MS = 30 * 60_000;
-/** Combined old+new size above which str_replace-style inputs get
- *  whole-block line counts instead of a real diff — diffLines is
- *  O(n*m) in lines and session files are untrusted input. */
-const DIFF_INPUT_CAP_BYTES = 512_000;
-
-/** Tool names whose execution mutates files → partial_diff FileChange
- *  rows (fact/partial tier — events.jsonl carries tool inputs, not
- *  before/after file bytes). Exact vocabulary is a Phase 0 question;
- *  unknown mutating tools simply produce no row (never a crash). */
-const MUTATING_TOOLS = new Map<string, "create" | "modify" | "delete">([
-  ["create", "create"],
-  ["write", "create"],
-  ["write_file", "create"],
-  ["edit", "modify"],
-  ["edit_file", "modify"],
-  ["str_replace", "modify"],
-  ["str_replace_editor", "modify"],
-  ["apply_patch", "modify"],
-  ["insert", "modify"],
-  ["delete_file", "delete"],
-]);
-
 export interface CopilotIngestResult {
   run_id: string;
   child_run_ids: string[];
@@ -144,6 +132,11 @@ interface PendingTool {
   ctx: RunCtx;
   stepIdx: number;
   startTs?: string;
+  toolName: string;
+  rawInput: unknown;
+  callId: string;
+  /** The execution_start event (bash carries data.shellToolInfo there). */
+  startEvent: CopilotEvent;
 }
 
 /**
@@ -278,6 +271,21 @@ export async function ingestCopilotSession(
   const ownerMemo = new Map<string, { ctx: RunCtx | null; unrouted: boolean }>();
   const pendingTools = new Map<string, PendingTool>();
   const snapshots = new Map<string, { blob_ref: string; components: number }>();
+  // Freshest known content per repo-relative path (view results and
+  // captured create/edit after-images) — the before-image source for
+  // edits. Session-wide on purpose: a task agent edits what the main
+  // thread viewed and vice versa; the file is the same file.
+  const images = new SessionImages();
+  const fileToolCall = (pending: PendingTool): FileToolCall => ({
+    runId: pending.ctx.runId,
+    step: pending.ctx.steps[pending.stepIdx]!,
+    callId: pending.callId,
+    toolName: pending.toolName,
+    rawInput: pending.rawInput,
+    cwd,
+    blobs: store.blobs,
+    images,
+  });
   const compactionEventIds: string[] = [];
 
   const putJson = async (value: unknown): Promise<string> =>
@@ -625,6 +633,10 @@ export async function ingestCopilotSession(
           ctx,
           stepIdx: idx,
           startTs: event.timestamp,
+          toolName,
+          rawInput,
+          callId,
+          startEvent: event,
         });
         // Real-shape squad dispatch: the `task` tool call carries the
         // spawn prompt (identity source) and its toolCallId is the join
@@ -641,7 +653,8 @@ export async function ingestCopilotSession(
             ownerAtDispatch: ctx,
           });
         }
-        maybeFileChange(ctx, ctx.steps[idx]!, toolName, rawInput, callId, cwd);
+        // File-change rows are finalized on the completion (success
+        // known, result diff available) — see file_changes.ts.
         break;
       }
       case type === "tool.execution_complete": {
@@ -688,6 +701,22 @@ export async function ingestCopilotSession(
           const ms = Date.parse(event.timestamp) - Date.parse(pending.startTs);
           if (Number.isFinite(ms) && ms >= 0) step.latency_ms = ms;
         }
+        if (!isError) {
+          const result = toolResultOf(event);
+          if (isViewTool(pending.toolName)) {
+            recordViewResult(fileToolCall(pending), result);
+          } else if (isFileTool(pending.toolName)) {
+            const rows = await fileChangesForCompletion(
+              fileToolCall(pending),
+              result,
+              shellToolInfoOf(pending.startEvent),
+            );
+            pending.ctx.fileChanges.push(...rows);
+          }
+        }
+        // A failed completion (CLI refused the write: "Path already
+        // exists", "No match found", command not allowed) leaves NO
+        // file_change row — the step's error outcome is the record.
         break;
       }
       case type === "subagent.started": {
@@ -856,6 +885,15 @@ export async function ingestCopilotSession(
     }
   }
 
+  // Mutating/shell starts that never completed (torn tail, crash, or a
+  // live session mid-call) keep a partial stub so the Files tab shows
+  // the attempt; a later re-carve replaces it with the finalized row.
+  for (const pending of pendingTools.values()) {
+    if (!isFileTool(pending.toolName)) continue;
+    const rows = await fileChangesForMissingCompletion(fileToolCall(pending));
+    pending.ctx.fileChanges.push(...rows);
+  }
+
   const children = [...new Set(childByStartEventId.values())];
   const allCtx = [parent, ...children];
 
@@ -979,6 +1017,20 @@ export async function ingestCopilotSession(
                AND step_id NOT IN (SELECT value FROM json_each(?)))`,
         )
         .run(ctx.runId, RESERVED_SEQUENCE_BASE, keepIds);
+      // Tool-derived file rows are re-derived from scratch on every
+      // carve and their CONTENT can change under a stable id: a start
+      // whose completion arrives on a later tick turns its partial stub
+      // into a full row (blobs, counts, notes). insertFileChange has no
+      // upsert arm, so sweep this run's main-band tool_call rows before
+      // re-inserting. Hook/admin rows (reserved band, other
+      // derived_from) are never ours to delete.
+      store.db
+        .prepare(
+          `DELETE FROM file_change
+           WHERE run_id = ? AND derived_from = 'tool_call'
+             AND step_id IN (SELECT step_id FROM steps WHERE run_id = ? AND sequence < ?)`,
+        )
+        .run(ctx.runId, ctx.runId, RESERVED_SEQUENCE_BASE);
       store.db
         .prepare(
           `DELETE FROM steps
@@ -1070,130 +1122,8 @@ function safeStringify(v: unknown): string | undefined {
   }
 }
 
-/** Redact tool inputs before they land in steps.action_json (matches
- *  the v0.5.1 inline-capture convention). Structure survives; string
- *  payloads run through redactString. `redacted` reports whether any
- *  replacement actually happened — consumers surface it honestly
- *  (FileChange.redacted). */
-function redactToolInputVerbose(input: unknown): {
-  value: unknown;
-  redacted: boolean;
-} {
-  if (input === undefined || input === null)
-    return { value: undefined, redacted: false };
-  const raw = safeStringify(input);
-  if (raw === undefined) return { value: undefined, redacted: false };
-  const { text, redactions } = redactString(raw);
-  const redacted = redactions.length > 0;
-  try {
-    return { value: JSON.parse(text), redacted };
-  } catch {
-    return { value: text, redacted };
-  }
-}
-
 function redactToolInput(input: unknown): unknown {
   return redactToolInputVerbose(input).value;
-}
-
-/** Emit a fact/partial-tier FileChange row for a mutating tool call.
- *  events.jsonl carries tool INPUTS, not file bytes, so every row is
- *  partial_diff with no blob refs; patch_text is derived from
- *  old/new-string style inputs when present. */
-function maybeFileChange(
-  ctx: RunCtx,
-  step: Step,
-  toolName: string,
-  rawInput: unknown,
-  callId: string,
-  cwd?: string,
-): void {
-  const op = MUTATING_TOOLS.get(toolName.toLowerCase());
-  if (!op) return;
-  const input = (rawInput ?? {}) as Record<string, unknown>;
-  const path = firstString(
-    input.path,
-    input.file_path,
-    input.filePath,
-    input.filename,
-    input.target,
-  );
-  if (!path) return;
-
-  let patchText: string | undefined;
-  let linesAdded = 0;
-  let linesRemoved = 0;
-  let redacted = false;
-  const oldStr = firstString(input.old_str, input.oldText, input.old_string);
-  const newStr = firstString(input.new_str, input.newText, input.new_string);
-  const createContent = firstString(input.file_text, input.content, input.text);
-  if (oldStr !== undefined && newStr !== undefined) {
-    if (oldStr.length + newStr.length <= DIFF_INPUT_CAP_BYTES) {
-      const d = diffLines(oldStr, newStr);
-      patchText = d.unified || undefined;
-      linesAdded = d.stats.added;
-      linesRemoved = d.stats.removed;
-    } else {
-      // diffLines allocates an O(n*m) table; untrusted session files
-      // must not be able to exhaust memory / block the live poll with
-      // one giant str_replace. Above the cap: whole-block line counts,
-      // no patch text — the row stays honest via partial_diff.
-      linesAdded = newStr.split(/\r?\n/).length;
-      linesRemoved = oldStr.split(/\r?\n/).length;
-    }
-  } else if (op === "create" && createContent !== undefined) {
-    linesAdded = createContent.split(/\r?\n/).length;
-  }
-  if (patchText) {
-    const r = redactString(patchText);
-    patchText = r.text;
-    redacted ||= r.redactions.length > 0;
-  }
-  const redactedInput = redactToolInputVerbose(rawInput);
-  redacted ||= redactedInput.redacted;
-
-  const fc: FileChange = {
-    file_change_id: `fc_${hashJson([step.step_id, path, callId])}`,
-    run_id: ctx.runId,
-    step_id: step.step_id,
-    sequence: 0,
-    tool_call_id: callId,
-    derived_from: "tool_call",
-    path: toRelative(path, cwd),
-    op,
-    partial_diff: true,
-    gitignored: false,
-    bom: false,
-    patch_text: patchText,
-    patch_format: patchText ? "unified" : undefined,
-    lines_added: linesAdded,
-    lines_removed: linesRemoved,
-    source_tool_name: toolName,
-    source_tool_input: redactedInput.value,
-    redacted,
-    created_at: step.timestamp,
-  };
-  ctx.fileChanges.push(fc);
-}
-
-function toRelative(p: string, cwd?: string): string {
-  // FileChange.path is repo-relative by contract. When the session's
-  // workspace cwd is known (workspace.yaml), absolute paths under it
-  // relativize properly ("/repo/src/x.ts" → "src/x.ts"); otherwise we
-  // strip a leading slash rather than guess a root.
-  if (cwd && cwd.startsWith("/")) {
-    const root = cwd.endsWith("/") ? cwd : `${cwd}/`;
-    if (p.startsWith(root)) return p.slice(root.length);
-    if (p === cwd || p === root) return ".";
-  }
-  return p.startsWith("/") ? p.slice(1) : p;
-}
-
-function firstString(...vals: unknown[]): string | undefined {
-  for (const v of vals) {
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return undefined;
 }
 
 function slugify(s: string): string {
